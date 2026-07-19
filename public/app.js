@@ -178,6 +178,13 @@ function fmt(n) {
   return r.toLocaleString("es-EC");
 }
 
+const SINGULAR = {
+  unidades: "unidad", atados: "atado", choclos: "choclo", cuyes: "cuy",
+  pollos: "pollo", cerdos: "cerdo", conejos: "conejo", ovejas: "oveja",
+  litros: "litro", huevos: "huevo", "kg de miel": "kg"
+};
+function unidadPrecio(rendUnidad) { return SINGULAR[rendUnidad] || rendUnidad; }
+
 function proximaSiembra(c) {
   const mes = new Date().getMonth() + 1;
   for (let i = 1; i <= 12; i++) {
@@ -642,7 +649,7 @@ function renderPlantDetail() {
     <div class="econ-strip">
       <div><small>Inversión por ${unidadBase}</small><strong>$${fmt(c.inversion)}</strong></div>
       <div><small>Produce por ${unidadBase}</small><strong>${rendTxt}</strong></div>
-      <div><small>Precio local</small><strong>$${fmt(c.precio)}/${c.rendUnidad.replace("kg de miel","kg")}</strong></div>
+      <div><small>Precio local</small><strong>$${fmt(c.precio)}/${unidadPrecio(c.rendUnidad)}</strong></div>
     </div>
     ${cal}
     <div class="detail-grid">
