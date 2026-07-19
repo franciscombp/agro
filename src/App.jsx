@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { fetchMarketPrices, fetchWeatherForecast } from './api'
+import { useNotifications, requestNotificationPermission } from './hooks/useNotifications'
+import { useSwipeNavigation } from './hooks/useSwipeNavigation'
 
 const productData = {
   maiz: {
@@ -71,7 +73,9 @@ const initialUser = {
   altitude: 2800,
   currentCrop: 'papas',
   budget: 200,
-  soilQuality: 'Medio'
+  soilQuality: 'Medio',
+  siembras: [],
+  espacio: 'huerto'
 }
 
 function buildAdvice(crop, user) {
@@ -98,13 +102,23 @@ function buildFutureSuggestions(user) {
 }
 
 function App() {
+  const [currentTab, setCurrentTab] = useState(0)
   const [user, setUser] = useState(initialUser)
   const [crop, setCrop] = useState(initialUser.currentCrop)
   const [marketPrice, setMarketPrice] = useState(productData[initialUser.currentCrop].price)
-  const [forecast, setForecast] = useState('Datos climáticos aún no cargados para esta ubicación.')
+  const [forecastText, setForecastText] = useState('Datos climáticos aún no cargados para esta ubicación.')
+  const [forecastData, setForecastData] = useState(null)
   const [advice, setAdvice] = useState(buildAdvice(initialUser.currentCrop, initialUser))
   const [loadingWeather, setLoadingWeather] = useState(false)
   const [loadingPrice, setLoadingPrice] = useState(false)
+
+  const tabs = ['Perfil', 'Cultivos', 'Pronóstico', 'Mis semillas']
+  const tabCount = tabs.length
+
+  useSwipeNavigation(
+    () => setCurrentTab((prev) => (prev + 1) % tabCount),
+    () => setCurrentTab((prev) => (prev - 1 + tabCount) % tabCount)
+  )
 
   const investment = useMemo(() => {
     const basePerHa = crop === 'leche' ? 3200 : 2500
@@ -146,11 +160,12 @@ function App() {
     setLoadingWeather(true)
     try {
       const data = await fetchWeatherForecast({ latitude: -1.4500, longitude: -78.6167 })
+      setForecastData(data)
       const tempMax = data.daily.temperature_2m_max[0]
       const rain = data.daily.precipitation_sum[0]
-      setForecast(`Pronóstico: máxima ${tempMax}°C, lluvia ${rain}mm. Ajuste siembra y riego según estas condiciones.`)
+      setForecastText(`Pronóstico: máxima ${tempMax}°C, lluvia ${rain}mm. Ajuste siembra y riego según estas condiciones.`)
     } catch (error) {
-      setForecast('No se pudo obtener el pronóstico de clima. Verifique su conexión o use datos locales.')
+      setForecastText('No se pudo obtener el pronóstico de clima. Verifique su conexión o use datos locales.')
     } finally {
       setLoadingWeather(false)
     }
@@ -158,7 +173,10 @@ function App() {
 
   useEffect(() => {
     loadWeather()
+    requestNotificationPermission()
   }, [])
+
+  useNotifications(user, forecastData)
 
   const product = productData[crop]
 
@@ -169,123 +187,153 @@ function App() {
         <p>Una app simple para campesinos de la Sierra Centro de Ecuador: inversión, producción, clima y recomendaciones de cultivos y ganadería.</p>
       </header>
 
-      <section className="card">
-        <h2 className="section-title">Perfil del productor</h2>
-        <div className="grid-2">
-          <div className="input-group">
-            <label>Nombre</label>
-            <input value={user.name} onChange={handleUserChange('name')} placeholder="Tu nombre" />
-          </div>
-          <div className="input-group">
-            <label>Ubicación</label>
-            <input value={user.location} onChange={handleUserChange('location')} placeholder="Provincia, parroquia" />
-          </div>
-          <div className="input-group">
-            <label>Área cultivable (ha)</label>
-            <input type="number" step="0.1" value={user.area} onChange={handleUserChange('area')} />
-          </div>
-          <div className="input-group">
-            <label>Altitud (m)</label>
-            <input type="number" value={user.altitude} onChange={handleUserChange('altitude')} />
-          </div>
-          <div className="input-group">
-            <label>Presupuesto aproximado (USD)</label>
-            <input type="number" value={user.budget} onChange={handleUserChange('budget')} />
-          </div>
-          <div className="input-group">
-            <label>Calidad de suelo</label>
-            <select value={user.soilQuality} onChange={handleUserChange('soilQuality')}>
-              <option>Medio</option>
-              <option>Bueno</option>
-              <option>Regular</option>
-            </select>
-          </div>
-        </div>
-      </section>
-
-      <section className="card">
-        <h2 className="section-title">Producto actual</h2>
-        <div className="input-group">
-          <label>Selecciona cultivo, ganadería o fruta</label>
-          <select value={crop} onChange={handleCropChange}>
-            {productOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label} — {option.type}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="grid-2">
-          <div>
-            <strong>{product.label}</strong>
-            <p>{product.type}</p>
-          </div>
-          <div>
-            <strong>Altitud ideal</strong>
-            <p>{product.altitude}</p>
-          </div>
-        </div>
-        <div className="grid-2">
-          <div>
-            <strong>Riesgo principal</strong>
-            <p>{product.risk}</p>
-          </div>
-          <div>
-            <strong>Precio referencia</strong>
-            <p>{loadingPrice ? 'Cargando…' : `USD ${marketPrice?.toFixed(2) || product.price}`}</p>
-          </div>
-        </div>
-      </section>
-
-      <section className="card">
-        <h2 className="section-title">Resultados</h2>
-        <div className="grid-2">
-          <div>
-            <strong>Inversión estimada</strong>
-            <p>USD {investment.toLocaleString()}</p>
-          </div>
-          <div>
-            <strong>Ingreso potencial</strong>
-            <p>USD {potentialIncome.toLocaleString()}</p>
-          </div>
-        </div>
-        <div className="input-group">
-          <label>Precio de mercado estimado (USD / unidad)</label>
-          <input type="number" step="0.01" value={marketPrice} onChange={(event) => setMarketPrice(Number(event.target.value))} />
-        </div>
-      </section>
-
-      <section className="card">
-        <h2 className="section-title">Riesgos y recomendaciones</h2>
-        <p>{advice}</p>
-        <div className="button-group">
-          <button className="primary-btn" onClick={loadWeather} disabled={loadingWeather}>
-            {loadingWeather ? 'Actualizando clima…' : 'Actualizar pronóstico'}
+      <nav className="tabs">
+        {tabs.map((tab, idx) => (
+          <button
+            key={idx}
+            className={`tab-btn ${currentTab === idx ? 'active' : ''}`}
+            onClick={() => setCurrentTab(idx)}
+          >
+            {tab}
           </button>
-          <button className="secondary" onClick={() => setAdvice('Considere diversificar entre papas y frijol para reducir el riesgo climático. Revise los precios del mercado local antes de vender.')}>Diversificar</button>
-        </div>
-      </section>
+        ))}
+      </nav>
 
-      <section className="card">
-        <h2 className="section-title">Pronóstico y condiciones</h2>
-        <p>{forecast}</p>
-        <div className="tag">Altitud: {user.altitude} m</div>
-        <div className="tag">Suelo: {user.soilQuality}</div>
-        <div className="tag status-good">Condición: estable</div>
-      </section>
+      <div className="tab-content">
+        {currentTab === 0 && (
+          <>
+            <section className="card">
+              <h2 className="section-title">Perfil del productor</h2>
+              <div className="grid-2">
+                <div className="input-group">
+                  <label>Nombre</label>
+                  <input value={user.name} onChange={handleUserChange('name')} placeholder="Tu nombre" />
+                </div>
+                <div className="input-group">
+                  <label>Ubicación</label>
+                  <input value={user.location} onChange={handleUserChange('location')} placeholder="Provincia, parroquia" />
+                </div>
+                <div className="input-group">
+                  <label>Área cultivable (ha)</label>
+                  <input type="number" step="0.1" value={user.area} onChange={handleUserChange('area')} />
+                </div>
+                <div className="input-group">
+                  <label>Altitud (m)</label>
+                  <input type="number" value={user.altitude} onChange={handleUserChange('altitude')} />
+                </div>
+                <div className="input-group">
+                  <label>Presupuesto aproximado (USD)</label>
+                  <input type="number" value={user.budget} onChange={handleUserChange('budget')} />
+                </div>
+                <div className="input-group">
+                  <label>Calidad de suelo</label>
+                  <select value={user.soilQuality} onChange={handleUserChange('soilQuality')}>
+                    <option>Medio</option>
+                    <option>Bueno</option>
+                    <option>Regular</option>
+                  </select>
+                </div>
+              </div>
+            </section>
+            <section className="card">
+              <h2 className="section-title">Sugerencias futuras</h2>
+              <p>Basado en tu superficie y altitud, estas opciones pueden funcionar bien en tu finca:</p>
+              <div>
+                {futureRecommendations.map((item) => (
+                  <span key={item} className="tag">{item}</span>
+                ))}
+              </div>
+            </section>
+          </>
+        )}
 
-      <section className="card">
-        <h2 className="section-title">Sugerencias futuras</h2>
-        <p>Basado en tu superficie y altitud, estas opciones pueden funcionar bien en tu finca:</p>
-        <div>
-          {futureRecommendations.map((item) => (
-            <span key={item} className="tag">
-              {item}
-            </span>
-          ))}
-        </div>
-        <p>Si prefieres comenzar con cultivos conocidos, prueba papas en el próximo ciclo y evalúa frutales de clima frío para el siguiente año.</p>
-      </section>
+        {currentTab === 1 && (
+          <>
+            <section className="card">
+              <h2 className="section-title">Producto actual</h2>
+              <div className="input-group">
+                <label>Selecciona cultivo, ganadería o fruta</label>
+                <select value={crop} onChange={handleCropChange}>
+                  {productOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label} — {option.type}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid-2">
+                <div>
+                  <strong>{product.label}</strong>
+                  <p>{product.type}</p>
+                </div>
+                <div>
+                  <strong>Altitud ideal</strong>
+                  <p>{product.altitude}</p>
+                </div>
+              </div>
+              <div className="grid-2">
+                <div>
+                  <strong>Riesgo principal</strong>
+                  <p>{product.risk}</p>
+                </div>
+                <div>
+                  <strong>Precio referencia</strong>
+                  <p>{loadingPrice ? 'Cargando…' : `USD ${marketPrice?.toFixed(2) || product.price}`}</p>
+                </div>
+              </div>
+            </section>
+            <section className="card">
+              <h2 className="section-title">Resultados</h2>
+              <div className="grid-2">
+                <div>
+                  <strong>Inversión estimada</strong>
+                  <p>USD {investment.toLocaleString()}</p>
+                </div>
+                <div>
+                  <strong>Ingreso potencial</strong>
+                  <p>USD {potentialIncome.toLocaleString()}</p>
+                </div>
+              </div>
+              <div className="input-group">
+                <label>Precio de mercado estimado (USD / unidad)</label>
+                <input type="number" step="0.01" value={marketPrice} onChange={(event) => setMarketPrice(Number(event.target.value))} />
+              </div>
+            </section>
+            <section className="card">
+              <h2 className="section-title">Riesgos y recomendaciones</h2>
+              <p>{advice}</p>
+              <div className="button-group">
+                <button className="primary-btn" onClick={loadWeather} disabled={loadingWeather}>
+                  {loadingWeather ? 'Actualizando clima…' : 'Actualizar pronóstico'}
+                </button>
+                <button className="secondary" onClick={() => setAdvice('Considere diversificar entre papas y frijol para reducir el riesgo climático. Revise los precios del mercado local antes de vender.')}>Diversificar</button>
+              </div>
+            </section>
+          </>
+        )}
+
+        {currentTab === 2 && (
+          <>
+            <section className="card">
+              <h2 className="section-title">Pronóstico y condiciones</h2>
+              <p>{forecastText}</p>
+              <div className="tag">Altitud: {user.altitude} m</div>
+              <div className="tag">Suelo: {user.soilQuality}</div>
+              <div className="tag status-good">Condición: estable</div>
+            </section>
+          </>
+        )}
+
+        {currentTab === 3 && (
+          <>
+            <section className="card">
+              <h2 className="section-title">Mis semillas</h2>
+              <p>Aquí puedes realizar seguimiento de tus cultivos plantados y recibir notificaciones sobre el riego, cosecha y mejores fechas para sembrar.</p>
+              <p className="tag">Aún no has agregado cultivos para seguimiento</p>
+            </section>
+          </>
+        )}
+      </div>
     </main>
   )
 }
