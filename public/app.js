@@ -258,6 +258,7 @@ function renderHome() {
   renderWeatherHome();
   renderMoonStrip();
   renderInstallBanner();
+  checkAndSendNotifications();
 }
 
 function renderGardenSummary() {
@@ -796,6 +797,72 @@ function renderInstallBanner() {
     renderInstallBanner();
   });
 }
+
+// ---------- Notificaciones nativas ----------
+function checkAndSendNotifications() {
+  if (!('Notification' in window)) return;
+  if (Notification.permission !== 'granted') return;
+  if (!state.altitud || !state.espacio) return;
+
+  const lastNotifDate = localStorage.getItem('lastNotificationDate');
+  const today = new Date().toISOString().split('T')[0];
+  if (lastNotifDate === today) return;
+
+  const data = {
+    siembras: state.siembras,
+    altitud: state.altitud,
+    espacio: state.espacio
+  };
+
+  const notifs = computeNotifications(CULTIVOS, data, state.forecast);
+  notifs.forEach(notif => {
+    new Notification(notif.title, {
+      body: notif.body,
+      tag: notif.key,
+      requireInteraction: false
+    });
+  });
+
+  localStorage.setItem('lastNotificationDate', today);
+}
+
+function requestNotificationPermission() {
+  if (!('Notification' in window) || Notification.permission === 'granted') return;
+  if (Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+}
+
+// Solicitar permiso al cargar
+requestNotificationPermission();
+
+// ---------- Swipe navigation ----------
+let touchStartX = 0, touchStartY = 0;
+const minSwipeDistance = 50;
+const maxVerticalDelta = 100;
+
+document.addEventListener('touchstart', (e) => {
+  touchStartX = e.touches[0].clientX;
+  touchStartY = e.touches[0].clientY;
+}, false);
+
+document.addEventListener('touchend', (e) => {
+  const touchEndX = e.changedTouches[0].clientX;
+  const touchEndY = e.changedTouches[0].clientY;
+  const dx = touchEndX - touchStartX;
+  const dy = Math.abs(touchEndY - touchStartY);
+
+  if (dy > maxVerticalDelta || !tabbar.hasChildNodes()) return;
+
+  const tabs = Array.from(tabbar.querySelectorAll('.tab'));
+  const currentIdx = tabs.findIndex(t => t.classList.contains('on'));
+
+  if (dx > minSwipeDistance && currentIdx > 0) {
+    tabs[currentIdx - 1].click();
+  } else if (dx < -minSwipeDistance && currentIdx < tabs.length - 1) {
+    tabs[currentIdx + 1].click();
+  }
+}, false);
 
 // ---------- Ajustes / inicio ----------
 document.getElementById("btn-settings").addEventListener("click", () => show("screen-location"));
