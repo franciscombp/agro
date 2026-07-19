@@ -250,6 +250,7 @@ function renderHome() {
   renderGardenSummary();
   renderWeatherHome();
   renderMoonStrip();
+  renderInstallBanner();
 }
 
 function renderGardenSummary() {
@@ -744,6 +745,49 @@ function renderCalc() {
   document.getElementById("calc-results").innerHTML = `
     <div class="calc-card">${rows}</div>
     <p class="calc-note">${nota} Precios referenciales: ${PRECIOS_META.fuente.toLowerCase()} de ${PRECIOS_META.pais} (${PRECIOS_META.actualizado}). No incluye tu mano de obra ni transporte.</p>`;
+}
+
+// ---------- PWA: offline e instalación ----------
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
+}
+
+let installPrompt = null;
+const INSTALL_DISMISSED = "mihuerto.installDismissed";
+
+window.addEventListener("beforeinstallprompt", e => {
+  e.preventDefault();
+  installPrompt = e;
+  renderInstallBanner();
+});
+
+window.addEventListener("appinstalled", () => {
+  installPrompt = null;
+  renderInstallBanner();
+});
+
+function renderInstallBanner() {
+  const cont = document.getElementById("install-banner");
+  if (!cont) return;
+  if (!installPrompt || localStorage.getItem(INSTALL_DISMISSED)) { cont.innerHTML = ""; return; }
+  cont.innerHTML = `
+    <div class="install-banner">
+      <span class="i-emoji">📲</span>
+      <span class="i-text"><strong>Instala Mi Huerto</strong><small>Úsala como app, incluso sin internet.</small></span>
+      <button class="i-btn" id="btn-install">Instalar</button>
+      <button class="i-close" id="btn-install-close" aria-label="Cerrar">✕</button>
+    </div>`;
+  document.getElementById("btn-install").addEventListener("click", async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    await installPrompt.userChoice;
+    installPrompt = null;
+    renderInstallBanner();
+  });
+  document.getElementById("btn-install-close").addEventListener("click", () => {
+    localStorage.setItem(INSTALL_DISMISSED, "1");
+    renderInstallBanner();
+  });
 }
 
 // ---------- Ajustes / inicio ----------

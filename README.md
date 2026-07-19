@@ -22,6 +22,7 @@ App web para **agricultura de subsistencia rural y huertos urbanos** (escala má
 - 🌒 Calendario lunar con consejos de siembra tradicionales
 - 💰 **Calculadora de ganancia** por m², por planta, por árbol o por animal, con tres modelos: ciclo único, producción anual y producción mensual — precios referenciales de mercados de Ecuador
 - 🪴 Filtro por espacio: macetas/balcón, huerto familiar o parcela
+- 📲 **PWA instalable**: se agrega a la pantalla de inicio como app nativa y **funciona sin internet** (clave para zonas rurales con mala señal); guarda el último clima consultado como respaldo offline
 
 ## Estructura
 
@@ -29,6 +30,8 @@ App web para **agricultura de subsistencia rural y huertos urbanos** (escala má
 - `public/styles.css` — estilos mobile-first
 - `public/app.js` — navegación, geolocalización, clima, almanaque, seguimiento, calculadora
 - `public/data.js` — catálogo con rangos de altitud, meses de siembra, costos y precios locales (Ecuador)
+- `public/sw.js` — service worker: shell precacheado, APIs con respaldo offline
+- `public/manifest.webmanifest` + `public/icons/` — instalación como app
 
 ## Desarrollo
 
