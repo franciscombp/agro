@@ -1,0 +1,317 @@
+/* Mi Huerto — mobile-first, estilo limpio tipo Airbnb */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --green: #2d7a46;
+  --green-dark: #1f5c33;
+  --green-light: #eaf5ee;
+  --ink: #222222;
+  --gray: #717171;
+  --line: #ebebeb;
+  --bg: #ffffff;
+  --card-shadow: 0 1px 2px rgba(0,0,0,.08), 0 4px 12px rgba(0,0,0,.05);
+  --radius: 16px;
+}
+
+html, body { height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Pantallas */
+.screen {
+  display: none;
+  min-height: 100dvh;
+  flex-direction: column;
+  max-width: 480px;
+  margin: 0 auto;
+}
+.screen.active { display: flex; }
+
+.content {
+  flex: 1;
+  padding: 8px 24px 120px;
+}
+
+h1 { font-size: 2rem; font-weight: 700; }
+h2 { font-size: 1.5rem; font-weight: 700; margin-bottom: 8px; }
+h3.list-title { font-size: 1.05rem; margin: 28px 0 12px; }
+.lead { font-size: 1.1rem; color: var(--ink); margin-top: 12px; }
+.sub { color: var(--gray); font-size: .95rem; margin-bottom: 20px; line-height: 1.45; }
+.hint { color: var(--gray); font-size: .85rem; margin-top: 16px; text-align: center; min-height: 1.2em; }
+
+/* Bienvenida */
+.hero {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+}
+.hero-emoji { font-size: 4.5rem; margin-bottom: 16px; }
+.hero .sub { margin-top: 16px; }
+
+/* Header con volver + progreso */
+.screen-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 24px;
+}
+.btn-back {
+  width: 40px; height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: #fff;
+  font-size: 1.1rem;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.progress {
+  flex: 1;
+  height: 4px;
+  background: var(--line);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.progress span { display: block; height: 100%; background: var(--ink); border-radius: 2px; }
+
+/* Tarjetas de opción (una decisión por pantalla) */
+.option-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  padding: 18px;
+  margin-bottom: 12px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  transition: border-color .15s, transform .05s;
+}
+.option-card:active { transform: scale(.98); }
+.option-card:hover { border-color: var(--ink); }
+.option-emoji { font-size: 1.8rem; }
+.option-text { display: flex; flex-direction: column; gap: 2px; }
+.option-text strong { font-size: 1rem; }
+.option-text small { color: var(--gray); font-size: .85rem; }
+
+.divider-text {
+  text-align: center;
+  color: var(--gray);
+  font-size: .85rem;
+  margin: 20px 0 16px;
+}
+
+/* Botón principal fijo abajo */
+.bottom-bar {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 16px 24px calc(16px + env(safe-area-inset-bottom));
+  background: linear-gradient(transparent, #fff 30%);
+}
+.btn-primary {
+  width: 100%;
+  padding: 16px;
+  background: var(--green);
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  font-size: 1.05rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-primary:active { background: var(--green-dark); }
+
+/* Home */
+.home-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding-top: 20px;
+  margin-bottom: 16px;
+}
+.home-greeting { color: var(--gray); font-size: .9rem; margin-bottom: 4px; }
+.btn-icon {
+  width: 40px; height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: #fff;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.weather-card {
+  background: linear-gradient(135deg, #eaf5ee, #f0f7ff);
+  border-radius: var(--radius);
+  padding: 18px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.weather-emoji { font-size: 2.6rem; }
+.weather-info strong { font-size: 1.5rem; display: block; }
+.weather-info small { color: var(--gray); font-size: .85rem; line-height: 1.4; }
+.weather-loading { color: var(--gray); font-size: .9rem; }
+
+.moon-strip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.moon-strip .m-emoji { font-size: 1.6rem; }
+.moon-strip .m-text { flex: 1; font-size: .9rem; }
+.moon-strip .m-text small { color: var(--gray); display: block; }
+.moon-strip .chev { color: var(--gray); }
+
+/* Lista de plantas */
+.plant-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  padding: 14px;
+  margin-bottom: 10px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.plant-card:active { transform: scale(.98); }
+.plant-thumb {
+  width: 52px; height: 52px;
+  border-radius: 12px;
+  background: var(--green-light);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.7rem;
+  flex-shrink: 0;
+}
+.plant-info { flex: 1; }
+.plant-info strong { display: block; font-size: 1rem; }
+.plant-info small { color: var(--gray); font-size: .83rem; }
+.plant-badge {
+  font-size: .72rem;
+  font-weight: 600;
+  color: var(--green);
+  background: var(--green-light);
+  padding: 4px 8px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+/* Detalle de planta */
+.detail-hero { text-align: center; padding: 12px 0 20px; }
+.detail-hero .d-emoji { font-size: 4rem; }
+.detail-hero h2 { margin-top: 8px; }
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.detail-item {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+}
+.detail-item small { color: var(--gray); font-size: .75rem; display: block; margin-bottom: 3px; }
+.detail-item strong { font-size: .92rem; font-weight: 600; }
+.tip-box {
+  background: var(--green-light);
+  border-radius: 12px;
+  padding: 14px 16px;
+  font-size: .9rem;
+  line-height: 1.45;
+  margin-bottom: 16px;
+}
+.calendar-row { display: flex; gap: 4px; margin: 8px 0 20px; }
+.cal-month {
+  flex: 1;
+  text-align: center;
+  font-size: .62rem;
+  color: var(--gray);
+  padding: 6px 0;
+  border-radius: 6px;
+  background: #f7f7f7;
+}
+.cal-month.on { background: var(--green); color: #fff; font-weight: 700; }
+
+/* Calculadora */
+.area-input { margin: 8px 0 24px; }
+input[type="range"] {
+  width: 100%;
+  accent-color: var(--green);
+  height: 32px;
+}
+.area-value { text-align: center; font-size: 1.6rem; font-weight: 700; margin: 4px 0 12px; }
+.area-presets { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.area-presets button {
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: #fff;
+  font-size: .85rem;
+  cursor: pointer;
+}
+.area-presets button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+
+.calc-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.calc-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: .95rem;
+}
+.calc-row:last-child { border-bottom: none; }
+.calc-row .label { color: var(--gray); }
+.calc-row.total { background: var(--green-light); font-weight: 700; }
+.calc-row.total .label { color: var(--ink); }
+.calc-note { color: var(--gray); font-size: .8rem; line-height: 1.5; }
+
+/* Luna */
+.moon-big { text-align: center; padding: 16px 0 24px; }
+.moon-big .m-emoji { font-size: 4.5rem; }
+.moon-big h3 { font-size: 1.3rem; margin-top: 10px; }
+.moon-big p { color: var(--gray); font-size: .9rem; margin-top: 6px; }
+.moon-advice {
+  background: var(--green-light);
+  border-radius: 12px;
+  padding: 14px 16px;
+  font-size: .9rem;
+  line-height: 1.5;
+  margin-bottom: 24px;
+}
+.moon-list-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: .9rem;
+}
+.moon-list-item .m-emoji { font-size: 1.5rem; }
+.moon-list-item small { color: var(--gray); display: block; }
