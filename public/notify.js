@@ -1,6 +1,10 @@
+// Lógica de luna y notificaciones para Mi Huerto
+// Compartida entre app.js y service worker (importScripts)
+"use strict";
+
 const SINODICO = 29.53058867;
 
-export function faseLunar(fecha = new Date()) {
+function faseLunar(fecha = new Date()) {
   const ref = Date.UTC(2000, 0, 6, 18, 14);
   const dias = (fecha.getTime() - ref) / 86400000;
   const edad = ((dias % SINODICO) + SINODICO) % SINODICO;
@@ -14,8 +18,7 @@ export function faseLunar(fecha = new Date()) {
   return { emoji: "🌘", nombre: "Luna menguante", ciclo: "menguante", edad };
 }
 
-// Puntaje de un día para sembrar: fase lunar + lluvia + riesgo de helada.
-export function scoreDiaSiembra(fase, lluvia, tmin) {
+function scoreDiaSiembra(fase, lluvia, tmin) {
   if (tmin != null && tmin <= 2) return -3;
   let score = { nueva: 0, creciente: 2, llena: 1, menguante: 2 }[fase.ciclo];
   if (lluvia != null) {
@@ -26,11 +29,11 @@ export function scoreDiaSiembra(fase, lluvia, tmin) {
   return score;
 }
 
-export function riegoFrecuente(c) {
+function riegoFrecuente(c) {
   return /frecuente|constante|diario|abundante/i.test(c.riego || "");
 }
 
-export function computeNotifications(cultivos, data, daily, now = new Date()) {
+function computeNotifications(cultivos, data, daily, now = new Date()) {
   const out = [];
   const dayKey = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
   const siembras = data.siembras || [];
