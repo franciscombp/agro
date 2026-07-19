@@ -1,19 +1,24 @@
-// Mi Huerto — app estática. Estado en localStorage, datos de Open-Meteo (sin API key).
+// Mi Huerto — app estática para pequeños agricultores. Estado en localStorage.
+// Clima y altitud: Open-Meteo. Nombre del lugar: BigDataCloud (ambas gratuitas, sin key).
 "use strict";
 
-const STORE_KEY = "mihuerto.v1";
+const STORE_KEY = "mihuerto.v2";
 
 const state = {
   lat: null, lon: null,
   altitud: null,
-  espacio: null,       // id de ESPACIOS
-  plantaActual: null,  // id de cultivo en detalle
-  clima: null
+  lugar: null,          // "Poblado, Provincia"
+  espacio: null,
+  siembras: [],         // [{id, cropId, fecha, cantidad, nota}]
+  plantaActual: null,
+  backTo: "screen-home",
+  forecast: null        // cache del pronóstico diario
 };
 
 function saveState() {
   localStorage.setItem(STORE_KEY, JSON.stringify({
-    lat: state.lat, lon: state.lon, altitud: state.altitud, espacio: state.espacio
+    lat: state.lat, lon: state.lon, altitud: state.altitud,
+    lugar: state.lugar, espacio: state.espacio, siembras: state.siembras
   }));
 }
 
@@ -24,22 +29,50 @@ function loadState() {
     const s = JSON.parse(raw);
     if (s.altitud == null || !s.espacio) return false;
     Object.assign(state, s);
+    state.siembras = state.siembras || [];
     return true;
   } catch { return false; }
 }
 
-// ---------- Navegación (una pantalla a la vez) ----------
+// ---------- Navegación ----------
+const tabbar = document.getElementById("tabbar");
+
 function show(id) {
   document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
-  document.getElementById(id).classList.add("active");
+  const scr = document.getElementById(id);
+  scr.classList.add("active");
+  tabbar.hidden = !scr.classList.contains("with-tabs");
+  tabbar.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.dataset.tab === id));
   window.scrollTo(0, 0);
 }
 
-document.querySelectorAll(".btn-back").forEach(btn => {
-  btn.addEventListener("click", () => show(btn.dataset.back));
+tabbar.querySelectorAll(".tab").forEach(t => {
+  t.addEventListener("click", () => {
+    const id = t.dataset.tab;
+    show(id);
+    if (id === "screen-home") renderHome();
+    if (id === "screen-almanac") renderAlmanac();
+    if (id === "screen-garden") renderGarden();
+    if (id === "screen-explore") renderExplore();
+  });
 });
 
-// ---------- Pantalla 2: Ubicación ----------
+document.querySelectorAll(".btn-back").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const target = btn.dataset.back === "__last" ? state.backTo : btn.dataset.back;
+    show(target);
+  });
+});
+
+document.querySelectorAll("[data-goto]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const id = btn.dataset.goto;
+    if (id === "screen-explore") renderExplore();
+    show(id);
+  });
+});
+
+// ---------- Onboarding: ubicación ----------
 const ZONAS_MANUALES = [
   { emoji: "🌴", nombre: "Costa / Amazonía baja", desc: "Clima cálido (0 – 1.000 m)", alt: 300 },
   { emoji: "🌤️", nombre: "Valle subtropical", desc: "Clima templado (1.000 – 2.000 m)", alt: 1500 },
@@ -56,8 +89,9 @@ function renderManualZones() {
     </button>`).join("");
   cont.querySelectorAll("[data-zone]").forEach(btn => {
     btn.addEventListener("click", () => {
-      state.altitud = ZONAS_MANUALES[+btn.dataset.zone].alt;
-      state.lat = null; state.lon = null;
+      const z = ZONAS_MANUALES[+btn.dataset.zone];
+      state.altitud = z.alt; state.lugar = z.nombre;
+      state.lat = null; state.lon = null; state.forecast = null;
       show("screen-space");
     });
   });
@@ -73,13 +107,18 @@ document.getElementById("btn-geolocate").addEventListener("click", () => {
   navigator.geolocation.getCurrentPosition(async pos => {
     state.lat = pos.coords.latitude;
     state.lon = pos.coords.longitude;
-    status.textContent = "Consultando altitud de tu zona…";
+    state.forecast = null;
+    status.textContent = "Consultando tu zona…";
     try {
-      const alt = await fetchAltitud(state.lat, state.lon);
+      const [alt, lugar] = await Promise.all([
+        fetchAltitud(state.lat, state.lon),
+        fetchLugar(state.lat, state.lon)
+      ]);
       state.altitud = Math.round(alt);
+      state.lugar = lugar;
       show("screen-space");
     } catch {
-      status.textContent = "No pudimos obtener la altitud. Elige tu zona abajo.";
+      status.textContent = "No pudimos consultar tu zona. Elige tu zona abajo.";
     }
   }, () => {
     status.textContent = "No diste permiso de ubicación. Elige tu zona abajo.";
@@ -87,14 +126,22 @@ document.getElementById("btn-geolocate").addEventListener("click", () => {
 });
 
 async function fetchAltitud(lat, lon) {
-  // Open-Meteo devuelve la elevación del punto junto con el pronóstico.
   const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m`);
   const j = await r.json();
   if (typeof j.elevation !== "number") throw new Error("sin elevación");
   return j.elevation;
 }
 
-// ---------- Pantalla 3: Espacio ----------
+async function fetchLugar(lat, lon) {
+  try {
+    const r = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=es`);
+    const j = await r.json();
+    const partes = [j.locality || j.city, j.principalSubdivision].filter(Boolean);
+    return partes.length ? partes.join(", ") : null;
+  } catch { return null; }
+}
+
+// ---------- Onboarding: espacio ----------
 function renderSpaceOptions() {
   const cont = document.getElementById("space-options");
   cont.innerHTML = ESPACIOS.map(e => `
@@ -112,73 +159,69 @@ function renderSpaceOptions() {
   });
 }
 
-// ---------- Pantalla 4: Home ----------
-function cultivosDeZona() {
-  return CULTIVOS.filter(c =>
-    state.altitud >= c.altMin && state.altitud <= c.altMax &&
-    c.espacios.includes(state.espacio)
-  );
+// ---------- Utilidades de catálogo ----------
+function aptoZona(c) {
+  return state.altitud >= c.altMin && state.altitud <= c.altMax && c.espacios.includes(state.espacio);
+}
+function catalogoZona() { return CULTIVOS.filter(aptoZona); }
+function getItem(id) { return CULTIVOS.find(c => c.id === id); }
+function catInfo(id) { return CATEGORIAS.find(c => c.id === id); }
+
+function formatDias(d) {
+  if (d >= 330) return Math.round(d / 365 * 10) / 10 + (d >= 660 ? " años" : " año");
+  if (d >= 55) return Math.round(d / 30) + " meses";
+  return d + " días";
 }
 
-function renderHome() {
-  const zona = zonaPorAltitud(state.altitud);
-  document.getElementById("home-zone").textContent =
-    `${zona.emoji} ${zona.nombre} · ${state.altitud} msnm`;
-
-  const mes = new Date().getMonth() + 1;
-  const deZona = cultivosDeZona();
-  const ahora = deZona.filter(c => c.mesesSiembra.includes(mes));
-  const otros = deZona.filter(c => !c.mesesSiembra.includes(mes));
-
-  document.getElementById("plant-list").innerHTML =
-    ahora.length ? ahora.map(c => plantCardHTML(c)).join("")
-    : `<p class="sub">Este mes no hay siembras ideales en tu zona. Mira los próximos cultivos abajo.</p>`;
-  document.getElementById("plant-list-other").innerHTML =
-    otros.length ? otros.map(c => plantCardHTML(c, proximaSiembra(c))).join("")
-    : `<p class="sub">Todos los cultivos de tu zona se pueden sembrar ahora. 🎉</p>`;
-
-  document.querySelectorAll(".plant-card").forEach(card => {
-    card.addEventListener("click", () => {
-      state.plantaActual = card.dataset.plant;
-      renderPlantDetail();
-      show("screen-plant");
-    });
-  });
-
-  renderWeather();
-  renderMoonStrip();
-}
-
-function plantCardHTML(c, badge) {
-  const b = badge ? `<span class="plant-badge">${badge}</span>`
-                  : `<span class="plant-badge">Sembrar ya</span>`;
-  return `
-    <button class="plant-card" data-plant="${c.id}">
-      <span class="plant-thumb">${c.emoji}</span>
-      <span class="plant-info">
-        <strong>${c.nombre}</strong>
-        <small>Cosecha en ${formatDias(c.diasCosecha)} · ${c.tipo}</small>
-      </span>
-      ${b}
-    </button>`;
+function fmt(n) {
+  const r = n >= 100 ? Math.round(n) : Math.round(n * 100) / 100;
+  return r.toLocaleString("es-EC");
 }
 
 function proximaSiembra(c) {
   const mes = new Date().getMonth() + 1;
   for (let i = 1; i <= 12; i++) {
     const m = ((mes - 1 + i) % 12) + 1;
-    if (c.mesesSiembra.includes(m)) return "Desde " + MESES[m - 1].slice(0, 3);
+    if (c.mesesSiembra.includes(m)) return "Desde " + MESES[m - 1].slice(0, 3).toLowerCase();
   }
   return "";
 }
 
-function formatDias(d) {
-  if (d >= 330) return "1 año";
-  if (d >= 55) return Math.round(d / 30) + " meses";
-  return d + " días";
+function plantCardHTML(c, badge, badgeOff) {
+  const b = badge ? `<span class="plant-badge ${badgeOff ? "off" : ""}">${badge}</span>` : "";
+  const sub = c.cat === "animal"
+    ? `${c.modelo === "mensual" ? "Producción mensual" : c.modelo === "anual" ? "Producción anual" : "Listo en " + formatDias(c.diasProduccion)} · ${c.tipo}`
+    : `Cosecha en ${formatDias(c.diasProduccion)} · ${c.tipo}`;
+  return `
+    <button class="plant-card" data-plant="${c.id}">
+      <span class="plant-thumb t-${c.cat}">${c.emoji}</span>
+      <span class="plant-info"><strong>${c.nombre}</strong><small>${sub}</small></span>
+      ${b}
+    </button>`;
 }
 
-// ---------- Clima ----------
+function bindPlantCards(container, backTo) {
+  container.querySelectorAll(".plant-card").forEach(card => {
+    card.addEventListener("click", () => {
+      state.plantaActual = card.dataset.plant;
+      state.backTo = backTo;
+      renderPlantDetail();
+      show("screen-plant");
+    });
+  });
+}
+
+// ---------- Pronóstico (cacheado) ----------
+async function getForecast() {
+  if (state.forecast) return state.forecast;
+  if (state.lat == null) return null;
+  const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${state.lat}&longitude=${state.lon}` +
+    `&current=temperature_2m,relative_humidity_2m,weather_code` +
+    `&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code&forecast_days=14&timezone=auto`);
+  state.forecast = await r.json();
+  return state.forecast;
+}
+
 const WMO = {
   0: ["☀️","Despejado"], 1: ["🌤️","Mayormente despejado"], 2: ["⛅","Parcialmente nublado"],
   3: ["☁️","Nublado"], 45: ["🌫️","Neblina"], 48: ["🌫️","Neblina"],
@@ -188,25 +231,87 @@ const WMO = {
   95: ["⛈️","Tormenta"], 96: ["⛈️","Tormenta"], 99: ["⛈️","Tormenta"]
 };
 
-async function renderWeather() {
+// ---------- Home ----------
+function renderHome() {
+  const zona = zonaPorAltitud(state.altitud);
+  document.getElementById("home-place").textContent =
+    `📍 ${state.lugar || zona.nombre} · ${state.altitud} m`;
+
+  const mes = new Date().getMonth() + 1;
+  const plantas = catalogoZona().filter(c => c.cat !== "animal");
+  const ahora = plantas.filter(c => c.mesesSiembra.includes(mes)).slice(0, 8);
+
+  const list = document.getElementById("plant-list");
+  list.innerHTML = ahora.length
+    ? ahora.map(c => plantCardHTML(c, "Sembrar ya")).join("")
+    : `<p class="sub">Este mes no hay siembras ideales en tu zona. Revisa el almanaque para planificar.</p>`;
+  bindPlantCards(list, "screen-home");
+
+  renderGardenSummary();
+  renderWeatherHome();
+  renderMoonStrip();
+}
+
+function renderGardenSummary() {
+  const cont = document.getElementById("garden-summary");
+  if (!state.siembras.length) { cont.innerHTML = ""; return; }
+  const n = state.siembras.length;
+  const prox = state.siembras
+    .map(s => ({ s, rest: diasRestantes(s) }))
+    .filter(x => x.rest != null && x.rest >= 0)
+    .sort((a, b) => a.rest - b.rest)[0];
+  const detalle = prox
+    ? (prox.rest === 0 ? `${getItem(prox.s.cropId).nombre}: ¡listo para cosechar!`
+       : `Próxima cosecha: ${getItem(prox.s.cropId).nombre} en ${formatDias(prox.rest)}`)
+    : "Toca para ver el seguimiento";
+  cont.innerHTML = `
+    <div class="garden-summary" id="garden-summary-card">
+      <span class="g-emoji">🌱</span>
+      <span class="g-text"><strong>Mi huerto: ${n} ${n === 1 ? "cultivo" : "cultivos"}</strong>
+      <small>${detalle}</small></span>
+      <span class="chev">›</span>
+    </div>`;
+  document.getElementById("garden-summary-card").addEventListener("click", () => {
+    renderGarden(); show("screen-garden");
+  });
+}
+
+async function renderWeatherHome() {
   const card = document.getElementById("weather-card");
+  const alerts = document.getElementById("alert-box");
   if (state.lat == null) {
     card.innerHTML = `<div class="weather-emoji">📍</div>
       <div class="weather-info"><strong>Sin ubicación exacta</strong>
-      <small>Activa tu ubicación para ver el clima y lluvia de tu zona.</small></div>`;
+      <small>Activa tu ubicación para ver clima, lluvia y alertas de tu zona.</small></div>`;
+    alerts.innerHTML = "";
     return;
   }
   try {
-    const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${state.lat}&longitude=${state.lon}&current=temperature_2m,weather_code&daily=precipitation_sum&forecast_days=7&timezone=auto`);
-    const j = await r.json();
+    const j = await getForecast();
     const [emoji, desc] = WMO[j.current.weather_code] || ["🌡️", "Clima"];
-    const lluvia7 = j.daily.precipitation_sum.reduce((a, b) => a + (b || 0), 0);
+    const lluvia7 = j.daily.precipitation_sum.slice(0, 7).reduce((a, b) => a + (b || 0), 0);
     const lluviaTxt = lluvia7 >= 15
-      ? `Buena lluvia esta semana (${Math.round(lluvia7)} mm): aprovecha para sembrar.`
+      ? `Lluvia esta semana: ${Math.round(lluvia7)} mm. Aprovecha para sembrar.`
       : `Poca lluvia esta semana (${Math.round(lluvia7)} mm): riega tus plantas.`;
     card.innerHTML = `<div class="weather-emoji">${emoji}</div>
       <div class="weather-info"><strong>${Math.round(j.current.temperature_2m)}°C</strong>
-      <small>${desc} · ${lluviaTxt}</small></div>`;
+      <small>${desc} · humedad ${j.current.relative_humidity_2m}%</small>
+      <small>${lluviaTxt}</small></div>
+      <div class="weather-minmax">↑ ${Math.round(j.daily.temperature_2m_max[0])}°<br>↓ ${Math.round(j.daily.temperature_2m_min[0])}°</div>`;
+
+    // Alertas de los próximos 7 días
+    const out = [];
+    const heladaIdx = j.daily.temperature_2m_min.slice(0, 7).findIndex(t => t <= 2);
+    if (heladaIdx >= 0) {
+      const d = new Date(j.daily.time[heladaIdx] + "T12:00:00");
+      out.push(`<div class="alert-chip frost">❄️ <span><strong>Riesgo de helada</strong> el ${DIAS_SEM[d.getDay()].toLowerCase()} ${d.getDate()}: cubre tus cultivos tiernos en la noche.</span></div>`);
+    }
+    const aguaceroIdx = j.daily.precipitation_sum.slice(0, 7).findIndex(p => p >= 25);
+    if (aguaceroIdx >= 0) {
+      const d = new Date(j.daily.time[aguaceroIdx] + "T12:00:00");
+      out.push(`<div class="alert-chip rain">🌧️ <span><strong>Lluvia fuerte</strong> el ${DIAS_SEM[d.getDay()].toLowerCase()} ${d.getDate()}: revisa drenajes y no abones ese día.</span></div>`);
+    }
+    alerts.innerHTML = out.join("");
   } catch {
     card.innerHTML = `<div class="weather-loading">No se pudo cargar el clima (revisa tu conexión).</div>`;
   }
@@ -215,7 +320,6 @@ async function renderWeather() {
 // ---------- Luna ----------
 const SINODICO = 29.53058867;
 function faseLunar(fecha = new Date()) {
-  // Luna nueva de referencia: 6 enero 2000, 18:14 UTC
   const ref = Date.UTC(2000, 0, 6, 18, 14);
   const dias = (fecha.getTime() - ref) / 86400000;
   const edad = ((dias % SINODICO) + SINODICO) % SINODICO;
@@ -230,10 +334,10 @@ function faseLunar(fecha = new Date()) {
 }
 
 const CONSEJO_LUNA = {
-  nueva: "Días de descanso: prepara la tierra, abona y haz compost. Evita sembrar.",
-  creciente: "Buen momento para sembrar plantas que dan fruto sobre la tierra: tomate, maíz, fréjol, pimiento.",
-  llena: "Trasplanta y cosecha frutos. La savia está arriba: evita podar.",
-  menguante: "Ideal para raíces y hojas: papa, zanahoria, cebolla, lechuga. También para podar y desyerbar."
+  nueva: "Descanso: prepara la tierra, abona y haz compost. Evita sembrar.",
+  creciente: "Siembra lo que da fruto sobre la tierra: tomate, maíz, fréjol, pimiento.",
+  llena: "Trasplanta y cosecha frutos. Evita podar.",
+  menguante: "Siembra raíces y hojas: papa, zanahoria, cebolla, lechuga. Buen momento para podar."
 };
 
 function renderMoonStrip() {
@@ -244,89 +348,340 @@ function renderMoonStrip() {
     <span class="m-text"><strong>${f.nombre}</strong>
     <small>${CONSEJO_LUNA[f.ciclo]}</small></span>
     <span class="chev">›</span>`;
-  strip.onclick = () => { renderMoonScreen(); show("screen-moon"); };
+  strip.onclick = () => { show("screen-almanac"); renderAlmanac(); };
 }
 
-function renderMoonScreen() {
-  const f = faseLunar();
-  document.getElementById("moon-detail").innerHTML = `
-    <div class="moon-big">
-      <div class="m-emoji">${f.emoji}</div>
-      <h3>${f.nombre}</h3>
-      <p>Día ${Math.floor(f.edad) + 1} del ciclo lunar</p>
-    </div>
-    <div class="moon-advice"><strong>Hoy:</strong> ${CONSEJO_LUNA[f.ciclo]}</div>
-    <h3 class="list-title">Próximos 30 días</h3>`;
+// ---------- Almanaque ----------
+let almanacMes = new Date().getMonth() + 1;
 
-  const items = [];
-  let prev = f.nombre;
-  for (let i = 1; i <= 30; i++) {
-    const d = new Date(Date.now() + i * 86400000);
-    const fd = faseLunar(d);
-    if (fd.nombre !== prev && ["Luna nueva","Cuarto creciente","Luna llena","Cuarto menguante"].includes(fd.nombre)) {
-      items.push(`<div class="moon-list-item">
-        <span class="m-emoji">${fd.emoji}</span>
-        <span><strong>${fd.nombre}</strong>
-        <small>${d.getDate()} de ${MESES[d.getMonth()].toLowerCase()} · ${CONSEJO_LUNA[fd.ciclo]}</small></span>
-      </div>`);
-      prev = fd.nombre;
+async function renderAlmanac() {
+  renderBestDays();
+  renderMonthChips();
+  renderAlmanacList();
+}
+
+async function renderBestDays() {
+  const cont = document.getElementById("best-days");
+  let forecast = null;
+  try { forecast = await getForecast(); } catch { /* sin conexión */ }
+
+  const dias = [];
+  for (let i = 0; i < 10; i++) {
+    const fecha = new Date(Date.now() + i * 86400000);
+    const f = faseLunar(fecha);
+    let score = { nueva: 0, creciente: 2, llena: 1, menguante: 2 }[f.ciclo];
+    let notas = [CONSEJO_LUNA[f.ciclo]];
+    let iconos = f.emoji;
+
+    if (forecast && forecast.daily && forecast.daily.time[i]) {
+      const lluvia = forecast.daily.precipitation_sum[i] || 0;
+      const tmin = forecast.daily.temperature_2m_min[i];
+      const code = forecast.daily.weather_code[i];
+      iconos += " " + ((WMO[code] || ["🌡️"])[0]);
+      if (tmin <= 2) { score -= 3; notas = ["❄️ Riesgo de helada: no siembres, cubre lo sembrado."]; }
+      else if (lluvia >= 25) { score -= 2; notas.push("Lluvia fuerte: mejor no sembrar."); }
+      else if (lluvia >= 3) { score += 2; notas.push("Suelo húmedo: buen día para sembrar."); }
+      else if (lluvia >= 0.5) { score += 1; notas.push("Lluvia ligera."); }
+      else { notas.push("Sin lluvia: riega después de sembrar."); }
     }
+    dias.push({ fecha, f, score, notas, iconos });
   }
-  document.getElementById("moon-upcoming").innerHTML = items.join("");
+
+  const corte = [...dias].sort((a, b) => b.score - a.score)[2]?.score ?? 3;
+  cont.innerHTML = dias.map(d => {
+    const best = d.score >= Math.max(corte, 3);
+    const hoy = d.fecha.toDateString() === new Date().toDateString();
+    return `
+    <div class="day-card ${best ? "best" : ""}">
+      <div class="day-date"><small>${hoy ? "Hoy" : DIAS_SEM[d.fecha.getDay()]}</small><strong>${d.fecha.getDate()}</strong></div>
+      <div class="day-icons">${d.iconos}</div>
+      <div class="day-text">${best ? '<span class="best-tag">Buen día para sembrar</span>' : ""}
+        <strong>${d.f.nombre}</strong>${d.notas.join(" ")}</div>
+    </div>`;
+  }).join("");
 }
 
-// ---------- Pantalla 5: Detalle ----------
-function getPlanta() { return CULTIVOS.find(c => c.id === state.plantaActual); }
+function renderMonthChips() {
+  const cont = document.getElementById("month-chips");
+  cont.innerHTML = MESES.map((m, i) =>
+    `<button class="${i + 1 === almanacMes ? "on" : ""}" data-mes="${i + 1}">${m}</button>`).join("");
+  cont.querySelectorAll("button").forEach(b => {
+    b.addEventListener("click", () => { almanacMes = +b.dataset.mes; renderMonthChips(); renderAlmanacList(); });
+  });
+  const on = cont.querySelector(".on");
+  if (on) on.scrollIntoView({ inline: "center", block: "nearest" });
+}
 
-function renderPlantDetail() {
-  const c = getPlanta();
+function renderAlmanacList() {
+  const cont = document.getElementById("almanac-list");
+  const lista = catalogoZona().filter(c => c.cat !== "animal" && c.mesesSiembra.includes(almanacMes));
+  cont.innerHTML = lista.length
+    ? lista.map(c => plantCardHTML(c, catInfo(c.cat).nombre, true)).join("")
+    : `<p class="sub">No hay siembras recomendadas en ${MESES[almanacMes - 1].toLowerCase()} para tu zona.</p>`;
+  bindPlantCards(cont, "screen-almanac");
+}
+
+// ---------- Mi huerto (seguimiento) ----------
+function diasTranscurridos(s) {
+  return Math.max(0, Math.floor((Date.now() - new Date(s.fecha + "T12:00:00").getTime()) / 86400000));
+}
+function diasRestantes(s) {
+  const c = getItem(s.cropId);
+  if (!c) return null;
+  return Math.max(0, c.diasProduccion - diasTranscurridos(s));
+}
+
+function renderGarden() {
+  const cont = document.getElementById("garden-list");
+  if (!state.siembras.length) {
+    cont.innerHTML = `
+      <div class="empty-state">
+        <div class="e-emoji">🌱</div>
+        <strong>Aún no sigues ningún cultivo</strong>
+        Agrega lo que ya tienes sembrado o lo que vas a sembrar, y te avisamos cuándo cosechar.
+      </div>`;
+    return;
+  }
+  cont.innerHTML = state.siembras.map(s => {
+    const c = getItem(s.cropId);
+    if (!c) return "";
+    const trans = diasTranscurridos(s);
+    const total = c.diasProduccion;
+    const pct = Math.min(100, Math.round(trans / total * 100));
+    const rest = Math.max(0, total - trans);
+    const enProduccion = trans >= total && c.modelo !== "ciclo";
+    const listo = trans >= total && c.modelo === "ciclo";
+    const status = enProduccion ? `<span class="track-status st-cont">En producción</span>`
+      : listo ? `<span class="track-status st-ready">¡Listo para cosechar!</span>`
+      : `<span class="track-status st-grow">Creciendo</span>`;
+    const fechaCosecha = new Date(new Date(s.fecha + "T12:00:00").getTime() + total * 86400000);
+    const meta = listo || enProduccion
+      ? (enProduccion ? `Produce desde ${fechaCosecha.getDate()} de ${MESES[fechaCosecha.getMonth()].toLowerCase()}` : `Cumplió su ciclo de ${formatDias(total)}`)
+      : `Faltan ${formatDias(rest)} · ${c.modelo === "ciclo" && c.cat !== "animal" ? "cosecha" : c.cat === "animal" ? "produce desde" : "primera cosecha"} ~${fechaCosecha.getDate()} de ${MESES[fechaCosecha.getMonth()].toLowerCase()}`;
+    const unidad = UNIDAD_INFO[c.unidad];
+    return `
+    <div class="track-card" data-sid="${s.id}">
+      <div class="track-head">
+        <span class="plant-thumb t-${c.cat}">${c.emoji}</span>
+        <span class="track-title">
+          <strong>${c.nombre}</strong>
+          <small>${s.cantidad} ${s.cantidad === 1 ? unidad.singular : unidad.plural} · ${c.cat === "animal" ? "desde" : "sembrado"} hace ${formatDias(Math.max(trans, 0))}</small>
+        </span>
+        ${status}
+      </div>
+      <div class="track-bar"><span style="width:${pct}%"></span></div>
+      <div class="track-meta"><span>${meta}</span><span>${pct}%</span></div>
+      ${s.nota ? `<div class="track-note">📝 ${s.nota}</div>` : ""}
+      <div class="track-actions">
+        <button class="see" data-see="${c.id}">Ver guía</button>
+        ${listo ? `<button class="harvest" data-harvest="${s.id}">✓ Cosechado</button>` : `<button data-del="${s.id}">Quitar</button>`}
+      </div>
+    </div>`;
+  }).join("");
+
+  cont.querySelectorAll("[data-see]").forEach(b => b.addEventListener("click", () => {
+    state.plantaActual = b.dataset.see; state.backTo = "screen-garden";
+    renderPlantDetail(); show("screen-plant");
+  }));
+  cont.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", () => {
+    if (confirm("¿Quitar este cultivo del seguimiento?")) {
+      state.siembras = state.siembras.filter(s => s.id !== b.dataset.del);
+      saveState(); renderGarden();
+    }
+  }));
+  cont.querySelectorAll("[data-harvest]").forEach(b => b.addEventListener("click", () => {
+    state.siembras = state.siembras.filter(s => s.id !== b.dataset.harvest);
+    saveState(); renderGarden();
+  }));
+}
+
+// ---------- Agregar siembra ----------
+let addCropId = null;
+
+document.getElementById("btn-add-open").addEventListener("click", () => openAdd(null));
+document.getElementById("btn-track").addEventListener("click", () => openAdd(state.plantaActual));
+
+function openAdd(cropId) {
+  addCropId = cropId;
+  const pick = document.getElementById("add-step-pick");
+  const form = document.getElementById("add-step-form");
+  if (cropId) {
+    pick.hidden = true; form.hidden = false;
+    fillAddForm();
+  } else {
+    pick.hidden = false; form.hidden = true;
+    document.getElementById("add-search").value = "";
+    renderAddList("");
+  }
+  document.getElementById("add-date").value = new Date().toISOString().slice(0, 10);
+  show("screen-add");
+}
+
+function renderAddList(q) {
+  const cont = document.getElementById("add-list");
+  const lista = catalogoZona().filter(c => c.nombre.toLowerCase().includes(q.toLowerCase()));
+  cont.innerHTML = lista.map(c => plantCardHTML(c, catInfo(c.cat).nombre, true)).join("");
+  cont.querySelectorAll(".plant-card").forEach(card => {
+    card.addEventListener("click", () => {
+      addCropId = card.dataset.plant;
+      document.getElementById("add-step-pick").hidden = true;
+      document.getElementById("add-step-form").hidden = false;
+      fillAddForm();
+    });
+  });
+}
+
+document.getElementById("add-search").addEventListener("input", e => renderAddList(e.target.value));
+
+function fillAddForm() {
+  const c = getItem(addCropId);
+  const u = UNIDAD_INFO[c.unidad];
+  document.getElementById("add-selected").innerHTML =
+    `<span class="a-emoji">${c.emoji}</span> ${c.nombre}`;
+  document.getElementById("add-qty-label").textContent =
+    c.unidad === "m2" ? "¿Cuántos m² sembraste?" : `¿Cuántos ${u.plural}?`;
+  document.getElementById("add-qty").value = c.unidad === "m2" ? 10 : (c.unidad === "animal" ? 5 : 5);
+}
+
+document.getElementById("btn-add-save").addEventListener("click", () => {
+  const fecha = document.getElementById("add-date").value;
+  const cantidad = Math.max(1, +document.getElementById("add-qty").value || 1);
+  const nota = document.getElementById("add-note").value.trim();
+  if (!fecha || !addCropId) return;
+  state.siembras.unshift({
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    cropId: addCropId, fecha, cantidad, nota
+  });
+  saveState();
+  document.getElementById("add-note").value = "";
+  renderGarden();
+  show("screen-garden");
+});
+
+// ---------- Explorar ----------
+let exploreCat = "todos";
+
+function renderExplore() {
+  const chips = document.getElementById("cat-chips");
+  chips.innerHTML = [`<button class="${exploreCat === "todos" ? "on" : ""}" data-cat="todos">Todos</button>`]
+    .concat(CATEGORIAS.map(c =>
+      `<button class="${exploreCat === c.id ? "on" : ""}" data-cat="${c.id}">${c.emoji} ${c.nombre}</button>`)).join("");
+  chips.querySelectorAll("button").forEach(b => {
+    b.addEventListener("click", () => { exploreCat = b.dataset.cat; renderExplore(); });
+  });
+  renderExploreList();
+}
+
+function renderExploreList() {
+  const q = document.getElementById("search-input").value.toLowerCase();
+  const soloZona = document.getElementById("zone-only").checked;
+  const cont = document.getElementById("explore-list");
   const mes = new Date().getMonth() + 1;
-  const fechaCosecha = new Date(Date.now() + c.diasCosecha * 86400000);
-  const cal = MESES.map((m, i) =>
-    `<div class="cal-month ${c.mesesSiembra.includes(i + 1) ? "on" : ""}">${m.slice(0, 1)}</div>`).join("");
+
+  let lista = CULTIVOS.filter(c =>
+    (exploreCat === "todos" || c.cat === exploreCat) &&
+    c.nombre.toLowerCase().includes(q) &&
+    (!soloZona || aptoZona(c))
+  );
+
+  cont.innerHTML = lista.length
+    ? lista.map(c => {
+        if (!aptoZona(c)) return plantCardHTML(c, "No apto en tu zona", true);
+        if (c.cat === "animal") return plantCardHTML(c, "Todo el año");
+        return c.mesesSiembra.includes(mes)
+          ? plantCardHTML(c, "Sembrar ya")
+          : plantCardHTML(c, proximaSiembra(c), true);
+      }).join("")
+    : `<p class="sub">No encontramos nada con esa búsqueda.</p>`;
+  bindPlantCards(cont, "screen-explore");
+}
+
+document.getElementById("search-input").addEventListener("input", renderExploreList);
+document.getElementById("zone-only").addEventListener("change", renderExploreList);
+
+// ---------- Detalle ----------
+function renderPlantDetail() {
+  const c = getItem(state.plantaActual);
+  const esAnimal = c.cat === "animal";
+  const mes = new Date().getMonth() + 1;
+  const info = catInfo(c.cat);
+
+  let cuando;
+  if (esAnimal) {
+    cuando = c.modelo === "ciclo"
+      ? `Listo para la venta en ${formatDias(c.diasProduccion)}.`
+      : `Empieza a producir en ${formatDias(c.diasProduccion)}.${c.vida ? " " + c.vida + "." : ""}`;
+  } else if (c.modelo !== "ciclo") {
+    cuando = `Primera cosecha en ${formatDias(c.diasProduccion)}, luego produce cada ${c.modelo === "anual" ? "año" : "mes"}.${c.vida ? " " + c.vida + "." : ""}`;
+  } else {
+    const fechaCosecha = new Date(Date.now() + c.diasProduccion * 86400000);
+    cuando = c.mesesSiembra.includes(mes)
+      ? `Si siembras hoy, cosechas hacia ${MESES[fechaCosecha.getMonth()].toLowerCase()} (${formatDias(c.diasProduccion)}).`
+      : `Mejor espera: ${proximaSiembra(c).toLowerCase()} es su época de siembra.`;
+  }
+
+  const cal = esAnimal ? "" : `
+    <h3 class="list-title">Meses de siembra</h3>
+    <div class="calendar-row">${MESES.map((m, i) =>
+      `<div class="cal-month ${c.mesesSiembra.includes(i + 1) ? "on" : ""}">${m[0]}</div>`).join("")}</div>`;
+
+  const rendTxt = c.modelo === "mensual" ? `${c.rendimiento} ${c.rendUnidad}/mes`
+    : c.modelo === "anual" ? `${c.rendimiento} ${c.rendUnidad}/año`
+    : `${c.rendimiento} ${c.rendUnidad}`;
+  const unidadBase = UNIDAD_INFO[c.unidad].singular;
 
   document.getElementById("plant-detail").innerHTML = `
     <div class="detail-hero">
-      <div class="d-emoji">${c.emoji}</div>
+      <div class="d-emoji t-${c.cat}">${c.emoji}</div>
+      <div class="detail-cat">${info.nombre}</div>
       <h2>${c.nombre}</h2>
-      <p class="sub">${c.mesesSiembra.includes(mes)
-        ? `Si siembras hoy, cosechas hacia ${MESES[fechaCosecha.getMonth()].toLowerCase()} (${formatDias(c.diasCosecha)}).`
-        : `Mejor espera: ${proximaSiembra(c).toLowerCase()} es su época de siembra.`}</p>
+      <p class="sub">${cuando}</p>
     </div>
     <div class="tip-box">💡 ${c.tip}</div>
-    <h3 class="list-title">Meses de siembra</h3>
-    <div class="calendar-row">${cal}</div>
+    <div class="econ-strip">
+      <div><small>Inversión por ${unidadBase}</small><strong>$${fmt(c.inversion)}</strong></div>
+      <div><small>Produce por ${unidadBase}</small><strong>${rendTxt}</strong></div>
+      <div><small>Precio local</small><strong>$${fmt(c.precio)}/${c.rendUnidad.replace("kg de miel","kg")}</strong></div>
+    </div>
+    ${cal}
     <div class="detail-grid">
-      <div class="detail-item"><small>Tipo de plantación</small><strong>${c.tipo}</strong></div>
-      <div class="detail-item"><small>Distancia</small><strong>${c.distancia}</strong></div>
-      <div class="detail-item"><small>Riego</small><strong>${c.riego}</strong></div>
-      <div class="detail-item"><small>Tiempo a cosecha</small><strong>${formatDias(c.diasCosecha)}</strong></div>
-      <div class="detail-item"><small>Luna ideal</small><strong>${c.luna === "creciente" ? "🌒 Creciente" : "🌘 Menguante"}</strong></div>
+      <div class="detail-item"><small>${esAnimal ? "Manejo" : "Tipo de plantación"}</small><strong>${c.tipo}</strong></div>
+      <div class="detail-item"><small>${esAnimal ? "Espacio" : "Distancia"}</small><strong>${c.distancia}</strong></div>
+      <div class="detail-item"><small>${esAnimal ? "Alimentación" : "Riego"}</small><strong>${c.riego}</strong></div>
+      <div class="detail-item"><small>${esAnimal ? "Tiempo a producción" : "Tiempo a cosecha"}</small><strong>${formatDias(c.diasProduccion)}</strong></div>
+      ${c.luna ? `<div class="detail-item"><small>Luna ideal</small><strong>${c.luna === "creciente" ? "🌒 Creciente" : "🌘 Menguante"}</strong></div>` : ""}
       <div class="detail-item"><small>Altitud</small><strong>${c.altMin} – ${c.altMax} m</strong></div>
     </div>`;
 }
 
-document.getElementById("btn-calc").addEventListener("click", () => {
-  setupCalc();
-  show("screen-calc");
-});
+document.getElementById("btn-calc").addEventListener("click", () => { setupCalc(); show("screen-calc"); });
 
-// ---------- Pantalla 6: Calculadora ----------
+// ---------- Calculadora ----------
 const slider = document.getElementById("area-slider");
 
 function setupCalc() {
-  const c = getPlanta();
-  const esp = ESPACIOS.find(e => e.id === state.espacio);
+  const c = getItem(state.plantaActual);
+  const u = UNIDAD_INFO[c.unidad];
   document.getElementById("calc-title").textContent = `${c.emoji} ${c.nombre}`;
+  document.getElementById("calc-question").textContent = u.pregunta;
 
-  const maxArea = { maceta: 20, huerto: 500, parcela: 20000 }[state.espacio];
-  slider.max = maxArea;
-  slider.value = Math.min(esp.areaDefault, maxArea);
+  let max, presets, def;
+  if (c.unidad === "m2") {
+    max = { maceta: 20, huerto: 500, parcela: 20000 }[state.espacio];
+    presets = { maceta: [2, 5, 10, 20], huerto: [25, 50, 100, 250, 500], parcela: [500, 1000, 5000, 10000, 20000] }[state.espacio];
+    def = Math.min(ESPACIOS.find(e => e.id === state.espacio).areaDefault, max);
+  } else if (c.unidad === "animal") {
+    max = 100; presets = [1, 3, 5, 10, 25, 50]; def = 5;
+  } else if (c.unidad === "arbol") {
+    max = 100; presets = [1, 3, 5, 10, 25, 50]; def = 5;
+  } else {
+    max = 300; presets = [5, 10, 25, 50, 100]; def = 10;
+  }
+  slider.min = 1; slider.max = max; slider.value = def;
 
-  const presets = { maceta: [2, 5, 10, 20], huerto: [25, 50, 100, 250, 500], parcela: [500, 1000, 5000, 10000, 20000] }[state.espacio];
   const pc = document.getElementById("area-presets");
   pc.innerHTML = presets.map(p =>
-    `<button data-area="${p}">${p >= 10000 ? (p / 10000) + " ha" : p + " m²"}</button>`).join("");
+    `<button data-area="${p}">${c.unidad === "m2" && p >= 10000 ? (p / 10000) + " ha" : p}</button>`).join("");
   pc.querySelectorAll("button").forEach(b => {
     b.addEventListener("click", () => { slider.value = b.dataset.area; renderCalc(); });
   });
@@ -337,38 +692,62 @@ function setupCalc() {
 slider.addEventListener("input", renderCalc);
 
 function renderCalc() {
-  const c = getPlanta();
-  const area = +slider.value;
-  document.getElementById("area-num").textContent =
-    area >= 10000 ? (area / 10000).toFixed(1).replace(".0", "") + " ha —" : area;
-  document.querySelectorAll("#area-presets button").forEach(b =>
-    b.classList.toggle("on", +b.dataset.area === area));
+  const c = getItem(state.plantaActual);
+  const u = UNIDAD_INFO[c.unidad];
+  const n = +slider.value;
 
-  const inversion = c.costoM2 * area;
-  const cosechaKg = c.rendimientoKgM2 * area;
-  const valorVenta = cosechaKg * c.precioKg;
-  const ganancia = valorVenta - inversion;
+  document.getElementById("area-unit").textContent = n === 1 ? u.singular : u.plural;
+  document.getElementById("area-num").textContent =
+    c.unidad === "m2" && n >= 10000 ? (n / 10000).toFixed(1).replace(".0", "") + " ha —" : n;
+  document.querySelectorAll("#area-presets button").forEach(b =>
+    b.classList.toggle("on", +b.dataset.area === n));
+
+  const inversion = c.inversion * n;
+  const gasto = c.gastoCiclo * n;
+  const prod = c.rendimiento * n;
+  const venta = prod * c.precio;
+  const rU = c.rendUnidad;
+  let rows, nota;
+
+  if (c.modelo === "ciclo") {
+    const ganancia = venta - inversion - gasto;
+    rows = `
+      <div class="calc-row"><span class="label">Inversión inicial</span><span>$${fmt(inversion)}</span></div>
+      <div class="calc-row"><span class="label">Gastos del ciclo (${c.cat === "animal" ? "alimento" : "insumos"})</span><span>$${fmt(gasto)}</span></div>
+      <div class="calc-row"><span class="label">${c.cat === "animal" ? "Producción" : "Cosecha"} en ${formatDias(c.diasProduccion)}</span><span>${fmt(prod)} ${rU}</span></div>
+      <div class="calc-row"><span class="label">Venta estimada</span><span>$${fmt(venta)}</span></div>
+      <div class="calc-row total"><span class="label">Ganancia del ciclo</span><span>$${fmt(ganancia)}</span></div>`;
+    nota = `Ciclo de ${formatDias(c.diasProduccion)}.`;
+  } else if (c.modelo === "anual") {
+    const gananciaAnual = venta - gasto;
+    const payback = gananciaAnual > 0 ? Math.ceil(inversion / gananciaAnual) : null;
+    rows = `
+      <div class="calc-row"><span class="label">Inversión inicial</span><span>$${fmt(inversion)}</span></div>
+      <div class="calc-row"><span class="label">Primera ${c.cat === "animal" ? "producción" : "cosecha"}</span><span>en ${formatDias(c.diasProduccion)}</span></div>
+      <div class="calc-row"><span class="label">Producción por año</span><span>${fmt(prod)} ${rU}</span></div>
+      <div class="calc-row"><span class="label">Gastos por año</span><span>$${fmt(gasto)}</span></div>
+      <div class="calc-row"><span class="label">Ingreso por año</span><span>$${fmt(venta)}</span></div>
+      <div class="calc-row total"><span class="label">Ganancia por año</span><span>$${fmt(gananciaAnual)}</span></div>`;
+    nota = payback ? `Recuperas la inversión en ~${payback} ${payback === 1 ? "año" : "años"} de producción.` : "";
+  } else {
+    const gananciaMes = venta - gasto;
+    const payback = gananciaMes > 0 ? Math.ceil(inversion / gananciaMes) : null;
+    rows = `
+      <div class="calc-row"><span class="label">Inversión inicial</span><span>$${fmt(inversion)}</span></div>
+      <div class="calc-row"><span class="label">Producción por mes</span><span>${fmt(prod)} ${rU}</span></div>
+      <div class="calc-row"><span class="label">Gastos por mes (alimento)</span><span>$${fmt(gasto)}</span></div>
+      <div class="calc-row"><span class="label">Ingreso por mes</span><span>$${fmt(venta)}</span></div>
+      <div class="calc-row total"><span class="label">Ganancia por mes</span><span>$${fmt(gananciaMes)}</span></div>`;
+    nota = payback ? `Recuperas la inversión en ~${payback} ${payback === 1 ? "mes" : "meses"}.` : "";
+  }
 
   document.getElementById("calc-results").innerHTML = `
-    <div class="calc-card">
-      <div class="calc-row"><span class="label">Inversión (semilla, abono, insumos)</span><span>$${fmt(inversion)}</span></div>
-      <div class="calc-row"><span class="label">Cosecha estimada</span><span>${fmt(cosechaKg)} kg</span></div>
-      <div class="calc-row"><span class="label">Valor si vendes todo</span><span>$${fmt(valorVenta)}</span></div>
-      <div class="calc-row total"><span class="label">Ganancia estimada</span><span>$${fmt(ganancia)}</span></div>
-    </div>
-    <p class="calc-note">Valores referenciales para cosecha en ${formatDias(c.diasCosecha)}. No incluye tu mano de obra ni transporte. Los precios de venta varían según el mercado local.</p>`;
+    <div class="calc-card">${rows}</div>
+    <p class="calc-note">${nota} Precios referenciales: ${PRECIOS_META.fuente.toLowerCase()} de ${PRECIOS_META.pais} (${PRECIOS_META.actualizado}). No incluye tu mano de obra ni transporte.</p>`;
 }
 
-function fmt(n) {
-  return n >= 100 ? Math.round(n).toLocaleString("es-EC") : (Math.round(n * 100) / 100).toLocaleString("es-EC");
-}
-
-// ---------- Ajustes: volver a empezar ----------
-document.getElementById("btn-settings").addEventListener("click", () => {
-  show("screen-location");
-});
-
-// ---------- Inicio ----------
+// ---------- Ajustes / inicio ----------
+document.getElementById("btn-settings").addEventListener("click", () => show("screen-location"));
 document.getElementById("btn-start").addEventListener("click", () => show("screen-location"));
 
 renderManualZones();

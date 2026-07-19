@@ -1,15 +1,22 @@
-/* Mi Huerto — mobile-first, estilo limpio tipo Airbnb */
+/* Mi Huerto — mobile-first, estilo limpio y profesional */
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 :root {
-  --green: #2d7a46;
-  --green-dark: #1f5c33;
-  --green-light: #eaf5ee;
-  --ink: #222222;
-  --gray: #717171;
-  --line: #ebebeb;
-  --bg: #ffffff;
-  --card-shadow: 0 1px 2px rgba(0,0,0,.08), 0 4px 12px rgba(0,0,0,.05);
+  --green: #1f7a3d;
+  --green-dark: #175c2e;
+  --green-light: #e9f4ec;
+  --amber: #b45309;
+  --amber-light: #fef3e2;
+  --red-light: #fdecec;
+  --red: #b91c1c;
+  --blue-light: #eef4fb;
+  --ink: #1a1a1a;
+  --gray: #6f6f6f;
+  --gray-2: #a3a3a3;
+  --line: #e8e8e8;
+  --bg: #fafaf8;
+  --card: #ffffff;
+  --shadow: 0 1px 2px rgba(20,40,25,.06), 0 6px 20px rgba(20,40,25,.05);
   --radius: 16px;
 }
 
@@ -19,9 +26,11 @@ body {
   color: var(--ink);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
+button { font: inherit; color: inherit; }
 
-/* Pantallas */
+/* ---------- Pantallas ---------- */
 .screen {
   display: none;
   min-height: 100dvh;
@@ -30,288 +39,280 @@ body {
   margin: 0 auto;
 }
 .screen.active { display: flex; }
+.content { flex: 1; padding: 8px 20px 130px; }
 
-.content {
-  flex: 1;
-  padding: 8px 24px 120px;
-}
+h1 { font-size: 2.1rem; font-weight: 800; letter-spacing: -.02em; }
+h2 { font-size: 1.45rem; font-weight: 800; letter-spacing: -.01em; margin-bottom: 6px; }
+.page-title { margin-top: 4px; }
+h3.list-title { font-size: 1rem; font-weight: 700; margin: 26px 0 12px; }
+.section-head { display: flex; align-items: baseline; justify-content: space-between; }
+.section-head .list-title { margin-bottom: 12px; }
+.link-btn { border: none; background: none; color: var(--green); font-weight: 600; font-size: .85rem; cursor: pointer; }
+.lead { font-size: 1.12rem; margin-top: 12px; line-height: 1.5; }
+.sub { color: var(--gray); font-size: .93rem; margin-bottom: 18px; line-height: 1.5; }
+.hint { color: var(--gray); font-size: .85rem; margin-top: 14px; text-align: center; min-height: 1.2em; }
+.mt { margin-top: 20px; }
 
-h1 { font-size: 2rem; font-weight: 700; }
-h2 { font-size: 1.5rem; font-weight: 700; margin-bottom: 8px; }
-h3.list-title { font-size: 1.05rem; margin: 28px 0 12px; }
-.lead { font-size: 1.1rem; color: var(--ink); margin-top: 12px; }
-.sub { color: var(--gray); font-size: .95rem; margin-bottom: 20px; line-height: 1.45; }
-.hint { color: var(--gray); font-size: .85rem; margin-top: 16px; text-align: center; min-height: 1.2em; }
+/* ---------- Bienvenida ---------- */
+.hero { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 24px; text-align: center; }
+.hero-emoji { font-size: 4.5rem; margin-bottom: 14px; }
+.hero .sub { margin-top: 14px; }
 
-/* Bienvenida */
-.hero {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  padding: 24px;
-  text-align: center;
-}
-.hero-emoji { font-size: 4.5rem; margin-bottom: 16px; }
-.hero .sub { margin-top: 16px; }
-
-/* Header con volver + progreso */
-.screen-header {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 16px 24px;
-}
+/* ---------- Header onboarding ---------- */
+.screen-header { display: flex; align-items: center; gap: 16px; padding: 16px 20px; }
 .btn-back {
-  width: 40px; height: 40px;
-  border: 1px solid var(--line);
-  border-radius: 50%;
-  background: #fff;
-  font-size: 1.1rem;
-  cursor: pointer;
-  flex-shrink: 0;
+  width: 40px; height: 40px; border: 1px solid var(--line); border-radius: 50%;
+  background: var(--card); font-size: 1.1rem; cursor: pointer; flex-shrink: 0; box-shadow: var(--shadow);
 }
-.progress {
-  flex: 1;
-  height: 4px;
-  background: var(--line);
-  border-radius: 2px;
-  overflow: hidden;
-}
-.progress span { display: block; height: 100%; background: var(--ink); border-radius: 2px; }
+.progress { flex: 1; height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
+.progress span { display: block; height: 100%; background: var(--green); border-radius: 2px; }
 
-/* Tarjetas de opción (una decisión por pantalla) */
+/* ---------- Tarjetas de opción ---------- */
 .option-card {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  width: 100%;
-  padding: 18px;
-  margin-bottom: 12px;
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  cursor: pointer;
-  text-align: left;
-  font: inherit;
-  transition: border-color .15s, transform .05s;
+  display: flex; align-items: center; gap: 14px; width: 100%;
+  padding: 16px; margin-bottom: 12px;
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  cursor: pointer; text-align: left; box-shadow: var(--shadow);
+  transition: transform .05s;
 }
 .option-card:active { transform: scale(.98); }
-.option-card:hover { border-color: var(--ink); }
-.option-emoji { font-size: 1.8rem; }
+.option-card.accent { border-color: var(--green); background: var(--green-light); }
+.option-emoji { font-size: 1.7rem; }
 .option-text { display: flex; flex-direction: column; gap: 2px; }
-.option-text strong { font-size: 1rem; }
-.option-text small { color: var(--gray); font-size: .85rem; }
+.option-text strong { font-size: .98rem; }
+.option-text small { color: var(--gray); font-size: .84rem; }
+.divider-text { text-align: center; color: var(--gray); font-size: .84rem; margin: 18px 0 14px; }
 
-.divider-text {
-  text-align: center;
-  color: var(--gray);
-  font-size: .85rem;
-  margin: 20px 0 16px;
-}
-
-/* Botón principal fijo abajo */
+/* ---------- Botones ---------- */
 .bottom-bar {
-  position: fixed;
-  bottom: 0; left: 0; right: 0;
-  max-width: 480px;
-  margin: 0 auto;
-  padding: 16px 24px calc(16px + env(safe-area-inset-bottom));
-  background: linear-gradient(transparent, #fff 30%);
+  position: fixed; bottom: 0; left: 0; right: 0; max-width: 480px; margin: 0 auto;
+  padding: 14px 20px calc(14px + env(safe-area-inset-bottom));
+  background: linear-gradient(transparent, var(--bg) 35%);
 }
+.bottom-bar.above-tabs { bottom: 62px; }
+.bottom-bar.dual { display: flex; gap: 10px; }
 .btn-primary {
-  width: 100%;
-  padding: 16px;
-  background: var(--green);
-  color: #fff;
-  border: none;
-  border-radius: 12px;
-  font-size: 1.05rem;
-  font-weight: 600;
-  cursor: pointer;
+  width: 100%; padding: 15px 12px; background: var(--green); color: #fff;
+  border: none; border-radius: 12px; font-size: 1rem; font-weight: 700; cursor: pointer;
+  box-shadow: 0 4px 14px rgba(31,122,61,.3);
 }
 .btn-primary:active { background: var(--green-dark); }
+.btn-secondary {
+  width: 100%; padding: 15px 12px; background: var(--card); color: var(--ink);
+  border: 1.5px solid var(--ink); border-radius: 12px; font-size: 1rem; font-weight: 700; cursor: pointer;
+}
 
-/* Home */
-.home-top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  padding-top: 20px;
-  margin-bottom: 16px;
+/* ---------- Home ---------- */
+.home-top { display: flex; padding-top: 14px; margin-bottom: 10px; }
+.location-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--line); background: var(--card); border-radius: 20px;
+  padding: 8px 14px; font-size: .84rem; font-weight: 600; cursor: pointer; box-shadow: var(--shadow);
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.home-greeting { color: var(--gray); font-size: .9rem; margin-bottom: 4px; }
-.btn-icon {
-  width: 40px; height: 40px;
-  border: 1px solid var(--line);
-  border-radius: 50%;
-  background: #fff;
-  font-size: 1rem;
-  cursor: pointer;
+
+.alert-chip {
+  display: flex; gap: 10px; align-items: center;
+  border-radius: 12px; padding: 12px 14px; margin-bottom: 12px;
+  font-size: .88rem; line-height: 1.4; font-weight: 500;
 }
+.alert-chip.frost { background: var(--blue-light); }
+.alert-chip.rain { background: var(--amber-light); }
 
 .weather-card {
-  background: linear-gradient(135deg, #eaf5ee, #f0f7ff);
-  border-radius: var(--radius);
-  padding: 18px;
-  display: flex;
-  align-items: center;
-  gap: 16px;
+  background: linear-gradient(135deg, #e7f2ea, #e8f0fa);
+  border-radius: var(--radius); padding: 18px;
+  display: flex; align-items: center; gap: 16px; box-shadow: var(--shadow);
 }
 .weather-emoji { font-size: 2.6rem; }
-.weather-info strong { font-size: 1.5rem; display: block; }
-.weather-info small { color: var(--gray); font-size: .85rem; line-height: 1.4; }
+.weather-info { flex: 1; }
+.weather-info strong { font-size: 1.55rem; display: block; letter-spacing: -.02em; }
+.weather-info small { color: var(--gray); font-size: .84rem; line-height: 1.45; display: block; }
+.weather-minmax { font-size: .8rem; color: var(--gray); text-align: right; line-height: 1.5; }
 .weather-loading { color: var(--gray); font-size: .9rem; }
 
 .moon-strip {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
-  margin-top: 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  cursor: pointer;
+  display: flex; align-items: center; gap: 12px; padding: 13px 15px; margin-top: 12px;
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  cursor: pointer; box-shadow: var(--shadow);
 }
-.moon-strip .m-emoji { font-size: 1.6rem; }
-.moon-strip .m-text { flex: 1; font-size: .9rem; }
+.moon-strip .m-emoji { font-size: 1.55rem; }
+.moon-strip .m-text { flex: 1; font-size: .88rem; }
 .moon-strip .m-text small { color: var(--gray); display: block; }
-.moon-strip .chev { color: var(--gray); }
+.moon-strip .chev { color: var(--gray-2); }
 
-/* Lista de plantas */
+.garden-summary {
+  display: flex; align-items: center; gap: 12px; padding: 13px 15px; margin-top: 12px;
+  background: var(--green-light); border-radius: var(--radius); cursor: pointer;
+  font-size: .88rem;
+}
+.garden-summary .g-emoji { font-size: 1.55rem; }
+.garden-summary .g-text { flex: 1; }
+.garden-summary .g-text small { color: var(--gray); display: block; }
+.garden-summary .chev { color: var(--gray-2); }
+
+/* ---------- Tarjetas de cultivo ---------- */
 .plant-card {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  width: 100%;
-  padding: 14px;
-  margin-bottom: 10px;
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  cursor: pointer;
-  text-align: left;
-  font: inherit;
+  display: flex; align-items: center; gap: 14px; width: 100%;
+  padding: 13px; margin-bottom: 10px;
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  cursor: pointer; text-align: left; box-shadow: var(--shadow);
 }
 .plant-card:active { transform: scale(.98); }
 .plant-thumb {
-  width: 52px; height: 52px;
-  border-radius: 12px;
-  background: var(--green-light);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.7rem;
-  flex-shrink: 0;
+  width: 50px; height: 50px; border-radius: 12px;
+  display: flex; align-items: center; justify-content: center; font-size: 1.6rem; flex-shrink: 0;
 }
-.plant-info { flex: 1; }
-.plant-info strong { display: block; font-size: 1rem; }
-.plant-info small { color: var(--gray); font-size: .83rem; }
+.t-hortaliza { background: #e9f4ec; }
+.t-grano { background: #f7f0dd; }
+.t-fruta { background: #fdeaea; }
+.t-hierba { background: #e6f2e6; }
+.t-animal { background: #f2ecdf; }
+.plant-info { flex: 1; min-width: 0; }
+.plant-info strong { display: block; font-size: .97rem; }
+.plant-info small { color: var(--gray); font-size: .82rem; display: block; }
 .plant-badge {
-  font-size: .72rem;
-  font-weight: 600;
-  color: var(--green);
-  background: var(--green-light);
-  padding: 4px 8px;
-  border-radius: 20px;
-  white-space: nowrap;
+  font-size: .7rem; font-weight: 700; color: var(--green); background: var(--green-light);
+  padding: 4px 9px; border-radius: 20px; white-space: nowrap;
 }
+.plant-badge.off { color: var(--gray); background: #f1f1f1; }
 
-/* Detalle de planta */
-.detail-hero { text-align: center; padding: 12px 0 20px; }
-.detail-hero .d-emoji { font-size: 4rem; }
-.detail-hero h2 { margin-top: 8px; }
-.detail-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  margin-bottom: 20px;
+/* ---------- Detalle ---------- */
+.detail-hero { text-align: center; padding: 8px 0 18px; }
+.detail-hero .d-emoji {
+  font-size: 3rem; width: 92px; height: 92px; margin: 0 auto;
+  display: flex; align-items: center; justify-content: center; border-radius: 26px;
 }
-.detail-item {
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 12px;
-}
-.detail-item small { color: var(--gray); font-size: .75rem; display: block; margin-bottom: 3px; }
-.detail-item strong { font-size: .92rem; font-weight: 600; }
+.detail-hero h2 { margin-top: 12px; }
+.detail-cat { font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--gray); }
+.detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 18px; }
+.detail-item { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+.detail-item small { color: var(--gray); font-size: .73rem; display: block; margin-bottom: 3px; }
+.detail-item strong { font-size: .9rem; font-weight: 600; }
 .tip-box {
-  background: var(--green-light);
-  border-radius: 12px;
-  padding: 14px 16px;
-  font-size: .9rem;
-  line-height: 1.45;
-  margin-bottom: 16px;
+  background: var(--green-light); border-radius: 12px; padding: 14px 16px;
+  font-size: .9rem; line-height: 1.5; margin-bottom: 14px;
 }
-.calendar-row { display: flex; gap: 4px; margin: 8px 0 20px; }
+.econ-strip {
+  display: flex; justify-content: space-between; background: var(--card);
+  border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 18px;
+}
+.econ-strip div { text-align: center; flex: 1; }
+.econ-strip small { color: var(--gray); font-size: .72rem; display: block; }
+.econ-strip strong { font-size: .95rem; }
+.calendar-row { display: flex; gap: 4px; margin: 8px 0 18px; }
 .cal-month {
-  flex: 1;
-  text-align: center;
-  font-size: .62rem;
-  color: var(--gray);
-  padding: 6px 0;
-  border-radius: 6px;
-  background: #f7f7f7;
+  flex: 1; text-align: center; font-size: .62rem; color: var(--gray);
+  padding: 7px 0; border-radius: 6px; background: #efefec;
 }
 .cal-month.on { background: var(--green); color: #fff; font-weight: 700; }
 
-/* Calculadora */
-.area-input { margin: 8px 0 24px; }
-input[type="range"] {
-  width: 100%;
-  accent-color: var(--green);
-  height: 32px;
-}
-.area-value { text-align: center; font-size: 1.6rem; font-weight: 700; margin: 4px 0 12px; }
+/* ---------- Calculadora ---------- */
+.area-input { margin: 4px 0 22px; }
+input[type="range"] { width: 100%; accent-color: var(--green); height: 34px; }
+.area-value { text-align: center; font-size: 1.7rem; font-weight: 800; margin: 2px 0 12px; letter-spacing: -.02em; }
 .area-presets { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
 .area-presets button {
-  padding: 8px 14px;
-  border: 1px solid var(--line);
-  border-radius: 20px;
-  background: #fff;
-  font-size: .85rem;
-  cursor: pointer;
+  padding: 8px 14px; border: 1px solid var(--line); border-radius: 20px;
+  background: var(--card); font-size: .84rem; cursor: pointer;
 }
 .area-presets button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
 
-.calc-card {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  overflow: hidden;
-  margin-bottom: 16px;
-}
-.calc-row {
-  display: flex;
-  justify-content: space-between;
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--line);
-  font-size: .95rem;
-}
+.calc-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; margin-bottom: 14px; box-shadow: var(--shadow); }
+.calc-row { display: flex; justify-content: space-between; gap: 12px; padding: 13px 16px; border-bottom: 1px solid var(--line); font-size: .93rem; }
 .calc-row:last-child { border-bottom: none; }
 .calc-row .label { color: var(--gray); }
-.calc-row.total { background: var(--green-light); font-weight: 700; }
+.calc-row.total { background: var(--green-light); font-weight: 800; }
 .calc-row.total .label { color: var(--ink); }
-.calc-note { color: var(--gray); font-size: .8rem; line-height: 1.5; }
+.calc-note { color: var(--gray); font-size: .78rem; line-height: 1.55; }
 
-/* Luna */
-.moon-big { text-align: center; padding: 16px 0 24px; }
-.moon-big .m-emoji { font-size: 4.5rem; }
-.moon-big h3 { font-size: 1.3rem; margin-top: 10px; }
-.moon-big p { color: var(--gray); font-size: .9rem; margin-top: 6px; }
-.moon-advice {
-  background: var(--green-light);
-  border-radius: 12px;
-  padding: 14px 16px;
-  font-size: .9rem;
-  line-height: 1.5;
-  margin-bottom: 24px;
+/* ---------- Almanaque ---------- */
+.day-card {
+  display: flex; align-items: center; gap: 12px; padding: 12px 14px; margin-bottom: 8px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px;
 }
-.moon-list-item {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--line);
-  font-size: .9rem;
+.day-card.best { border-color: var(--green); background: var(--green-light); }
+.day-date { width: 46px; text-align: center; flex-shrink: 0; }
+.day-date strong { display: block; font-size: 1.15rem; }
+.day-date small { color: var(--gray); font-size: .7rem; text-transform: uppercase; }
+.day-icons { font-size: 1.15rem; letter-spacing: 2px; flex-shrink: 0; }
+.day-text { flex: 1; font-size: .82rem; color: var(--gray); line-height: 1.4; }
+.day-text strong { color: var(--ink); display: block; font-size: .85rem; }
+.best-tag { font-size: .68rem; font-weight: 800; color: var(--green); text-transform: uppercase; }
+
+.month-chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 10px; scrollbar-width: none; }
+.month-chips::-webkit-scrollbar { display: none; }
+.month-chips button {
+  padding: 8px 14px; border: 1px solid var(--line); border-radius: 20px;
+  background: var(--card); font-size: .84rem; white-space: nowrap; cursor: pointer;
 }
-.moon-list-item .m-emoji { font-size: 1.5rem; }
-.moon-list-item small { color: var(--gray); display: block; }
+.month-chips button.on { background: var(--green); color: #fff; border-color: var(--green); font-weight: 700; }
+
+/* ---------- Mi huerto ---------- */
+.empty-state { text-align: center; padding: 48px 20px; color: var(--gray); }
+.empty-state .e-emoji { font-size: 3.2rem; margin-bottom: 12px; }
+.empty-state strong { display: block; color: var(--ink); font-size: 1.05rem; margin-bottom: 6px; }
+
+.track-card {
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px; margin-bottom: 12px; box-shadow: var(--shadow);
+}
+.track-head { display: flex; align-items: center; gap: 12px; }
+.track-head .plant-thumb { width: 44px; height: 44px; font-size: 1.4rem; }
+.track-title { flex: 1; min-width: 0; }
+.track-title strong { display: block; font-size: .97rem; }
+.track-title small { color: var(--gray); font-size: .8rem; }
+.track-status { font-size: .7rem; font-weight: 700; padding: 4px 9px; border-radius: 20px; white-space: nowrap; }
+.st-grow { color: var(--amber); background: var(--amber-light); }
+.st-ready { color: var(--green); background: var(--green-light); }
+.st-cont { color: #4652b1; background: var(--blue-light); }
+.track-bar { height: 6px; background: #efefec; border-radius: 3px; margin: 12px 0 6px; overflow: hidden; }
+.track-bar span { display: block; height: 100%; background: var(--green); border-radius: 3px; }
+.track-meta { display: flex; justify-content: space-between; font-size: .76rem; color: var(--gray); }
+.track-actions { display: flex; gap: 8px; margin-top: 12px; }
+.track-actions button {
+  flex: 1; padding: 9px; border-radius: 10px; font-size: .82rem; font-weight: 600; cursor: pointer;
+  border: 1px solid var(--line); background: var(--bg);
+}
+.track-actions .harvest { border-color: var(--green); color: var(--green); background: var(--card); }
+.track-note { font-size: .8rem; color: var(--gray); margin-top: 8px; font-style: italic; }
+
+/* ---------- Explorar ---------- */
+.search-input, .field-input {
+  width: 100%; padding: 13px 16px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--card); font: inherit; font-size: .95rem; margin-bottom: 12px;
+  box-shadow: var(--shadow); outline-color: var(--green);
+}
+.cat-chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 4px; scrollbar-width: none; }
+.cat-chips::-webkit-scrollbar { display: none; }
+.cat-chips button {
+  padding: 8px 13px; border: 1px solid var(--line); border-radius: 20px;
+  background: var(--card); font-size: .84rem; white-space: nowrap; cursor: pointer;
+}
+.cat-chips button.on { background: var(--ink); color: #fff; border-color: var(--ink); font-weight: 600; }
+.zone-toggle { display: flex; align-items: center; gap: 8px; font-size: .84rem; color: var(--gray); margin: 8px 0 14px; cursor: pointer; }
+.zone-toggle input { accent-color: var(--green); width: 17px; height: 17px; }
+
+/* ---------- Agregar ---------- */
+.field-label { display: block; font-size: .85rem; font-weight: 600; margin: 14px 0 6px; }
+.add-selected {
+  display: flex; align-items: center; gap: 12px; padding: 13px;
+  background: var(--green-light); border-radius: 12px; margin-bottom: 6px; font-weight: 600;
+}
+.add-selected .a-emoji { font-size: 1.5rem; }
+
+/* ---------- Tab bar ---------- */
+.tabbar {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 20;
+  max-width: 480px; margin: 0 auto;
+  display: flex; background: var(--card); border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.tabbar[hidden] { display: none; }
+.tab {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 9px 0 7px; border: none; background: none; cursor: pointer;
+  color: var(--gray-2); font-size: .66rem; font-weight: 600;
+}
+.tab svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.tab.on { color: var(--green); }

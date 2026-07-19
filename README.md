@@ -14,19 +14,21 @@ App web para **agricultura de subsistencia rural y huertos urbanos** (escala má
 
 ## Funcionalidades
 
-- 🌾 Cultivos recomendados según **altitud** y **mes actual**
-- 📅 Fechas de siembra y cosecha por cultivo
-- 🌦️ Clima actual y lluvia de la semana
+- 🌾 **Catálogo de ~45 cultivos y animales** (hortalizas, granos, frutales, hierbas y crianza: cuyes, gallinas, cerdos, abejas…) filtrado por **altitud**, espacio y mes
+- 📍 Detección del **poblado/ciudad** por geolocalización (BigDataCloud, sin key)
+- 📅 **Almanaque**: pronóstico de 10 días con luna + lluvia + alerta de heladas, y calendario de siembra mes a mes
+- 🌱 **Mi huerto**: agrega lo que ya tienes sembrado o tus animales y sigue su progreso hasta la cosecha
+- 🌦️ Clima actual, lluvia de la semana y alertas de helada / lluvia fuerte
 - 🌒 Calendario lunar con consejos de siembra tradicionales
-- 💰 Calculadora de inversión, cosecha estimada y ganancia según el área sembrada
-- 🪴 Filtro por espacio disponible: macetas/balcón, huerto familiar o parcela
+- 💰 **Calculadora de ganancia** por m², por planta, por árbol o por animal, con tres modelos: ciclo único, producción anual y producción mensual — precios referenciales de mercados de Ecuador
+- 🪴 Filtro por espacio: macetas/balcón, huerto familiar o parcela
 
 ## Estructura
 
-- `public/index.html` — las 7 pantallas de la app
+- `public/index.html` — pantallas y barra de pestañas (Hoy · Almanaque · Mi huerto · Explorar)
 - `public/styles.css` — estilos mobile-first
-- `public/app.js` — navegación, geolocalización, clima, luna, calculadora
-- `public/data.js` — catálogo de cultivos con rangos de altitud, meses de siembra y costos
+- `public/app.js` — navegación, geolocalización, clima, almanaque, seguimiento, calculadora
+- `public/data.js` — catálogo con rangos de altitud, meses de siembra, costos y precios locales (Ecuador)
 
 ## Desarrollo
 
