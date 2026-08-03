@@ -10,6 +10,7 @@ const state = {
   lugar: null,          // "Poblado, Provincia"
   espacio: null,
   siembras: [],         // [{id, cropId, fecha, cantidad, nota}]
+  precios: [],          // [{id, prod, precio, lugar, fecha}] — libreta de precios de feria
   plantaActual: null,
   backTo: "screen-home",
   forecast: null        // cache del pronóstico diario
@@ -18,7 +19,8 @@ const state = {
 function saveState() {
   localStorage.setItem(STORE_KEY, JSON.stringify({
     lat: state.lat, lon: state.lon, altitud: state.altitud,
-    lugar: state.lugar, espacio: state.espacio, siembras: state.siembras
+    lugar: state.lugar, espacio: state.espacio, siembras: state.siembras,
+    precios: state.precios
   }));
 }
 
@@ -30,6 +32,7 @@ function loadState() {
     if (s.altitud == null || !s.espacio) return false;
     Object.assign(state, s);
     state.siembras = state.siembras || [];
+    state.precios = state.precios || [];
     return true;
   } catch { return false; }
 }
@@ -52,6 +55,7 @@ tabbar.querySelectorAll(".tab").forEach(t => {
     show(id);
     if (id === "screen-home") renderHome();
     if (id === "screen-almanac") renderAlmanac();
+    if (id === "screen-market") renderMercado();
     if (id === "screen-garden") renderGarden();
     if (id === "screen-explore") renderExplore();
   });
@@ -224,7 +228,7 @@ async function getForecast() {
   if (state.lat == null) return null;
   const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${state.lat}&longitude=${state.lon}` +
     `&current=temperature_2m,relative_humidity_2m,weather_code` +
-    `&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code&forecast_days=14&timezone=auto`);
+    `&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code,et0_fao_evapotranspiration&forecast_days=14&timezone=auto`);
   state.forecast = await r.json();
   return state.forecast;
 }
@@ -257,6 +261,7 @@ function renderHome() {
   renderGardenSummary();
   renderWeatherHome();
   renderMoonStrip();
+  renderMarketStrip();
   renderInstallBanner();
   checkAndSendNotifications();
 }
@@ -299,9 +304,21 @@ async function renderWeatherHome() {
     const j = await getForecast();
     const [emoji, desc] = WMO[j.current.weather_code] || ["🌡️", "Clima"];
     const lluvia7 = j.daily.precipitation_sum.slice(0, 7).reduce((a, b) => a + (b || 0), 0);
-    const lluviaTxt = lluvia7 >= 15
-      ? `Lluvia esta semana: ${Math.round(lluvia7)} mm. Aprovecha para sembrar.`
-      : `Poca lluvia esta semana (${Math.round(lluvia7)} mm): riega tus plantas.`;
+    // Balance de agua: lluvia menos lo que evapora el sol (ET0, dato agronómico de Open-Meteo)
+    const et07 = (j.daily.et0_fao_evapotranspiration || []).slice(0, 7).reduce((a, b) => a + (b || 0), 0);
+    const balance = Math.round(lluvia7 - et07);
+    let lluviaTxt;
+    if (et07 > 0) {
+      lluviaTxt = balance >= 5
+        ? `Semana húmeda: la lluvia (${Math.round(lluvia7)} mm) cubre lo que evapora el sol. Aprovecha para sembrar.`
+        : balance >= -10
+        ? `Lluvia y sol parejos esta semana: riega solo lo más delicado.`
+        : `Al suelo le faltarán ~${Math.abs(balance)} mm esta semana: toca regar seguido.`;
+    } else {
+      lluviaTxt = lluvia7 >= 15
+        ? `Lluvia esta semana: ${Math.round(lluvia7)} mm. Aprovecha para sembrar.`
+        : `Poca lluvia esta semana (${Math.round(lluvia7)} mm): riega tus plantas.`;
+    }
     card.innerHTML = `<div class="weather-emoji">${emoji}</div>
       <div class="weather-info"><strong>${Math.round(j.current.temperature_2m)}°C</strong>
       <small>${desc} · humedad ${j.current.relative_humidity_2m}%</small>
@@ -608,6 +625,297 @@ function renderExploreList() {
 document.getElementById("search-input").addEventListener("input", renderExploreList);
 document.getElementById("zone-only").addEventListener("change", renderExploreList);
 
+// ---------- Mercado ----------
+// Libreta de precios de feria (localStorage) + referencia internacional (Banco Mundial, datos abiertos).
+const INTL_CACHE_KEY = "mihuerto.intl.v1";
+
+function prodNombre(prod) {
+  if (prod.startsWith("otro:")) {
+    const n = prod.slice(5);
+    return n.charAt(0).toUpperCase() + n.slice(1);
+  }
+  const c = getItem(prod);
+  return c ? c.nombre : prod;
+}
+function prodEmoji(prod) {
+  const c = getItem(prod);
+  return c ? c.emoji : "🏷️";
+}
+function prodUnidad(prod) {
+  const c = getItem(prod);
+  return c ? unidadPrecio(c.rendUnidad) : null;
+}
+
+function renderMercado() {
+  renderPriceList();
+  renderSellWindow();
+  renderIntlPrices();
+  renderSellTip();
+}
+
+// --- Formulario de la libreta ---
+function fillPriceProductSelect() {
+  const sel = document.getElementById("pf-prod");
+  const sigo = [...new Set(state.siembras.map(s => s.cropId))];
+  const anotados = [...new Set(state.precios.map(p => p.prod))]
+    .filter(p => !p.startsWith("otro:") && !sigo.includes(p) && getItem(p));
+  const zona = catalogoZona().map(c => c.id).filter(id => !sigo.includes(id) && !anotados.includes(id));
+  const grupo = (ids, label) => ids.length
+    ? `<optgroup label="${label}">` + ids.map(id => {
+        const c = getItem(id);
+        return c ? `<option value="${id}">${c.emoji} ${c.nombre}</option>` : "";
+      }).join("") + `</optgroup>`
+    : "";
+  sel.innerHTML = grupo(sigo, "Mi huerto") + grupo(anotados, "Ya anotados") + grupo(zona, "De mi zona") +
+    `<option value="__otro">✏️ Otro producto…</option>`;
+  syncPriceUnit();
+}
+
+function syncPriceUnit() {
+  const v = document.getElementById("pf-prod").value;
+  document.getElementById("pf-prod-otro").hidden = v !== "__otro";
+  const u = v && v !== "__otro" ? prodUnidad(v) : null;
+  document.getElementById("pf-precio-label").textContent = u ? `Precio por ${u} ($)` : "Precio que viste ($)";
+}
+
+document.getElementById("btn-price-add").addEventListener("click", () => {
+  const form = document.getElementById("price-form");
+  form.hidden = !form.hidden;
+  if (!form.hidden) {
+    fillPriceProductSelect();
+    document.getElementById("pf-precio").value = "";
+    document.getElementById("pf-precio").focus();
+  }
+});
+document.getElementById("pf-cancel").addEventListener("click", () => {
+  document.getElementById("price-form").hidden = true;
+});
+document.getElementById("pf-prod").addEventListener("change", syncPriceUnit);
+
+document.getElementById("pf-save").addEventListener("click", () => {
+  let prod = document.getElementById("pf-prod").value;
+  if (prod === "__otro") {
+    const n = document.getElementById("pf-prod-otro").value.trim().toLowerCase();
+    if (!n) { document.getElementById("pf-prod-otro").focus(); return; }
+    prod = "otro:" + n;
+  }
+  const precio = +document.getElementById("pf-precio").value;
+  if (!prod || !precio || precio <= 0) { document.getElementById("pf-precio").focus(); return; }
+  state.precios.unshift({
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+    prod, precio,
+    lugar: document.getElementById("pf-lugar").value.trim(),
+    fecha: new Date().toISOString().slice(0, 10)
+  });
+  saveState();
+  document.getElementById("price-form").hidden = true;
+  document.getElementById("pf-prod-otro").value = "";
+  document.getElementById("pf-lugar").value = "";
+  renderPriceList();
+});
+
+// --- Mini-gráfica de tendencia ---
+function sparklineSVG(vals) {
+  if (vals.length < 2) {
+    return `<svg class="spark s-flat" viewBox="0 0 72 24"><line x1="4" y1="12" x2="68" y2="12" stroke-dasharray="2 4"/></svg>`;
+  }
+  const serie = vals.slice(-8);
+  const min = Math.min(...serie), max = Math.max(...serie);
+  const span = max - min || 1;
+  const pts = serie.map((v, i) => [
+    (4 + i / (serie.length - 1) * 64).toFixed(1),
+    (20 - (v - min) / span * 16).toFixed(1)
+  ]);
+  const dir = serie[serie.length - 1] > serie[0] ? "s-up" : serie[serie.length - 1] < serie[0] ? "s-down" : "s-flat";
+  const fin = pts[pts.length - 1];
+  return `<svg class="spark ${dir}" viewBox="0 0 72 24">
+    <polyline points="${pts.map(p => p.join(",")).join(" ")}"/>
+    <circle cx="${fin[0]}" cy="${fin[1]}" r="2.4"/></svg>`;
+}
+
+function renderPriceList() {
+  const cont = document.getElementById("price-list");
+  if (!state.precios.length) {
+    cont.innerHTML = `<div class="price-empty">📒 Tu libreta está vacía. Cada vez que vayas a la feria anota aquí a cuánto se vende lo tuyo: con el tiempo verás si sube o baja y cuándo conviene vender.</div>`;
+    return;
+  }
+  const grupos = {};
+  for (const p of state.precios) (grupos[p.prod] = grupos[p.prod] || []).push(p);
+
+  cont.innerHTML = Object.entries(grupos).map(([prod, regs]) => {
+    const serie = [...regs].reverse().map(r => r.precio); // cronológico
+    const ult = regs[0], prev = regs[1];
+    let trend = `<span class="trend flat">primer registro</span>`;
+    if (prev) {
+      const dif = ult.precio - prev.precio;
+      const pct = Math.abs(Math.round(dif / prev.precio * 100));
+      trend = dif > 0.001 ? `<span class="trend up">▲ subió ${pct}%</span>`
+        : dif < -0.001 ? `<span class="trend down">▼ bajó ${pct}%</span>`
+        : `<span class="trend flat">= sin cambio</span>`;
+    }
+    const c = getItem(prod);
+    const u = prodUnidad(prod);
+    const f = new Date(ult.fecha + "T12:00:00");
+    return `
+    <div class="price-card">
+      <div class="price-head">
+        <span class="plant-thumb t-${c ? c.cat : "hierba"}">${prodEmoji(prod)}</span>
+        <span class="price-info">
+          <strong>${prodNombre(prod)}</strong>
+          <small>${f.getDate()} de ${MESES[f.getMonth()].toLowerCase()}${ult.lugar ? " · " + ult.lugar : ""} · ${regs.length} ${regs.length === 1 ? "registro" : "registros"}</small>
+        </span>
+        <span class="price-now">$${fmt(ult.precio)}${u ? `<small>/${u}</small>` : ""}</span>
+      </div>
+      <div class="price-foot">
+        ${sparklineSVG(serie)}
+        <span class="price-meta">${trend}${c ? `<small>Referencia: $${fmt(c.precio)}/${unidadPrecio(c.rendUnidad)}</small>` : ""}</span>
+        <button class="price-del" data-delprice="${prod}" aria-label="Borrar historial">🗑</button>
+      </div>
+    </div>`;
+  }).join("");
+
+  cont.querySelectorAll("[data-delprice]").forEach(b => b.addEventListener("click", () => {
+    if (confirm(`¿Borrar el historial de precios de ${prodNombre(b.dataset.delprice).toLowerCase()}?`)) {
+      state.precios = state.precios.filter(p => p.prod !== b.dataset.delprice);
+      saveState();
+      renderPriceList();
+    }
+  }));
+}
+
+// --- ¿Cuándo vender mejor? ---
+function renderSellWindow() {
+  const cont = document.getElementById("sell-window");
+  const mes = new Date().getMonth() + 1;
+  const sigo = [...new Set(state.siembras.map(s => s.cropId))].map(getItem).filter(Boolean);
+  const conDato = sigo.filter(c => c.mesesPrecioAlto);
+  const otros = catalogoZona().filter(c => c.mesesPrecioAlto && !conDato.includes(c));
+  const lista = conDato.concat(otros).slice(0, 6);
+  if (!lista.length) {
+    cont.innerHTML = `<p class="sub">Los productos de tu zona mantienen un precio parecido todo el año.</p>`;
+    return;
+  }
+  cont.innerHTML = lista.map(c => {
+    const ahora = c.mesesPrecioAlto.includes(mes);
+    return `
+    <div class="sell-row ${ahora ? "now" : ""}" data-plant-link="${c.id}">
+      <span class="sell-emoji">${c.emoji}</span>
+      <span class="sell-info">
+        <strong>${c.nombre}${ahora ? ' <span class="sell-now-tag">¡buen precio ahora!</span>' : ""}</strong>
+        <span class="sell-months">${MESES.map((m, i) =>
+          `<i class="${c.mesesPrecioAlto.includes(i + 1) ? "hi" : ""}${i + 1 === mes ? " cur" : ""}" title="${m}">${m[0]}</i>`).join("")}</span>
+      </span>
+    </div>`;
+  }).join("");
+  cont.querySelectorAll("[data-plant-link]").forEach(r => r.addEventListener("click", () => {
+    state.plantaActual = r.dataset.plantLink;
+    state.backTo = "screen-market";
+    renderPlantDetail();
+    show("screen-plant");
+  }));
+}
+
+// --- Referencia internacional (Banco Mundial, sin key; caché 24 h y respaldo sin conexión) ---
+async function fetchIntlPrices() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(INTL_CACHE_KEY) || "null");
+    if (cached && cached.series && Date.now() - cached.ts < 86400000) return cached.series;
+  } catch { /* caché corrupta: se ignora */ }
+
+  const inds = MERCADO_INTL.map(m => m.ind).join(";");
+  const r = await fetch(`https://api.worldbank.org/v2/country/wld/indicator/${inds}?source=15&format=json&per_page=300&mrv=8`);
+  const j = await r.json();
+  if (!Array.isArray(j) || !Array.isArray(j[1])) throw new Error("formato inesperado");
+  const series = {};
+  for (const row of j[1]) {
+    if (row.value == null || !row.indicator) continue;
+    (series[row.indicator.id] = series[row.indicator.id] || []).push({ fecha: row.date, valor: row.value });
+  }
+  for (const id in series) series[id].sort((a, b) => a.fecha.localeCompare(b.fecha));
+  if (!Object.keys(series).length) throw new Error("sin datos");
+  localStorage.setItem(INTL_CACHE_KEY, JSON.stringify({ ts: Date.now(), series }));
+  return series;
+}
+
+function fechaWB(s) {
+  const m = /^(\d{4})M(\d{2})$/.exec(s);
+  return m ? MESES[+m[2] - 1].slice(0, 3).toLowerCase() + " " + m[1] : s;
+}
+
+async function renderIntlPrices() {
+  const cont = document.getElementById("intl-prices");
+  const nota = document.getElementById("intl-note");
+  let series = null;
+  try { series = await fetchIntlPrices(); } catch { /* usamos valores de respaldo */ }
+
+  cont.innerHTML = MERCADO_INTL.map(m => {
+    const s = series && series[m.ind];
+    let valor = m.fallback, fechaTxt = m.fallbackFecha, trend = "";
+    if (s && s.length) {
+      valor = s[s.length - 1].valor;
+      fechaTxt = fechaWB(s[s.length - 1].fecha);
+      const base = s.length >= 4 ? s[s.length - 4].valor : (s.length >= 2 ? s[0].valor : null);
+      if (base) {
+        const pct = Math.round((valor - base) / base * 100);
+        trend = pct > 1 ? `<span class="trend up">▲ ${pct}%</span>`
+          : pct < -1 ? `<span class="trend down">▼ ${Math.abs(pct)}%</span>`
+          : `<span class="trend flat">estable</span>`;
+      }
+    }
+    // Traducción a la unidad de feria: quintal (45,4 kg) o saco de 50 kg
+    const mostrado = m.mostrar === "qq" ? `$${fmt(valor * 0.04536)}<small>/quintal</small>`
+      : m.mostrar === "saco" ? `$${fmt(valor * 0.05)}<small>/saco 50 kg</small>`
+      : `$${fmt(valor)}<small>/kg</small>`;
+    return `
+    <div class="intl-row">
+      <span class="sell-emoji">${m.emoji}</span>
+      <span class="intl-info"><strong>${m.nombre}</strong><small>${fechaTxt}</small></span>
+      ${trend}
+      <span class="intl-price">${mostrado}</span>
+    </div>`;
+  }).join("");
+
+  nota.textContent = series
+    ? "Referencia mundial (Banco Mundial). Tu precio local depende de la feria, pero sigue la misma corriente. Cambio: últimos 3 meses."
+    : "Sin conexión ahora: valores de referencia guardados. Se actualizan solos cuando haya internet.";
+}
+
+function renderSellTip() {
+  const dia = Math.floor(Date.now() / 86400000);
+  document.getElementById("sell-tip").innerHTML =
+    `<div class="tip-box">💡 <strong>Para vender mejor:</strong> ${CONSEJOS_VENTA[dia % CONSEJOS_VENTA.length]}</div>`;
+}
+
+// --- Resumen de mercado en la pantalla Hoy ---
+function renderMarketStrip() {
+  const cont = document.getElementById("market-strip");
+  if (!cont) return;
+  const mes = new Date().getMonth() + 1;
+  const sigo = [...new Set(state.siembras.map(s => s.cropId))].map(getItem).filter(Boolean);
+  const oportunos = sigo.filter(c => c.mesesPrecioAlto && c.mesesPrecioAlto.includes(mes));
+  const ult = state.precios[0];
+  let texto;
+  if (oportunos.length) {
+    texto = `<strong>${oportunos[0].emoji} ${oportunos[0].nombre}: buena época para vender</strong><small>En ${MESES[mes - 1].toLowerCase()} suele pagarse mejor. Mira el mercado.</small>`;
+  } else if (ult) {
+    const prev = state.precios.find(p => p.prod === ult.prod && p.id !== ult.id);
+    const dir = prev ? (ult.precio > prev.precio ? " ▲" : ult.precio < prev.precio ? " ▼" : "") : "";
+    texto = `<strong>Última anotación: ${prodNombre(ult.prod)} $${fmt(ult.precio)}${dir}</strong><small>Toca para ver tu libreta y las tendencias.</small>`;
+  } else {
+    texto = `<strong>Mercado y precios</strong><small>Anota los precios de tu feria y sabrás cuándo vender.</small>`;
+  }
+  cont.innerHTML = `
+    <div class="market-strip" id="market-strip-card">
+      <span class="m-emoji">💰</span>
+      <span class="m-text">${texto}</span>
+      <span class="chev">›</span>
+    </div>`;
+  document.getElementById("market-strip-card").addEventListener("click", () => {
+    renderMercado();
+    show("screen-market");
+  });
+}
+
 // ---------- Detalle ----------
 function renderPlantDetail() {
   const c = getItem(state.plantaActual);
@@ -634,6 +942,12 @@ function renderPlantDetail() {
     <div class="calendar-row">${MESES.map((m, i) =>
       `<div class="cal-month ${c.mesesSiembra.includes(i + 1) ? "on" : ""}">${m[0]}</div>`).join("")}</div>`;
 
+  const venta = c.mesesPrecioAlto ? `
+    <h3 class="list-title">Mejor época para vender</h3>
+    <div class="calendar-row">${MESES.map((m, i) =>
+      `<div class="cal-month sell ${c.mesesPrecioAlto.includes(i + 1) ? "on" : ""}">${m[0]}</div>`).join("")}</div>
+    <p class="sub">${c.mesesPrecioAlto.includes(mes) ? "¡Este mes suele pagarse mejor: buen momento para vender!" : "En esos meses escasea y suele pagarse mejor."}</p>` : "";
+
   const rendTxt = c.modelo === "mensual" ? `${c.rendimiento} ${c.rendUnidad}/mes`
     : c.modelo === "anual" ? `${c.rendimiento} ${c.rendUnidad}/año`
     : `${c.rendimiento} ${c.rendUnidad}`;
@@ -653,6 +967,7 @@ function renderPlantDetail() {
       <div><small>Precio local</small><strong>$${fmt(c.precio)}/${unidadPrecio(c.rendUnidad)}</strong></div>
     </div>
     ${cal}
+    ${venta}
     <div class="detail-grid">
       <div class="detail-item"><small>${esAnimal ? "Manejo" : "Tipo de plantación"}</small><strong>${c.tipo}</strong></div>
       <div class="detail-item"><small>${esAnimal ? "Espacio" : "Distancia"}</small><strong>${c.distancia}</strong></div>

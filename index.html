@@ -78,6 +78,7 @@
       <div id="alert-box"></div>
       <div class="weather-card" id="weather-card"><div class="weather-loading">Cargando clima…</div></div>
       <div class="moon-strip" id="moon-strip"></div>
+      <div id="market-strip"></div>
       <div id="garden-summary"></div>
       <div class="section-head">
         <h3 class="list-title">Para sembrar este mes</h3>
@@ -97,6 +98,43 @@
       <h3 class="list-title">Calendario de siembra</h3>
       <div class="month-chips" id="month-chips"></div>
       <div id="almanac-list"></div>
+    </div>
+  </section>
+
+  <!-- Tab: Mercado -->
+  <section class="screen with-tabs" id="screen-market">
+    <div class="content">
+      <h2 class="page-title">Mercado</h2>
+      <p class="sub">Apunta los precios de tu feria, mira tendencias y decide cuándo vender.</p>
+
+      <div class="section-head">
+        <h3 class="list-title">Mis precios</h3>
+        <button class="link-btn" id="btn-price-add">＋ Anotar precio</button>
+      </div>
+      <div class="price-form" id="price-form" hidden>
+        <label class="field-label">Producto</label>
+        <select class="field-input" id="pf-prod"></select>
+        <input type="text" class="field-input" id="pf-prod-otro" placeholder="Escribe el nombre del producto" maxlength="30" hidden />
+        <label class="field-label" id="pf-precio-label">Precio que viste ($)</label>
+        <input type="number" class="field-input" id="pf-precio" min="0" step="0.05" inputmode="decimal" placeholder="Ej.: 0.60" />
+        <label class="field-label">Lugar (opcional)</label>
+        <input type="text" class="field-input" id="pf-lugar" placeholder="Ej.: feria del pueblo" maxlength="40" />
+        <div class="pf-actions">
+          <button class="pf-cancel" id="pf-cancel">Cancelar</button>
+          <button class="pf-save" id="pf-save">Guardar</button>
+        </div>
+      </div>
+      <div id="price-list"></div>
+
+      <h3 class="list-title">¿Cuándo vender mejor?</h3>
+      <p class="sub">Meses en que cada producto suele escasear y pagarse mejor.</p>
+      <div id="sell-window"></div>
+
+      <h3 class="list-title">Mercado internacional</h3>
+      <p class="sub" id="intl-note">Referencia mundial (Banco Mundial). Tu precio local depende de la feria, pero sigue la misma corriente.</p>
+      <div id="intl-prices"></div>
+
+      <div id="sell-tip"></div>
     </div>
   </section>
 
@@ -186,6 +224,10 @@
     <button class="tab" data-tab="screen-almanac">
       <svg viewBox="0 0 24 24"><path d="M7 2v3M17 2v3M4 8h16M5 4h14a1 1 0 0 1 1 1v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/></svg>
       <span>Almanaque</span>
+    </button>
+    <button class="tab" data-tab="screen-market">
+      <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="m7 15 4-6 3 3 4-7"/></svg>
+      <span>Mercado</span>
     </button>
     <button class="tab" data-tab="screen-garden">
       <svg viewBox="0 0 24 24"><path d="M12 22v-8m0 0c0-4 3-7 8-7 0 4-3 7-8 7zm0 0c0-4-3-7-8-7 0 4 3 7 8 7z"/></svg>

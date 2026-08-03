@@ -91,10 +91,11 @@ if (typeof window !== 'undefined' && window.NOTIFY_LOADED) {
       .filter(c => c && c.cat !== "animal" && riegoFrecuente(c));
     if (conRiego.length && daily && (daily.precipitation_sum[0] ?? 0) < 2) {
       const nombres = [...new Set(conRiego.map(c => c.nombre.toLowerCase()))].slice(0, 3).join(", ");
+      const et0Hoy = (daily.et0_fao_evapotranspiration || [])[0] || 0;
       out.push({
         key: `riego-${dayKey}`,
         title: "💧 Día seco: toca regar",
-        body: `Hoy no se espera lluvia. Riega: ${nombres}${conRiego.length > 3 ? "…" : "."}`
+        body: `Hoy no se espera lluvia${et0Hoy >= 4 ? " y el sol seca la tierra rápido" : ""}. Riega: ${nombres}${conRiego.length > 3 ? "…" : "."}`
       });
     }
 

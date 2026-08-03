@@ -69,17 +69,17 @@ button, input, .plant-card, .option-card { touch-action: manipulation; }
 }
 
 /* Entrada escalonada de listas */
-:is(#plant-list, #explore-list, #almanac-list, #garden-list, #best-days, #add-list, #manual-zones, #space-options) > * {
+:is(#plant-list, #explore-list, #almanac-list, #garden-list, #best-days, #add-list, #manual-zones, #space-options, #price-list, #sell-window, #intl-prices) > * {
   animation: cardIn .4s var(--ease) backwards;
 }
-:is(#plant-list, #explore-list, #almanac-list, #garden-list, #best-days, #add-list, #manual-zones, #space-options) > *:nth-child(1) { animation-delay: .03s; }
-:is(#plant-list, #explore-list, #almanac-list, #garden-list, #best-days, #add-list, #manual-zones, #space-options) > *:nth-child(2) { animation-delay: .06s; }
-:is(#plant-list, #explore-list, #almanac-list, #garden-list, #best-days, #add-list, #manual-zones, #space-options) > *:nth-child(3) { animation-delay: .09s; }
-:is(#plant-list, #explore-list, #almanac-list, #garden-list, #best-days, #add-list, #manual-zones, #space-options) > *:nth-child(4) { animation-delay: .12s; }
-:is(#plant-list, #explore-list, #almanac-list, #garden-list, #best-days, #add-list, #manual-zones, #space-options) > *:nth-child(5) { animation-delay: .15s; }
-:is(#plant-list, #explore-list, #almanac-list, #garden-list, #best-days, #add-list, #manual-zones, #space-options) > *:nth-child(6) { animation-delay: .18s; }
-:is(#plant-list, #explore-list, #almanac-list, #garden-list, #best-days, #add-list, #manual-zones, #space-options) > *:nth-child(7) { animation-delay: .21s; }
-:is(#plant-list, #explore-list, #almanac-list, #garden-list, #best-days, #add-list, #manual-zones, #space-options) > *:nth-child(8) { animation-delay: .24s; }
+:is(#plant-list, #explore-list, #almanac-list, #garden-list, #best-days, #add-list, #manual-zones, #space-options, #price-list, #sell-window, #intl-prices) > *:nth-child(1) { animation-delay: .03s; }
+:is(#plant-list, #explore-list, #almanac-list, #garden-list, #best-days, #add-list, #manual-zones, #space-options, #price-list, #sell-window, #intl-prices) > *:nth-child(2) { animation-delay: .06s; }
+:is(#plant-list, #explore-list, #almanac-list, #garden-list, #best-days, #add-list, #manual-zones, #space-options, #price-list, #sell-window, #intl-prices) > *:nth-child(3) { animation-delay: .09s; }
+:is(#plant-list, #explore-list, #almanac-list, #garden-list, #best-days, #add-list, #manual-zones, #space-options, #price-list, #sell-window, #intl-prices) > *:nth-child(4) { animation-delay: .12s; }
+:is(#plant-list, #explore-list, #almanac-list, #garden-list, #best-days, #add-list, #manual-zones, #space-options, #price-list, #sell-window, #intl-prices) > *:nth-child(5) { animation-delay: .15s; }
+:is(#plant-list, #explore-list, #almanac-list, #garden-list, #best-days, #add-list, #manual-zones, #space-options, #price-list, #sell-window, #intl-prices) > *:nth-child(6) { animation-delay: .18s; }
+:is(#plant-list, #explore-list, #almanac-list, #garden-list, #best-days, #add-list, #manual-zones, #space-options, #price-list, #sell-window, #intl-prices) > *:nth-child(7) { animation-delay: .21s; }
+:is(#plant-list, #explore-list, #almanac-list, #garden-list, #best-days, #add-list, #manual-zones, #space-options, #price-list, #sell-window, #intl-prices) > *:nth-child(8) { animation-delay: .24s; }
 
 .content { flex: 1; padding: 8px 20px 130px; width: 100%; }
 
@@ -346,6 +346,110 @@ input[type="range"] { width: 100%; accent-color: var(--green); height: 34px; cur
 .month-chips button.on { background: var(--green); color: #fff; border-color: var(--green); font-weight: 700; }
 .cat-chips button.on { background: var(--ink); color: #fff; border-color: var(--ink); font-weight: 600; }
 
+/* ---------- Mercado ---------- */
+.market-strip {
+  display: flex; align-items: center; gap: 12px; padding: 13px 15px; margin-top: 12px;
+  border-radius: var(--radius); cursor: pointer;
+  background: var(--amber-light); font-size: .88rem;
+  transition: transform .18s var(--ease), box-shadow .18s;
+}
+.market-strip:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); }
+.market-strip:active { transform: scale(.98); }
+.market-strip .m-emoji { font-size: 1.55rem; }
+.market-strip .m-text { flex: 1; }
+.market-strip .m-text small { color: var(--gray); display: block; }
+.market-strip:hover .chev { transform: translateX(3px); }
+
+.price-form {
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 4px 16px 16px; margin-bottom: 14px; box-shadow: var(--shadow);
+  animation: cardIn .3s var(--ease) both;
+}
+.pf-actions { display: flex; gap: 10px; margin-top: 16px; }
+.pf-actions button {
+  flex: 1; padding: 12px; border-radius: var(--radius-s); font-size: .92rem; font-weight: 700; cursor: pointer;
+  transition: transform .15s var(--ease), background .2s;
+}
+.pf-actions button:active { transform: scale(.97); }
+.pf-cancel { background: var(--bg); border: 1px solid var(--line); color: var(--gray); }
+.pf-cancel:hover { background: var(--bg-2); }
+.pf-save { background: var(--green); border: none; color: #fff; }
+.pf-save:hover { background: var(--green-dark); }
+select.field-input { appearance: auto; cursor: pointer; }
+
+.price-empty {
+  background: var(--card); border: 1px dashed var(--gray-2); border-radius: var(--radius);
+  padding: 20px 18px; color: var(--gray); font-size: .9rem; line-height: 1.55;
+}
+
+.price-card {
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 13px 14px; margin-bottom: 10px; box-shadow: var(--shadow);
+  animation: cardIn .35s var(--ease) both;
+}
+.price-head { display: flex; align-items: center; gap: 12px; }
+.price-head .plant-thumb { width: 44px; height: 44px; font-size: 1.4rem; }
+.price-info { flex: 1; min-width: 0; }
+.price-info strong { display: block; font-size: .97rem; }
+.price-info small { color: var(--gray); font-size: .78rem; }
+.price-now { font-size: 1.15rem; font-weight: 800; letter-spacing: -.02em; white-space: nowrap; }
+.price-now small { font-size: .72rem; font-weight: 600; color: var(--gray); }
+.price-foot { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.price-meta { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.price-meta small { color: var(--gray); font-size: .74rem; }
+.price-del {
+  border: none; background: none; cursor: pointer; font-size: .95rem; opacity: .45;
+  padding: 6px; transition: opacity .15s, transform .15s var(--ease);
+}
+.price-del:hover { opacity: 1; }
+.price-del:active { transform: scale(.9); }
+
+.spark { width: 72px; height: 24px; flex-shrink: 0; }
+.spark polyline { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.spark line { stroke: var(--gray-2); stroke-width: 2; }
+.spark.s-up polyline, .spark.s-up circle { stroke: var(--green); fill: none; }
+.spark.s-up circle { fill: var(--green); }
+.spark.s-down polyline { stroke: var(--red); }
+.spark.s-down circle { fill: var(--red); }
+.spark.s-flat polyline { stroke: var(--gray-2); }
+.spark.s-flat circle { fill: var(--gray-2); }
+
+.trend { font-size: .76rem; font-weight: 700; white-space: nowrap; }
+.trend.up { color: var(--green); }
+.trend.down { color: var(--red); }
+.trend.flat { color: var(--gray); font-weight: 600; }
+
+.sell-row {
+  display: flex; align-items: center; gap: 12px; padding: 12px 14px; margin-bottom: 8px;
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-s);
+  cursor: pointer; transition: transform .18s var(--ease), box-shadow .18s;
+}
+@media (hover: hover) { .sell-row:hover { transform: translateY(-1px); box-shadow: var(--shadow); } }
+.sell-row.now { border-color: var(--amber); background: var(--amber-light); }
+.sell-emoji { font-size: 1.45rem; flex-shrink: 0; }
+.sell-info { flex: 1; min-width: 0; }
+.sell-info strong { display: block; font-size: .92rem; margin-bottom: 5px; }
+.sell-now-tag { font-size: .68rem; font-weight: 800; color: var(--amber); text-transform: uppercase; }
+.sell-months { display: flex; gap: 3px; }
+.sell-months i {
+  font-style: normal; font-size: .6rem; color: var(--gray-2); width: 16px; height: 16px;
+  display: inline-flex; align-items: center; justify-content: center; border-radius: 4px; background: var(--bg-2);
+}
+.sell-months i.hi { background: var(--amber); color: #fff; font-weight: 700; }
+.sell-months i.cur { outline: 2px solid var(--ink); outline-offset: 1px; }
+
+.intl-row {
+  display: flex; align-items: center; gap: 12px; padding: 11px 14px; margin-bottom: 8px;
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-s);
+}
+.intl-info { flex: 1; min-width: 0; }
+.intl-info strong { display: block; font-size: .92rem; }
+.intl-info small { color: var(--gray); font-size: .74rem; }
+.intl-price { font-weight: 800; font-size: .95rem; white-space: nowrap; }
+.intl-price small { font-size: .68rem; font-weight: 600; color: var(--gray); }
+
+.cal-month.sell.on { background: var(--amber); }
+
 /* ---------- Mi huerto ---------- */
 .empty-state { text-align: center; padding: 48px 20px; color: var(--gray); }
 .empty-state .e-emoji { font-size: 3.2rem; margin-bottom: 12px; animation: popIn .5s var(--ease) both; }
@@ -465,11 +569,11 @@ input[type="range"] { width: 100%; accent-color: var(--green); height: 34px; cur
   .screen.with-tabs .page-title { font-size: 1.7rem; }
 
   /* Grillas de 2 columnas */
-  #plant-list, #explore-list, #almanac-list, #garden-list, #best-days, #add-list {
+  #plant-list, #explore-list, #almanac-list, #garden-list, #best-days, #add-list, #price-list, #intl-prices {
     display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
   }
   #plant-list > .sub, #explore-list > .sub, #almanac-list > .sub, #garden-list > .empty-state { grid-column: 1 / -1; }
-  .plant-card, .day-card, .track-card { margin-bottom: 0; }
+  .plant-card, .day-card, .track-card, .price-card, .intl-row { margin-bottom: 0; }
 
   /* Barra inferior de "Mi huerto" alineada al contenido */
   .bottom-bar.above-tabs {
