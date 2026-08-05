@@ -948,6 +948,10 @@ function renderPlantDetail() {
       `<div class="cal-month sell ${c.mesesPrecioAlto.includes(i + 1) ? "on" : ""}">${m[0]}</div>`).join("")}</div>
     <p class="sub">${c.mesesPrecioAlto.includes(mes) ? "¡Este mes suele pagarse mejor: buen momento para vender!" : "En esos meses escasea y suele pagarse mejor."}</p>` : "";
 
+  const pasos = c.pasos && c.pasos.length ? `
+    <h3 class="list-title">🚶 Cómo empezar</h3>
+    <ol class="step-list">${c.pasos.map(p => `<li>${p}</li>`).join("")}</ol>` : "";
+
   const rendTxt = c.modelo === "mensual" ? `${c.rendimiento} ${c.rendUnidad}/mes`
     : c.modelo === "anual" ? `${c.rendimiento} ${c.rendUnidad}/año`
     : `${c.rendimiento} ${c.rendUnidad}`;
@@ -966,6 +970,7 @@ function renderPlantDetail() {
       <div><small>Produce por ${unidadBase}</small><strong>${rendTxt}</strong></div>
       <div><small>Precio local</small><strong>$${fmt(c.precio)}/${unidadPrecio(c.rendUnidad)}</strong></div>
     </div>
+    ${pasos}
     ${cal}
     ${venta}
     <div class="detail-grid">
@@ -1152,22 +1157,29 @@ function requestNotificationPermission() {
 requestNotificationPermission();
 
 // ---------- Swipe navigation ----------
-let touchStartX = 0, touchStartY = 0;
+let touchStartX = 0, touchStartY = 0, touchStartBlocked = false;
 const minSwipeDistance = 50;
 const maxVerticalDelta = 100;
+// Elementos con su propio scroll horizontal: el swipe de página no debe robárselo.
+const SWIPE_EXCLUDE = '.cat-chips, .month-chips, .sell-months, input[type="range"]';
 
 document.addEventListener('touchstart', (e) => {
   touchStartX = e.touches[0].clientX;
   touchStartY = e.touches[0].clientY;
+  touchStartBlocked = !!e.target.closest(SWIPE_EXCLUDE);
 }, false);
 
 document.addEventListener('touchend', (e) => {
+  if (touchStartBlocked) return;
+  // Solo cambia de pestaña si la pantalla activa es una de las 5 con tabbar visible.
+  if (tabbar.hidden) return;
+
   const touchEndX = e.changedTouches[0].clientX;
   const touchEndY = e.changedTouches[0].clientY;
   const dx = touchEndX - touchStartX;
   const dy = Math.abs(touchEndY - touchStartY);
 
-  if (dy > maxVerticalDelta || !tabbar.hasChildNodes()) return;
+  if (dy > maxVerticalDelta) return;
 
   const tabs = Array.from(tabbar.querySelectorAll('.tab'));
   const currentIdx = tabs.findIndex(t => t.classList.contains('on'));
