@@ -970,7 +970,6 @@ function renderPlantDetail() {
       <div><small>Produce por ${unidadBase}</small><strong>${rendTxt}</strong></div>
       <div><small>Precio local</small><strong>$${fmt(c.precio)}/${unidadPrecio(c.rendUnidad)}</strong></div>
     </div>
-    ${pasos}
     ${cal}
     ${venta}
     <div class="detail-grid">
@@ -980,7 +979,8 @@ function renderPlantDetail() {
       <div class="detail-item"><small>${esAnimal ? "Tiempo a producción" : "Tiempo a cosecha"}</small><strong>${formatDias(c.diasProduccion)}</strong></div>
       ${c.luna ? `<div class="detail-item"><small>Luna ideal</small><strong>${c.luna === "creciente" ? "🌒 Creciente" : "🌘 Menguante"}</strong></div>` : ""}
       <div class="detail-item"><small>Altitud</small><strong>${c.altMin} – ${c.altMax} m</strong></div>
-    </div>`;
+    </div>
+    ${pasos}`;
 }
 
 document.getElementById("btn-calc").addEventListener("click", () => { setupCalc(); show("screen-calc"); });
