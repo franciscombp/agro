@@ -61,9 +61,14 @@ tabbar.querySelectorAll(".tab").forEach(t => {
   });
 });
 
+function onboardingListo() { return state.altitud != null && !!state.espacio; }
+
 document.querySelectorAll(".btn-back").forEach(btn => {
   btn.addEventListener("click", () => {
-    const target = btn.dataset.back === "__last" ? state.backTo : btn.dataset.back;
+    let target = btn.dataset.back === "__last" ? state.backTo : btn.dataset.back;
+    // Quien ya configuró su huerto no debe caer en el onboarding al volver
+    // (p. ej. al entrar a ubicación desde el chip de Hoy).
+    if (target === "screen-welcome" && onboardingListo()) target = "screen-home";
     show(target);
   });
 });
@@ -172,9 +177,14 @@ function getItem(id) { return CULTIVOS.find(c => c.id === id); }
 function catInfo(id) { return CATEGORIAS.find(c => c.id === id); }
 
 function formatDias(d) {
-  if (d >= 330) return Math.round(d / 365 * 10) / 10 + (d >= 660 ? " años" : " año");
+  if (d >= 330) {
+    const anios = d / 365;
+    if (anios < 1.25) return "1 año";
+    const medio = Math.round(anios * 2) / 2;          // redondea a medio año
+    return Number.isInteger(medio) ? medio + " años" : (medio - 0.5) + " años y medio";
+  }
   if (d >= 55) return Math.round(d / 30) + " meses";
-  return d + " días";
+  return d === 1 ? "1 día" : d + " días";
 }
 
 function fmt(n) {
@@ -294,12 +304,17 @@ async function renderWeatherHome() {
   const card = document.getElementById("weather-card");
   const alerts = document.getElementById("alert-box");
   if (state.lat == null) {
+    // Estado vacío discreto: informa y ofrece la acción, sin robarle protagonismo al contenido.
+    card.classList.add("no-loc");
     card.innerHTML = `<div class="weather-emoji">📍</div>
-      <div class="weather-info"><strong>Sin ubicación exacta</strong>
-      <small>Activa tu ubicación para ver clima, lluvia y alertas de tu zona.</small></div>`;
+      <div class="weather-info"><strong>Activa tu ubicación</strong>
+      <small>Para ver el clima, la lluvia de la semana y avisos de helada en tu zona.</small></div>
+      <button class="weather-cta" id="btn-weather-loc">Activar</button>`;
+    document.getElementById("btn-weather-loc").addEventListener("click", () => show("screen-location"));
     alerts.innerHTML = "";
     return;
   }
+  card.classList.remove("no-loc");
   try {
     const j = await getForecast();
     const [emoji, desc] = WMO[j.current.weather_code] || ["🌡️", "Clima"];
@@ -485,13 +500,15 @@ function renderGarden() {
       ? (enProduccion ? `Produce desde ${fechaCosecha.getDate()} de ${MESES[fechaCosecha.getMonth()].toLowerCase()}` : `Cumplió su ciclo de ${formatDias(total)}`)
       : `Faltan ${formatDias(rest)} · ${c.modelo === "ciclo" && c.cat !== "animal" ? "cosecha" : c.cat === "animal" ? "produce desde" : "primera cosecha"} ~${fechaCosecha.getDate()} de ${MESES[fechaCosecha.getMonth()].toLowerCase()}`;
     const unidad = UNIDAD_INFO[c.unidad];
+    const verbo = c.cat === "animal" ? "desde" : "sembrado";
+    const desde = trans === 0 ? `${verbo} hoy` : `${verbo} hace ${formatDias(trans)}`;
     return `
     <div class="track-card" data-sid="${s.id}">
       <div class="track-head">
         <span class="plant-thumb t-${c.cat}">${c.emoji}</span>
         <span class="track-title">
           <strong>${c.nombre}</strong>
-          <small>${s.cantidad} ${s.cantidad === 1 ? unidad.singular : unidad.plural} · ${c.cat === "animal" ? "desde" : "sembrado"} hace ${formatDias(Math.max(trans, 0))}</small>
+          <small>${s.cantidad} ${s.cantidad === 1 ? unidad.singular : unidad.plural} · ${desde}</small>
         </span>
         ${status}
       </div>
@@ -604,21 +621,39 @@ function renderExploreList() {
   const cont = document.getElementById("explore-list");
   const mes = new Date().getMonth() + 1;
 
-  let lista = CULTIVOS.filter(c =>
-    (exploreCat === "todos" || c.cat === exploreCat) &&
-    c.nombre.toLowerCase().includes(q) &&
-    (!soloZona || aptoZona(c))
-  );
+  const coincide = c => (exploreCat === "todos" || c.cat === exploreCat) && c.nombre.toLowerCase().includes(q);
+  const lista = CULTIVOS.filter(c => coincide(c) && (!soloZona || aptoZona(c)));
 
-  cont.innerHTML = lista.length
-    ? lista.map(c => {
-        if (!aptoZona(c)) return plantCardHTML(c, "No apto en tu zona", true);
-        if (c.cat === "animal") return plantCardHTML(c, "Todo el año");
-        return c.mesesSiembra.includes(mes)
-          ? plantCardHTML(c, "Sembrar ya")
-          : plantCardHTML(c, proximaSiembra(c), true);
-      }).join("")
-    : `<p class="sub">No encontramos nada con esa búsqueda.</p>`;
+  if (!lista.length) {
+    // Distingue "no existe" de "lo escondió el filtro de zona": lo segundo tiene salida.
+    const fueraZona = soloZona ? CULTIVOS.filter(coincide).length : 0;
+    cont.innerHTML = fueraZona
+      ? `<div class="empty-state">
+          <div class="e-emoji">🏔️</div>
+          <strong>Nada de esto crece en tu zona</strong>
+          Hay ${fueraZona} ${fueraZona === 1 ? "opción que no es apta" : "opciones que no son aptas"} para ${state.altitud} m de altitud.
+          <button class="btn-secondary mt" id="btn-show-all-zone">Ver de todas formas</button>
+        </div>`
+      : `<div class="empty-state">
+          <div class="e-emoji">🔍</div>
+          <strong>No encontramos nada</strong>
+          Prueba con otro nombre o cambia de categoría.
+        </div>`;
+    const btn = document.getElementById("btn-show-all-zone");
+    if (btn) btn.addEventListener("click", () => {
+      document.getElementById("zone-only").checked = false;
+      renderExploreList();
+    });
+    return;
+  }
+
+  cont.innerHTML = lista.map(c => {
+    if (!aptoZona(c)) return plantCardHTML(c, "No apto en tu zona", true);
+    if (c.cat === "animal") return plantCardHTML(c, "Todo el año");
+    return c.mesesSiembra.includes(mes)
+      ? plantCardHTML(c, "Sembrar ya")
+      : plantCardHTML(c, proximaSiembra(c), true);
+  }).join("");
   bindPlantCards(cont, "screen-explore");
 }
 
@@ -1000,12 +1035,15 @@ function setupCalc() {
     presets = { maceta: [2, 5, 10, 20], huerto: [25, 50, 100, 250, 500], parcela: [500, 1000, 5000, 10000, 20000] }[state.espacio];
     def = Math.min(ESPACIOS.find(e => e.id === state.espacio).areaDefault, max);
   } else if (c.unidad === "animal") {
-    max = 100; presets = [1, 3, 5, 10, 25, 50]; def = 5;
+    // maxCalc acota el ganado que no cabe en 2 ha (una vaca necesita ~1 ha de pasto).
+    max = c.maxCalc || 100; presets = [1, 3, 5, 10, 25, 50]; def = Math.min(5, max);
   } else if (c.unidad === "arbol") {
     max = 100; presets = [1, 3, 5, 10, 25, 50]; def = 5;
   } else {
     max = 300; presets = [5, 10, 25, 50, 100]; def = 10;
   }
+  presets = presets.filter(p => p <= max);
+  if (!presets.includes(max)) presets.push(max);
   slider.min = 1; slider.max = max; slider.value = def;
 
   const pc = document.getElementById("area-presets");

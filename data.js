@@ -549,7 +549,7 @@ const CULTIVOS = [
   { id: "cerdo", nombre: "Cerdo (engorde)", emoji: "🐖", cat: "animal", unidad: "animal", modelo: "ciclo",
     altMin: 0, altMax: 3200, espacios: ["parcela"], mesesSiembra: [1,2,3,4,5,6,7,8,9,10,11,12],
     diasProduccion: 150, tipo: "Chanchera techada con piso firme", distancia: "2 m² por cerdo", riego: "Balanceado + restos de cocina y banano",
-    inversion: 70.00, gastoCiclo: 90.00, rendimiento: 1, rendUnidad: "cerdos", precio: 220.00, luna: null,
+    inversion: 70.00, gastoCiclo: 90.00, rendimiento: 1, rendUnidad: "cerdos", precio: 220.00, luna: null, maxCalc: 20,
     tip: "Baja el costo de alimento con restos de cocina, banano y suero. Véndelo en pie o faenado en fiestas.",
     pasos: [
       "Construye una chanchera techada con piso firme y buen desagüe, calculando 2 m² por cerdo.",
@@ -573,7 +573,7 @@ const CULTIVOS = [
   { id: "oveja", nombre: "Oveja", emoji: "🐑", cat: "animal", unidad: "animal", modelo: "ciclo",
     altMin: 2000, altMax: 4000, espacios: ["parcela"], mesesSiembra: [1,2,3,4,5,6,7,8,9,10,11,12],
     diasProduccion: 365, tipo: "Pastoreo con corral nocturno", distancia: "5-8 ovejas por hectárea de pasto", riego: "Pasto + sales minerales",
-    inversion: 70.00, gastoCiclo: 20.00, rendimiento: 1, rendUnidad: "ovejas", precio: 130.00, luna: null,
+    inversion: 70.00, gastoCiclo: 20.00, rendimiento: 1, rendUnidad: "ovejas", precio: 130.00, luna: null, maxCalc: 20,
     tip: "Además de la venta: lana cada año y abono para el huerto. Resistente al frío del páramo.",
     pasos: [
       "Prepara un corral nocturno seguro (contra perros y robo) y asegura pasto suficiente: calcula 5-8 ovejas por hectárea.",
@@ -585,7 +585,7 @@ const CULTIVOS = [
   { id: "cabra", nombre: "Cabra lechera", emoji: "🐐", cat: "animal", unidad: "animal", modelo: "mensual",
     altMin: 0, altMax: 3600, espacios: ["parcela"], mesesSiembra: [1,2,3,4,5,6,7,8,9,10,11,12],
     diasProduccion: 30, tipo: "Pastoreo o estabulada", distancia: "10 m² de corral + pasto", riego: "Pasto, ramas y balanceado ligero",
-    inversion: 120.00, gastoCiclo: 12.00, rendimiento: 45, rendUnidad: "litros", precio: 1.00, luna: null, vida: "Produce leche 8-10 meses al año",
+    inversion: 120.00, gastoCiclo: 12.00, rendimiento: 45, rendUnidad: "litros", precio: 1.00, luna: null, maxCalc: 20, vida: "Produce leche 8-10 meses al año",
     tip: "La leche de cabra se vende al doble que la de vaca. Come ramas y maleza que otros no aprovechan.",
     pasos: [
       "Prepara un corral de al menos 10 m² más acceso a pasto o maleza; puede ser estabulada o de pastoreo.",
@@ -597,7 +597,7 @@ const CULTIVOS = [
   { id: "vaca", nombre: "Vaca lechera", emoji: "🐄", cat: "animal", unidad: "animal", modelo: "mensual",
     altMin: 0, altMax: 3600, espacios: ["parcela"], mesesSiembra: [1,2,3,4,5,6,7,8,9,10,11,12],
     diasProduccion: 30, tipo: "Pastoreo con sogueo o cerca", distancia: "Necesita ~1 hectárea de pasto", riego: "Pasto + sales + balanceado en ordeño",
-    inversion: 750.00, gastoCiclo: 60.00, rendimiento: 240, rendUnidad: "litros", precio: 0.48, luna: null, vida: "Produce 8-10 meses por parto",
+    inversion: 750.00, gastoCiclo: 60.00, rendimiento: 240, rendUnidad: "litros", precio: 0.48, luna: null, maxCalc: 3, vida: "Produce 8-10 meses por parto",
     tip: "La mayor inversión, pero da ingreso diario. Haz queso fresco para ganar más por litro.",
     pasos: [
       "Asegura pasto suficiente (cerca de 1 hectárea) y agua cercana; puedes usar sogueo rotativo o cerca eléctrica.",
@@ -609,7 +609,7 @@ const CULTIVOS = [
   { id: "abejas", nombre: "Abejas (colmena)", emoji: "🐝", cat: "animal", unidad: "animal", modelo: "anual",
     altMin: 0, altMax: 3000, espacios: ["huerto","parcela"], mesesSiembra: [1,2,3,4,5,6,7,8,9,10,11,12],
     diasProduccion: 240, tipo: "Colmena tipo Langstroth", distancia: "Lejos de casas y animales, cerca de flores", riego: "Se alimentan solas de flores",
-    inversion: 140.00, gastoCiclo: 15.00, rendimiento: 18, rendUnidad: "kg de miel", precio: 8.00, luna: null, vida: "La colmena dura años bien manejada",
+    inversion: 140.00, gastoCiclo: 15.00, rendimiento: 18, rendUnidad: "kg de miel", precio: 8.00, luna: null, maxCalc: 20, vida: "La colmena dura años bien manejada",
     tip: "Además de miel, polinizan tu huerto y suben las cosechas. Empieza con curso básico: hay que saber manejarlas.",
     pasos: [
       "Elige un sitio alejado de casas y animales, cerca de flores y con una fuente de agua cercana; orienta la piquera hacia donde salga el sol de la mañana.",
