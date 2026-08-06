@@ -93,6 +93,7 @@ h3.list-title { font-size: 1rem; font-weight: 700; margin: 26px 0 12px; }
 .link-btn {
   border: none; background: none; color: var(--green); font-weight: 600; font-size: .85rem;
   cursor: pointer; transition: opacity .15s;
+  padding: 8px 4px; margin: -8px -4px;   /* área táctil cómoda sin alterar el diseño */
 }
 .link-btn:hover { opacity: .7; }
 .lead { font-size: 1.12rem; margin-top: 12px; line-height: 1.5; }
@@ -174,9 +175,9 @@ h3.list-title { font-size: 1rem; font-weight: 700; margin: 26px 0 12px; }
 /* ---------- Home ---------- */
 .home-top { display: flex; padding-top: 14px; margin-bottom: 10px; }
 .location-chip {
-  display: inline-flex; align-items: center; gap: 6px;
-  border: 1px solid var(--line); background: var(--card); border-radius: 20px;
-  padding: 8px 14px; font-size: .84rem; font-weight: 600; cursor: pointer; box-shadow: var(--shadow);
+  display: inline-flex; align-items: center; gap: 6px; min-height: 42px;
+  border: 1px solid var(--line); background: var(--card); border-radius: 21px;
+  padding: 8px 16px; font-size: .86rem; font-weight: 600; cursor: pointer; box-shadow: var(--shadow);
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   transition: transform .15s var(--ease), box-shadow .15s;
 }
@@ -225,6 +226,20 @@ h3.list-title { font-size: 1rem; font-weight: 700; margin: 26px 0 12px; }
 .weather-info { flex: 1; }
 .weather-info strong { font-size: 1.55rem; display: block; letter-spacing: -.02em; }
 .weather-info small { color: var(--gray); font-size: .84rem; line-height: 1.45; display: block; }
+
+/* Sin ubicación: es un aviso, no un dato. Tipografía normal para no dominar la pantalla. */
+.weather-card.no-loc { padding: 14px 16px; gap: 12px; }
+.weather-card.no-loc .weather-emoji { font-size: 1.6rem; }
+.weather-card.no-loc .weather-info strong { font-size: .95rem; letter-spacing: 0; }
+.weather-card.no-loc .weather-info small { font-size: .82rem; }
+.weather-cta {
+  flex-shrink: 0; align-self: center;
+  background: var(--green); color: #fff; border: none; border-radius: 10px;
+  padding: 10px 16px; font-weight: 700; font-size: .85rem; cursor: pointer;
+  transition: background .2s, transform .15s var(--ease);
+}
+.weather-cta:hover { background: var(--green-dark); }
+.weather-cta:active { transform: scale(.95); }
 .weather-minmax { font-size: .8rem; color: var(--gray); text-align: right; line-height: 1.5; }
 .weather-loading { color: var(--gray); font-size: .9rem; }
 
@@ -324,8 +339,8 @@ input[type="range"] { width: 100%; accent-color: var(--green); height: 34px; cur
 .area-value { text-align: center; font-size: 1.7rem; font-weight: 800; margin: 2px 0 12px; letter-spacing: -.02em; }
 .area-presets { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
 .area-presets button, .month-chips button, .cat-chips button {
-  padding: 8px 14px; border: 1px solid var(--line); border-radius: 20px;
-  background: var(--card); font-size: .84rem; white-space: nowrap; cursor: pointer;
+  min-height: 42px; padding: 8px 16px; border: 1px solid var(--line); border-radius: 21px;
+  background: var(--card); font-size: .88rem; white-space: nowrap; cursor: pointer;
   transition: background .18s, color .18s, border-color .18s, transform .15s var(--ease);
 }
 .area-presets button:hover, .month-chips button:hover, .cat-chips button:hover { background: var(--bg-2); }
@@ -483,9 +498,10 @@ select.field-input { appearance: auto; cursor: pointer; }
 .cal-month.sell.on { background: var(--amber); }
 
 /* ---------- Mi huerto ---------- */
-.empty-state { text-align: center; padding: 48px 20px; color: var(--gray); }
+.empty-state { text-align: center; padding: 48px 20px; color: var(--gray); line-height: 1.5; }
 .empty-state .e-emoji { font-size: 3.2rem; margin-bottom: 12px; animation: popIn .5s var(--ease) both; }
 .empty-state strong { display: block; color: var(--ink); font-size: 1.05rem; margin-bottom: 6px; }
+.empty-state .btn-secondary { max-width: 260px; margin-left: auto; margin-right: auto; }
 
 .track-card {
   background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
@@ -601,11 +617,16 @@ select.field-input { appearance: auto; cursor: pointer; }
   .screen.with-tabs .page-title { font-size: 1.7rem; }
 
   /* Grillas de 2 columnas */
-  #plant-list, #explore-list, #almanac-list, #garden-list, #best-days, #add-list, #price-list, #intl-prices {
+  #plant-list, #explore-list, #almanac-list, #garden-list, #best-days, #add-list,
+  #price-list, #intl-prices, #sell-window {
     display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
   }
-  #plant-list > .sub, #explore-list > .sub, #almanac-list > .sub, #garden-list > .empty-state { grid-column: 1 / -1; }
-  .plant-card, .day-card, .track-card, .price-card, .intl-row { margin-bottom: 0; }
+  /* Mensajes y estados vacíos siempre a ancho completo, nunca a media columna */
+  #plant-list > .sub, #explore-list > .sub, #almanac-list > .sub, #sell-window > .sub,
+  #garden-list > .empty-state, #explore-list > .empty-state, #price-list > .price-empty {
+    grid-column: 1 / -1;
+  }
+  .plant-card, .day-card, .track-card, .price-card, .intl-row, .sell-row { margin-bottom: 0; }
 
   /* Barra inferior de "Mi huerto" alineada al contenido */
   .bottom-bar.above-tabs {
