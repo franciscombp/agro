@@ -181,7 +181,9 @@ function formatDias(d) {
     const anios = d / 365;
     if (anios < 1.25) return "1 año";
     const medio = Math.round(anios * 2) / 2;          // redondea a medio año
-    return Number.isInteger(medio) ? medio + " años" : (medio - 0.5) + " años y medio";
+    if (Number.isInteger(medio)) return medio + " años";
+    const enteros = medio - 0.5;
+    return enteros === 1 ? "1 año y medio" : enteros + " años y medio";
   }
   if (d >= 55) return Math.round(d / 30) + " meses";
   return d === 1 ? "1 día" : d + " días";
@@ -987,6 +989,14 @@ function renderPlantDetail() {
     <h3 class="list-title">🚶 Cómo empezar</h3>
     <ol class="step-list">${c.pasos.map(p => `<li>${p}</li>`).join("")}</ol>` : "";
 
+  const sist = !esAnimal && c.sistemas && c.sistemas.length > 1 ? `
+    <h3 class="list-title">Dónde puedes cultivarlo</h3>
+    <div class="sys-list">${c.sistemas.map(id => {
+      const s = SISTEMAS[id];
+      return `<div class="sys-item"><span class="sys-emoji">${s.emoji}</span>
+        <span><strong>${s.nombre}</strong><small>${s.desc}</small></span></div>`;
+    }).join("")}</div>` : "";
+
   const rendTxt = c.modelo === "mensual" ? `${c.rendimiento} ${c.rendUnidad}/mes`
     : c.modelo === "anual" ? `${c.rendimiento} ${c.rendUnidad}/año`
     : `${c.rendimiento} ${c.rendUnidad}`;
@@ -1008,13 +1018,15 @@ function renderPlantDetail() {
     ${cal}
     ${venta}
     <div class="detail-grid">
-      <div class="detail-item"><small>${esAnimal ? "Manejo" : "Tipo de plantación"}</small><strong>${c.tipo}</strong></div>
-      <div class="detail-item"><small>${esAnimal ? "Espacio" : "Distancia"}</small><strong>${c.distancia}</strong></div>
+      <div class="detail-item"><small>${esAnimal ? "Manejo" : "Cómo se siembra"}</small><strong>${esAnimal ? c.tipo : (METODO_SIEMBRA[c.metodo] || c.tipo)}</strong></div>
+      <div class="detail-item"><small>${esAnimal ? "Espacio" : "Marco de siembra"}</small><strong>${c.distancia}</strong></div>
+      ${c.densidad ? `<div class="detail-item"><small>Plantas por m²</small><strong>${c.densidad >= 1 ? Math.round(c.densidad) : c.densidad.toFixed(2).replace(".", ",")}</strong></div>` : ""}
       <div class="detail-item"><small>${esAnimal ? "Alimentación" : "Riego"}</small><strong>${c.riego}</strong></div>
       <div class="detail-item"><small>${esAnimal ? "Tiempo a producción" : "Tiempo a cosecha"}</small><strong>${formatDias(c.diasProduccion)}</strong></div>
       ${c.luna ? `<div class="detail-item"><small>Luna ideal</small><strong>${c.luna === "creciente" ? "🌒 Creciente" : "🌘 Menguante"}</strong></div>` : ""}
       <div class="detail-item"><small>Altitud</small><strong>${c.altMin} – ${c.altMax} m</strong></div>
     </div>
+    ${sist}
     ${pasos}`;
 }
 
@@ -1022,12 +1034,52 @@ document.getElementById("btn-calc").addEventListener("click", () => { setupCalc(
 
 // ---------- Calculadora ----------
 const slider = document.getElementById("area-slider");
+let calcSistema = "suelo";
+
+function sistemasDe(c) { return (c.sistemas && c.sistemas.length ? c.sistemas : ["suelo"]); }
+
+// Reparte las plantas en hileras sobre un terreno aproximadamente cuadrado.
+function distribucion(area, marco, plantas) {
+  if (!marco || !area || plantas < 1) return null;
+  const entreHileras = marco[1] / 100;                    // m
+  const hileras = Math.max(1, Math.round(Math.sqrt(area) / entreHileras));
+  return { hileras, porHilera: Math.max(1, Math.round(plantas / hileras)) };
+}
+
+function fmtDist(cm) {
+  if (cm >= 100) return String(cm / 100).replace(".", ",") + " m";
+  return cm + " cm";
+}
+
+function renderSistemaChips(c) {
+  const cont = document.getElementById("calc-sistemas");
+  const disp = sistemasDe(c);
+  if (disp.length < 2) { cont.innerHTML = ""; return; }
+  cont.innerHTML = `
+    <label class="field-label">¿Cómo lo vas a cultivar?</label>
+    <div class="sys-chips">${disp.map(id => {
+      const s = SISTEMAS[id];
+      return `<button class="${id === calcSistema ? "on" : ""}" data-sys="${id}">
+        <span class="sys-emoji">${s.emoji}</span><span>${s.nombre}</span></button>`;
+    }).join("")}</div>
+    <p class="sys-desc">${SISTEMAS[calcSistema].desc}</p>`;
+  cont.querySelectorAll("[data-sys]").forEach(b => b.addEventListener("click", () => {
+    calcSistema = b.dataset.sys;
+    renderSistemaChips(c);
+    renderCalc();
+  }));
+}
 
 function setupCalc() {
   const c = getItem(state.plantaActual);
   const u = UNIDAD_INFO[c.unidad];
   document.getElementById("calc-title").textContent = `${c.emoji} ${c.nombre}`;
   document.getElementById("calc-question").textContent = u.pregunta;
+
+  // Arranca en el sistema que mejor calza con el espacio del usuario
+  const disp = sistemasDe(c);
+  calcSistema = (state.espacio === "maceta" && disp.includes("maceta")) ? "maceta" : disp[0];
+  renderSistemaChips(c);
 
   let max, presets, def;
   if (c.unidad === "m2") {
@@ -1058,6 +1110,44 @@ function setupCalc() {
 
 slider.addEventListener("input", renderCalc);
 
+// Traduce el área (o el número de plantas) al plan de siembra concreto.
+function renderSiembra(c, n, area, plantas, S) {
+  const cont = document.getElementById("calc-siembra");
+  if (!c.marco) { cont.innerHTML = ""; return; }
+
+  const esArea = c.unidad === "m2";
+  const dist = distribucion(area, c.marco, plantas);
+  const semilla = { directa: "semillas", tuberculo: "tubérculos-semilla", esqueje: "esquejes",
+    estaca: "estacas", hijuelo: "hijuelos", mata: "matas", semillero: "plantas de semillero",
+    plantula: "plántulas", planta: "plantas", vivero: "plantas de vivero" }[c.metodo] || "plantas";
+
+  const filas = [
+    `<div><span>${c.metodo === "directa" ? "Semillas" : "Plantas"} necesarias</span><strong>${fmt(plantas)} ${semilla}</strong></div>`,
+    `<div><span>Marco de siembra</span><strong>${fmtDist(c.marco[0])} entre plantas · ${fmtDist(c.marco[1])} entre hileras</strong></div>`
+  ];
+  if (dist && dist.hileras > 1) {
+    filas.push(`<div><span>Cómo repartirlas</span><strong>≈ ${dist.hileras} hileras de ${dist.porHilera}</strong></div>`);
+  }
+  if (!esArea && area) {
+    filas.push(`<div><span>Terreno que ocupa</span><strong>${area >= 10000 ? fmt(area / 10000) + " ha" : fmt(area) + " m²"}</strong></div>`);
+  }
+  if (calcSistema === "maceta") {
+    filas.push(`<div><span>Macetas</span><strong>${fmt(plantas)} de 20 litros o más</strong></div>`);
+  }
+
+  const consejo = {
+    suelo: "Siémbralo en surcos (guachos) o camas, y deja un caminito cada 4-5 hileras para poder entrar a deshierbar y cosechar.",
+    maceta: "Una planta por maceta. Agrupa las macetas dejando pasillos para regar y cosechar sin pisar.",
+    invernadero: "Dentro del invernadero deja un pasillo central de 60-80 cm para entrar con carretilla.",
+    hidroponia: "Necesitas un sitio de cultivo por planta en los canales o mesas, con la misma separación."
+  }[S.id];
+
+  cont.innerHTML = `
+    <h3 class="list-title">Cómo queda sembrado</h3>
+    <div class="siembra-card">${filas.join("")}</div>
+    <p class="calc-note">${consejo}</p>`;
+}
+
 function renderCalc() {
   const c = getItem(state.plantaActual);
   const u = UNIDAD_INFO[c.unidad];
@@ -1069,27 +1159,54 @@ function renderCalc() {
   document.querySelectorAll("#area-presets button").forEach(b =>
     b.classList.toggle("on", +b.dataset.area === n));
 
-  const inversion = c.inversion * n;
-  const gasto = c.gastoCiclo * n;
-  const prod = c.rendimiento * n;
+  // Sistema de cultivo: cambia rendimiento, gastos y añade el costo de la instalación.
+  const S = SISTEMAS[calcSistema] || SISTEMAS.suelo;
+  const esArea = c.unidad === "m2";
+  // Se calcula desde el marco, no desde la densidad redondeada, para no arrastrar error.
+  const m2PorPlanta = c.marco ? (c.marco[0] / 100) * (c.marco[1] / 100) : null;
+  const area = esArea ? n : (m2PorPlanta ? n * m2PorPlanta : null);
+  const plantas = esArea ? (m2PorPlanta ? Math.max(1, Math.round(n / m2PorPlanta)) : n) : n;
+
+  renderSiembra(c, n, area, plantas, S);
+
+  const infra = area && S.infra ? area * S.infra : 0;
+  const inversion = c.inversion * n + infra;      // desembolso inicial total
+  const gasto = c.gastoCiclo * n * S.gasto;
+  const prod = c.rendimiento * n * S.rend;
   const venta = prod * c.precio;
   const rU = c.rendUnidad;
+
+  // La instalación dura años, así que a cada ciclo/año/mes le toca solo su parte.
+  // Cargarla entera a un ciclo haría ver como pérdida algo que sí es rentable.
+  const diasPeriodo = c.modelo === "ciclo" ? c.diasProduccion : c.modelo === "anual" ? 365 : 30;
+  const infraPeriodo = infra > 0 ? infra * (diasPeriodo / (S.vidaInfra * 365)) : 0;
+  const periodoTxt = c.modelo === "ciclo" ? "este ciclo" : c.modelo === "anual" ? "el año" : "el mes";
+  const filaInfra = infraPeriodo > 0
+    ? `<div class="calc-row"><span class="label">${S.emoji} ${S.nombre} <small>(parte que le toca a ${periodoTxt})</small></span><span>$${fmt(infraPeriodo)}</span></div>`
+    : "";
+  const notaInfra = infra > 0
+    ? ` La instalación cuesta $${fmt(infra)} una sola vez y dura unos ${S.vidaInfra} años: aquí se reparte entre todos los ${c.modelo === "ciclo" ? "ciclos" : c.modelo === "anual" ? "años" : "meses"} de ese tiempo.`
+    : "";
   let rows, nota;
 
+  const etiquetaBase = c.cat === "animal" ? "Compra de animales" : "Semillas o plantas";
+
   if (c.modelo === "ciclo") {
-    const ganancia = venta - inversion - gasto;
+    const ganancia = venta - c.inversion * n - gasto - infraPeriodo;
     rows = `
-      <div class="calc-row"><span class="label">Inversión inicial</span><span>$${fmt(inversion)}</span></div>
+      <div class="calc-row"><span class="label">${etiquetaBase}</span><span>$${fmt(c.inversion * n)}</span></div>
+      ${filaInfra}
       <div class="calc-row"><span class="label">Gastos del ciclo (${c.cat === "animal" ? "alimento" : "insumos"})</span><span>$${fmt(gasto)}</span></div>
       <div class="calc-row"><span class="label">${c.cat === "animal" ? "Producción" : "Cosecha"} en ${formatDias(c.diasProduccion)}</span><span>${fmt(prod)} ${rU}</span></div>
       <div class="calc-row"><span class="label">Venta estimada</span><span>$${fmt(venta)}</span></div>
       <div class="calc-row total"><span class="label">Ganancia del ciclo</span><span>$${fmt(ganancia)}</span></div>`;
     nota = `Ciclo de ${formatDias(c.diasProduccion)}.`;
   } else if (c.modelo === "anual") {
-    const gananciaAnual = venta - gasto;
+    const gananciaAnual = venta - gasto - infraPeriodo;
     const payback = gananciaAnual > 0 ? Math.ceil(inversion / gananciaAnual) : null;
     rows = `
-      <div class="calc-row"><span class="label">Inversión inicial</span><span>$${fmt(inversion)}</span></div>
+      <div class="calc-row"><span class="label">${etiquetaBase}</span><span>$${fmt(c.inversion * n)}</span></div>
+      ${filaInfra}
       <div class="calc-row"><span class="label">Primera ${c.cat === "animal" ? "producción" : "cosecha"}</span><span>en ${formatDias(c.diasProduccion)}</span></div>
       <div class="calc-row"><span class="label">Producción por año</span><span>${fmt(prod)} ${rU}</span></div>
       <div class="calc-row"><span class="label">Gastos por año</span><span>$${fmt(gasto)}</span></div>
@@ -1097,10 +1214,11 @@ function renderCalc() {
       <div class="calc-row total"><span class="label">Ganancia por año</span><span>$${fmt(gananciaAnual)}</span></div>`;
     nota = payback ? `Recuperas la inversión en ~${payback} ${payback === 1 ? "año" : "años"} de producción.` : "";
   } else {
-    const gananciaMes = venta - gasto;
+    const gananciaMes = venta - gasto - infraPeriodo;
     const payback = gananciaMes > 0 ? Math.ceil(inversion / gananciaMes) : null;
     rows = `
-      <div class="calc-row"><span class="label">Inversión inicial</span><span>$${fmt(inversion)}</span></div>
+      <div class="calc-row"><span class="label">${etiquetaBase}</span><span>$${fmt(c.inversion * n)}</span></div>
+      ${filaInfra}
       <div class="calc-row"><span class="label">Producción por mes</span><span>${fmt(prod)} ${rU}</span></div>
       <div class="calc-row"><span class="label">Gastos por mes (alimento)</span><span>$${fmt(gasto)}</span></div>
       <div class="calc-row"><span class="label">Ingreso por mes</span><span>$${fmt(venta)}</span></div>
@@ -1110,7 +1228,7 @@ function renderCalc() {
 
   document.getElementById("calc-results").innerHTML = `
     <div class="calc-card">${rows}</div>
-    <p class="calc-note">${nota} Precios referenciales: ${PRECIOS_META.fuente.toLowerCase()} de ${PRECIOS_META.pais} (${PRECIOS_META.actualizado}). No incluye tu mano de obra ni transporte.</p>`;
+    <p class="calc-note">${nota}${notaInfra} Precios referenciales: ${PRECIOS_META.fuente.toLowerCase()} de ${PRECIOS_META.pais} (${PRECIOS_META.actualizado}). No incluye tu mano de obra ni transporte.</p>`;
 }
 
 // ---------- PWA: offline e instalación ----------
