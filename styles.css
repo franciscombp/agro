@@ -143,8 +143,8 @@ h3.list-title { font-size: 1rem; font-weight: 700; margin: 26px 0 12px; }
 @media (hover: hover) { .option-card.accent:hover { border-color: var(--green-dark); } }
 .option-emoji { font-size: 1.7rem; }
 .option-text { display: flex; flex-direction: column; gap: 2px; }
-.option-text strong { font-size: .98rem; }
-.option-text small { color: var(--gray); font-size: .84rem; }
+.option-text strong { font-size: 1.01rem; }
+.option-text small { color: var(--gray); font-size: .86rem; }
 .divider-text { text-align: center; color: var(--gray); font-size: .84rem; margin: 18px 0 14px; }
 
 /* ---------- Botones ---------- */
@@ -252,12 +252,12 @@ h3.list-title { font-size: 1rem; font-weight: 700; margin: 26px 0 12px; }
 .moon-strip:active, .garden-summary:active { transform: scale(.98); }
 .moon-strip { background: var(--card); border: 1px solid var(--line); box-shadow: var(--shadow); }
 .moon-strip .m-emoji { font-size: 1.55rem; }
-.moon-strip .m-text { flex: 1; font-size: .88rem; }
-.moon-strip .m-text small { color: var(--gray); display: block; }
-.garden-summary { background: var(--green-light); font-size: .88rem; }
+.moon-strip .m-text { flex: 1; font-size: .91rem; }
+.moon-strip .m-text small { color: var(--gray); display: block; font-size: .84rem; }
+.garden-summary { background: var(--green-light); font-size: .91rem; }
 .garden-summary .g-emoji { font-size: 1.55rem; }
 .garden-summary .g-text { flex: 1; }
-.garden-summary .g-text small { color: var(--gray); display: block; }
+.garden-summary .g-text small { color: var(--gray); display: block; font-size: .85rem; }
 .chev { color: var(--gray-2); transition: transform .18s var(--ease); }
 .moon-strip:hover .chev, .garden-summary:hover .chev { transform: translateX(3px); }
 
@@ -275,8 +275,8 @@ h3.list-title { font-size: 1rem; font-weight: 700; margin: 26px 0 12px; }
 .t-hierba { background: #e6f2e6; }
 .t-animal { background: #f2ecdf; }
 .plant-info { flex: 1; min-width: 0; }
-.plant-info strong { display: block; font-size: .97rem; }
-.plant-info small { color: var(--gray); font-size: .82rem; display: block; }
+.plant-info strong { display: block; font-size: 1rem; }
+.plant-info small { color: var(--gray); font-size: .84rem; display: block; }
 .plant-badge {
   font-size: .7rem; font-weight: 700; color: var(--green); background: var(--green-light);
   padding: 4px 9px; border-radius: 20px; white-space: nowrap;
@@ -294,8 +294,8 @@ h3.list-title { font-size: 1rem; font-weight: 700; margin: 26px 0 12px; }
 .detail-cat { font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--gray); margin-top: 10px; }
 .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 18px; }
 .detail-item { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-s); padding: 12px; }
-.detail-item small { color: var(--gray); font-size: .73rem; display: block; margin-bottom: 3px; }
-.detail-item strong { font-size: .9rem; font-weight: 600; }
+.detail-item small { color: var(--gray); font-size: .78rem; display: block; margin-bottom: 3px; }
+.detail-item strong { font-size: .96rem; font-weight: 600; }
 .tip-box {
   background: var(--green-light); border-radius: var(--radius-s); padding: 14px 16px;
   font-size: .9rem; line-height: 1.5; margin-bottom: 14px;
@@ -306,8 +306,8 @@ h3.list-title { font-size: 1rem; font-weight: 700; margin: 26px 0 12px; }
   box-shadow: var(--shadow);
 }
 .econ-strip div { text-align: center; flex: 1; }
-.econ-strip small { color: var(--gray); font-size: .72rem; display: block; }
-.econ-strip strong { font-size: .95rem; }
+.econ-strip small { color: var(--gray); font-size: .77rem; display: block; }
+.econ-strip strong { font-size: 1rem; }
 .step-list {
   list-style: none; counter-reset: step; margin: 0 0 18px; padding: 0;
   display: flex; flex-direction: column; gap: 10px;
@@ -316,7 +316,7 @@ h3.list-title { font-size: 1rem; font-weight: 700; margin: 26px 0 12px; }
   counter-increment: step;
   display: flex; gap: 12px; align-items: flex-start;
   background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-s);
-  padding: 12px 14px; font-size: .88rem; line-height: 1.5;
+  padding: 12px 14px; font-size: .91rem; line-height: 1.55;
   animation: cardIn .35s var(--ease) backwards;
 }
 .step-list li::before {
@@ -368,8 +368,8 @@ input[type="range"] { width: 100%; accent-color: var(--green); height: 34px; cur
   background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-s);
 }
 .sys-item .sys-emoji { font-size: 1.35rem; flex-shrink: 0; }
-.sys-item strong { display: block; font-size: .9rem; }
-.sys-item small { color: var(--gray); font-size: .8rem; line-height: 1.4; }
+.sys-item strong { display: block; font-size: .95rem; }
+.sys-item small { color: var(--gray); font-size: .83rem; line-height: 1.4; }
 
 /* Plan de siembra en la calculadora */
 .siembra-card {
@@ -379,7 +379,7 @@ input[type="range"] { width: 100%; accent-color: var(--green); height: 34px; cur
 }
 .siembra-card > div {
   display: flex; justify-content: space-between; align-items: baseline; gap: 14px;
-  padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: .9rem;
+  padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: .93rem;
 }
 .siembra-card > div:last-child { border-bottom: none; }
 .siembra-card span { color: var(--gray); flex-shrink: 0; }
@@ -390,7 +390,7 @@ input[type="range"] { width: 100%; accent-color: var(--green); height: 34px; cur
   overflow: hidden; margin-bottom: 14px; box-shadow: var(--shadow);
   animation: cardIn .35s var(--ease) both;
 }
-.calc-row { display: flex; justify-content: space-between; gap: 12px; padding: 13px 16px; border-bottom: 1px solid var(--line); font-size: .93rem; }
+.calc-row { display: flex; justify-content: space-between; gap: 12px; padding: 13px 16px; border-bottom: 1px solid var(--line); font-size: .96rem; }
 .calc-row:last-child { border-bottom: none; }
 .calc-row .label { color: var(--gray); }
 .calc-row.total { background: var(--green-light); font-weight: 800; }
@@ -407,10 +407,10 @@ input[type="range"] { width: 100%; accent-color: var(--green); height: 34px; cur
 .day-card.best { border-color: var(--green); background: var(--green-light); }
 .day-date { width: 46px; text-align: center; flex-shrink: 0; }
 .day-date strong { display: block; font-size: 1.15rem; }
-.day-date small { color: var(--gray); font-size: .7rem; text-transform: uppercase; }
+.day-date small { color: var(--gray); font-size: .73rem; text-transform: uppercase; }
 .day-icons { font-size: 1.15rem; letter-spacing: 2px; flex-shrink: 0; }
-.day-text { flex: 1; font-size: .82rem; color: var(--gray); line-height: 1.4; }
-.day-text strong { color: var(--ink); display: block; font-size: .85rem; }
+.day-text { flex: 1; font-size: .85rem; color: var(--gray); line-height: 1.4; }
+.day-text strong { color: var(--ink); display: block; font-size: .88rem; }
 .best-tag { font-size: .68rem; font-weight: 800; color: var(--green); text-transform: uppercase; }
 
 .month-chips, .cat-chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; scrollbar-width: none; }
@@ -435,14 +435,14 @@ input[type="range"] { width: 100%; accent-color: var(--green); height: 34px; cur
 .market-strip {
   display: flex; align-items: center; gap: 12px; padding: 13px 15px; margin-top: 12px;
   border-radius: var(--radius); cursor: pointer;
-  background: var(--amber-light); font-size: .88rem;
+  background: var(--amber-light); font-size: .91rem;
   transition: transform .18s var(--ease), box-shadow .18s;
 }
 .market-strip:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); }
 .market-strip:active { transform: scale(.98); }
 .market-strip .m-emoji { font-size: 1.55rem; }
 .market-strip .m-text { flex: 1; }
-.market-strip .m-text small { color: var(--gray); display: block; }
+.market-strip .m-text small { color: var(--gray); display: block; font-size: .84rem; }
 .market-strip:hover .chev { transform: translateX(3px); }
 
 .price-form {
@@ -475,8 +475,8 @@ select.field-input { appearance: auto; cursor: pointer; }
 .price-head { display: flex; align-items: center; gap: 12px; }
 .price-head .plant-thumb { width: 44px; height: 44px; font-size: 1.4rem; }
 .price-info { flex: 1; min-width: 0; }
-.price-info strong { display: block; font-size: .97rem; }
-.price-info small { color: var(--gray); font-size: .78rem; }
+.price-info strong { display: block; font-size: 1rem; }
+.price-info small { color: var(--gray); font-size: .81rem; }
 .price-now { font-size: 1.15rem; font-weight: 800; letter-spacing: -.02em; white-space: nowrap; }
 .price-now small { font-size: .72rem; font-weight: 600; color: var(--gray); }
 .price-foot { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
@@ -513,7 +513,7 @@ select.field-input { appearance: auto; cursor: pointer; }
 .sell-row.now { border-color: var(--amber); background: var(--amber-light); }
 .sell-emoji { font-size: 1.45rem; flex-shrink: 0; }
 .sell-info { flex: 1; min-width: 0; }
-.sell-info strong { display: block; font-size: .92rem; margin-bottom: 5px; }
+.sell-info strong { display: block; font-size: .96rem; margin-bottom: 5px; }
 .sell-now-tag { font-size: .68rem; font-weight: 800; color: var(--amber); text-transform: uppercase; }
 .sell-months { display: flex; gap: 3px; }
 .sell-months i {
@@ -528,8 +528,8 @@ select.field-input { appearance: auto; cursor: pointer; }
   background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-s);
 }
 .intl-info { flex: 1; min-width: 0; }
-.intl-info strong { display: block; font-size: .92rem; }
-.intl-info small { color: var(--gray); font-size: .74rem; }
+.intl-info strong { display: block; font-size: .96rem; }
+.intl-info small { color: var(--gray); font-size: .78rem; }
 .intl-price { font-weight: 800; font-size: .95rem; white-space: nowrap; }
 .intl-price small { font-size: .68rem; font-weight: 600; color: var(--gray); }
 
@@ -550,8 +550,8 @@ select.field-input { appearance: auto; cursor: pointer; }
 .track-head { display: flex; align-items: center; gap: 12px; }
 .track-head .plant-thumb { width: 44px; height: 44px; font-size: 1.4rem; }
 .track-title { flex: 1; min-width: 0; }
-.track-title strong { display: block; font-size: .97rem; }
-.track-title small { color: var(--gray); font-size: .8rem; }
+.track-title strong { display: block; font-size: 1rem; }
+.track-title small { color: var(--gray); font-size: .82rem; }
 .track-status { font-size: .7rem; font-weight: 700; padding: 4px 9px; border-radius: 20px; white-space: nowrap; }
 .st-grow { color: var(--amber); background: var(--amber-light); }
 .st-ready { color: var(--green); background: var(--green-light); }
@@ -582,7 +582,7 @@ select.field-input { appearance: auto; cursor: pointer; }
 .zone-toggle { display: flex; align-items: center; gap: 8px; font-size: .84rem; color: var(--gray); margin: 8px 0 14px; cursor: pointer; }
 .zone-toggle input { accent-color: var(--green); width: 17px; height: 17px; cursor: pointer; }
 
-.field-label { display: block; font-size: .85rem; font-weight: 600; margin: 14px 0 6px; }
+.field-label { display: block; font-size: .92rem; font-weight: 600; margin: 14px 0 6px; }
 .add-selected {
   display: flex; align-items: center; gap: 12px; padding: 13px;
   background: var(--green-light); border-radius: var(--radius-s); margin-bottom: 6px; font-weight: 600;

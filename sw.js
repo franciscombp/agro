@@ -3,7 +3,7 @@
 // APIs externas network-first con último dato guardado como respaldo.
 "use strict";
 
-const VERSION = "v7";
+const VERSION = "v8";
 const CACHE_SHELL = "mihuerto-shell-" + VERSION;
 const CACHE_RUNTIME = "mihuerto-runtime";
 
