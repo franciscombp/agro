@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#14532d" />
+  <meta name="description" content="Gestión de la Finca Mulalillo: mapa satelital, sectores, plantas, tareas, agua y relieve 3D." />
+  <title>Finca Mulalillo — gestión</title>
+
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="../icons/icon-192.png" type="image/png" />
+  <link rel="apple-touch-icon" href="../icons/apple-touch-icon.png" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Mulalillo" />
+
+  <link rel="stylesheet" href="./vendor/maplibre-gl.css" />
+  <link rel="stylesheet" href="./styles.css" />
+
+  <!-- Librerías servidas por la propia app: sin CDN, funciona sin señal desde la primera visita. -->
+  <script src="./vendor/maplibre-gl.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-title">
+    <strong>Finca Mulalillo</strong>
+    <span id="topbar-sub">Salcedo, Cotopaxi</span>
+  </div>
+  <div class="topbar-actions">
+    <span class="chip" id="chip-offline" hidden>Sin conexión</span>
+    <span class="chip" id="chip-outbox" hidden></span>
+    <button class="icon-btn" id="btn-settings" title="Ajustes">⚙︎</button>
+  </div>
+</header>
+
+<!-- Vista Mapa -->
+<main class="view active" id="view-map">
+  <div id="map"></div>
+
+  <div class="map-toolbar">
+    <button class="tool" id="btn-fit" title="Ver toda la finca">⤢</button>
+    <button class="tool" id="btn-gps" title="Mi ubicación GPS">◎</button>
+    <button class="tool" id="btn-move" title="Mover puntos arrastrando">✥</button>
+    <button class="tool" id="btn-layers" title="Colorear y filtrar">◍</button>
+  </div>
+
+  <div class="map-fabs">
+    <button class="fab" id="fab-add" title="Agregar">+</button>
+  </div>
+
+  <div class="banner" id="map-banner" hidden></div>
+
+  <section class="panel" id="panel-layers" hidden>
+    <h3>Ver</h3>
+    <label>Colorear plantas por
+      <select id="sel-colorby">
+        <option value="species">Especie</option>
+        <option value="status">Estado sanitario</option>
+      </select>
+    </label>
+    <label>Especie
+      <select id="sel-filter-species"><option value="all">Todas</option></select>
+    </label>
+    <label>Estado
+      <select id="sel-filter-status">
+        <option value="all">Todos</option>
+        <option value="sano">Sano</option>
+        <option value="atención">Atención</option>
+        <option value="enfermo">Enfermo</option>
+        <option value="muerto">Muerto</option>
+      </select>
+    </label>
+    <label>Sector
+      <select id="sel-filter-sector"><option value="all">Todos</option></select>
+    </label>
+    <button class="btn-ghost" data-close-panel>Cerrar</button>
+  </section>
+</main>
+
+<!-- Vista Sectores -->
+<main class="view" id="view-sectors">
+  <div class="list-head">
+    <h2>Sectores</h2>
+    <button class="btn-small" id="btn-new-sector">Dibujar sector</button>
+  </div>
+  <div id="sectors-list" class="list"></div>
+</main>
+
+<!-- Vista Plantas -->
+<main class="view" id="view-plants">
+  <div class="list-head">
+    <h2>Plantas</h2>
+    <button class="btn-small" id="btn-new-plant">Nueva planta</button>
+  </div>
+  <div class="filters-row">
+    <input type="search" id="plant-search" placeholder="Buscar especie, variedad, nota…" />
+  </div>
+  <div id="plants-list" class="list"></div>
+</main>
+
+<!-- Vista Tareas -->
+<main class="view" id="view-tasks">
+  <div class="list-head">
+    <h2>Tareas</h2>
+    <button class="btn-small" id="btn-new-task">Nueva tarea</button>
+  </div>
+  <div class="seg" id="task-seg">
+    <button class="seg-btn active" data-filter="pendientes">Pendientes</button>
+    <button class="seg-btn" data-filter="hechas">Hechas</button>
+    <button class="seg-btn" data-filter="todas">Todas</button>
+  </div>
+  <div id="tasks-list" class="list"></div>
+</main>
+
+<!-- Vista Agua -->
+<main class="view" id="view-water">
+  <div class="list-head">
+    <h2>Agua</h2>
+    <button class="btn-small" id="btn-new-water">Registrar evento</button>
+  </div>
+  <div id="water-body"></div>
+</main>
+
+<!-- Vista 3D -->
+<main class="view" id="view-3d">
+  <div id="three"></div>
+  <div class="three-controls">
+    <label>Exageración vertical <output id="out-exag">3×</output>
+      <input type="range" id="range-exag" min="1" max="12" step="0.5" value="3" />
+    </label>
+    <label class="row"><input type="checkbox" id="chk-arrows" checked /> Flechas de escurrimiento</label>
+    <p class="hint" id="three-hint"></p>
+  </div>
+</main>
+
+<nav class="tabbar">
+  <button class="tab active" data-view="view-map"><span>🗺️</span>Mapa</button>
+  <button class="tab" data-view="view-sectors"><span>▦</span>Sectores</button>
+  <button class="tab" data-view="view-plants"><span>🌿</span>Plantas</button>
+  <button class="tab" data-view="view-tasks"><span>✓</span>Tareas</button>
+  <button class="tab" data-view="view-water"><span>💧</span>Agua</button>
+  <button class="tab" data-view="view-3d"><span>⛰️</span>3D</button>
+</nav>
+
+<!-- Hoja modal reutilizable -->
+<div class="sheet-backdrop" id="sheet-backdrop" hidden></div>
+<section class="sheet" id="sheet" hidden aria-modal="true" role="dialog">
+  <header class="sheet-head">
+    <h3 id="sheet-title"></h3>
+    <button class="icon-btn" id="sheet-close" aria-label="Cerrar">✕</button>
+  </header>
+  <div class="sheet-body" id="sheet-body"></div>
+</section>
+
+<div class="toast" id="toast" hidden></div>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>

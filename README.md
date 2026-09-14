@@ -52,3 +52,10 @@ npm run build    # genera dist/ listo para GitHub Pages
 ## Deploy
 
 Cada push a `main` compila con Vite y publica `dist/` en GitHub Pages (rama `gh-pages`) vía GitHub Actions.
+
+## PoC aparte: Finca Mulalillo
+
+En `mulalillo/` vive una prueba de concepto independiente para la gestión de una finca
+concreta: mapa satelital con sectores, plantas, tareas, módulo de agua y relieve 3D.
+Se publica en `/agro/mulalillo/` con su propio service worker y no comparte código ni
+datos con esta app. Detalles en [`mulalillo/README.md`](mulalillo/README.md).

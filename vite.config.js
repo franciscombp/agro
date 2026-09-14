@@ -2,6 +2,16 @@ import { defineConfig } from 'vite'
 import fs from 'fs'
 import path from 'path'
 
+function copyDir(src, dest) {
+  fs.mkdirSync(dest, { recursive: true })
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const from = path.join(src, entry.name)
+    const to = path.join(dest, entry.name)
+    if (entry.isDirectory()) copyDir(from, to)
+    else fs.copyFileSync(from, to)
+  }
+}
+
 export default defineConfig({
   base: '/agro/',
   build: {
@@ -24,6 +34,17 @@ export default defineConfig({
             });
           }
         });
+      }
+    },
+    {
+      name: 'copy-mulalillo',
+      apply: 'build',
+      writeBundle() {
+        // PoC en subdirectorio: se copia tal cual, sin empaquetar (usa módulos ES y CDN).
+        const src = path.join(process.cwd(), 'mulalillo');
+        const dest = path.join(process.cwd(), 'dist', 'mulalillo');
+        if (!fs.existsSync(src)) return;
+        copyDir(src, dest);
       }
     },
     {
