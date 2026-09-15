@@ -3,7 +3,7 @@
 // APIs externas network-first con último dato guardado como respaldo.
 "use strict";
 
-const VERSION = "v8";
+const VERSION = "v9";
 const CACHE_SHELL = "mihuerto-shell-" + VERSION;
 const CACHE_RUNTIME = "mihuerto-runtime";
 
@@ -37,6 +37,9 @@ self.addEventListener("fetch", e => {
   const req = e.request;
   if (req.method !== "GET") return;
   const url = new URL(req.url);
+
+  // La PoC de Finca Mulalillo vive en un subdirectorio con su propio service worker.
+  if (url.pathname.includes("/mulalillo/")) return;
 
   if (url.origin === location.origin) {
     if (req.mode === "navigate") {
