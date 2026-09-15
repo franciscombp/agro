@@ -9,7 +9,7 @@ const dest = path.join(root, 'mulalillo', 'vendor');
 const FILES = [
   ['node_modules/maplibre-gl/dist/maplibre-gl.js', 'maplibre-gl.js'],
   ['node_modules/maplibre-gl/dist/maplibre-gl.css', 'maplibre-gl.css'],
-  ['node_modules/three/build/three.module.js', 'three.module.js'],
+  ['node_modules/three/build/three.module.min.js', 'three.module.min.js'],
   ['node_modules/three/examples/jsm/controls/OrbitControls.js', 'OrbitControls.js']
 ];
 
@@ -26,7 +26,7 @@ for (const [src, name] of FILES) {
   let content = fs.readFileSync(from, 'utf-8');
   if (name === 'OrbitControls.js') {
     // Sin importmap: el módulo resuelve three por ruta relativa.
-    content = content.replace(/from ['"]three['"]/g, "from './three.module.js'");
+    content = content.replace(/from ['"]three['"]/g, "from './three.module.min.js'");
   }
   fs.writeFileSync(path.join(dest, name), content);
 }

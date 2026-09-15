@@ -2,7 +2,7 @@
 // Debe funcionar sin señal en el campo: shell precacheado, librerías y tiles en caché.
 "use strict";
 
-const VERSION = "mulalillo-v1";
+const VERSION = "mulalillo-v2";
 const SHELL = "mulalillo-shell-" + VERSION;
 const TILES = "mulalillo-tiles";
 const MAX_TILES = 1200;   // ~el área de la finca a varios niveles de zoom
@@ -20,18 +20,22 @@ const ASSETS = [
   "./manifest.webmanifest",
   "./vendor/maplibre-gl.js",
   "./vendor/maplibre-gl.css",
-  "./vendor/three.module.js",
+  "./vendor/three.module.min.js",
   "./vendor/OrbitControls.js"
 ];
 
 const TILE_HOSTS = ["server.arcgisonline.com"];
 
 self.addEventListener("install", e => {
-  e.waitUntil(
-    caches.open(SHELL)
-      .then(c => c.addAll(ASSETS))
-      .then(() => self.skipWaiting())
-  );
+  // Uno por uno, no con addAll: en el campo una descarga grande puede fallar y
+  // addAll es atómico — perderíamos todo el caché por un solo archivo.
+  e.waitUntil((async () => {
+    const cache = await caches.open(SHELL);
+    await Promise.all(ASSETS.map(url =>
+      cache.add(url).catch(err => console.warn("[sw] no se pudo cachear", url, err))
+    ));
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener("activate", e => {
