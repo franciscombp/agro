@@ -18,7 +18,18 @@
   <link rel="stylesheet" href="./styles.css" />
 
   <!-- Librerías servidas por la propia app: sin CDN, funciona sin señal desde la primera visita. -->
-  <script src="./vendor/maplibre-gl.js"></script>
+  <script>
+    // Distingue "no se pudo descargar" de "el navegador no pudo ejecutarlo",
+    // para que el aviso en pantalla diga algo accionable.
+    window.__mapLib = {};
+    addEventListener('error', e => {
+      if (e.filename && e.filename.indexOf('maplibre-gl') !== -1) {
+        window.__mapLib.exec = e.message || 'error al ejecutar la librería';
+      }
+    }, true);
+  </script>
+  <script src="./vendor/maplibre-gl.js"
+          onerror="window.__mapLib.network = true"></script>
 </head>
 <body>
 

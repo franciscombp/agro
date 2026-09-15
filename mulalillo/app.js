@@ -46,7 +46,7 @@ async function boot() {
 /** El mapa es la vista principal, pero si falla el resto de la app sigue sirviendo. */
 async function initMap() {
   try {
-    if (typeof maplibregl === 'undefined') throw new Error('no se cargó la librería del mapa');
+    await ensureMapLibre();
     farmMap = new FarmMap('map', {
       onSelectPoint: openPoint,
       onSelectSector: id => openSector(id),
@@ -60,11 +60,64 @@ async function initMap() {
     farmMap.fitToParcel();
   } catch (err) {
     farmMap = null;
-    document.getElementById('map').innerHTML =
-      `<p class="warn pad">No se pudo cargar el mapa: ${escapeHtml(String(err.message || err))}.<br>
-       Las listas de sectores, plantas, tareas y agua siguen funcionando.</p>`;
+    showMapError(err);
     console.error(err);
   }
+}
+
+/**
+ * MapLibre entra como script clásico en el <head>. Si no está, casi siempre es que
+ * la descarga de 800 kB se cortó por señal débil: vale la pena reintentar en vez
+ * de dejar el mapa muerto hasta recargar la página.
+ */
+async function ensureMapLibre(attempts = 2) {
+  if (typeof maplibregl !== 'undefined') return;
+  const diag = window.__mapLib || {};
+  if (diag.exec) throw new Error(`el navegador no pudo ejecutar la librería (${diag.exec})`);
+
+  let reason = diag.network ? 'la descarga se cortó' : 'la librería no está disponible';
+  for (let i = 0; i < attempts; i++) {
+    try {
+      await loadScript('./vendor/maplibre-gl.js');
+    } catch {
+      reason = 'la descarga se cortó';
+      continue;
+    }
+    if (typeof maplibregl !== 'undefined') return;
+    reason = 'el archivo llegó pero el navegador no pudo ejecutarlo';
+  }
+  throw new Error(reason);
+}
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const el = document.createElement('script');
+    el.src = src;
+    el.onload = resolve;
+    el.onerror = () => reject(new Error('fallo de red en ' + src));
+    document.head.appendChild(el);
+  });
+}
+
+function showMapError(err) {
+  const msg = String(err.message || err);
+  const offline = !navigator.onLine;
+  document.getElementById('map').innerHTML = `
+    <div class="warn pad">
+      <p><strong>No se pudo cargar el mapa:</strong> ${escapeHtml(msg)}.</p>
+      <p>${offline
+        ? 'El dispositivo está sin conexión. Con señal, toca «Reintentar»: al cargar una vez, el mapa queda guardado y ya funciona sin señal.'
+        : 'Suele ser señal débil cortando la descarga de la librería (800 kB). Toca «Reintentar».'}</p>
+      <p>Las listas de sectores, plantas, tareas y agua funcionan igual mientras tanto.</p>
+      <button class="btn-primary" id="btn-retry-map">Reintentar</button>
+    </div>`;
+  document.getElementById('btn-retry-map').onclick = async e => {
+    e.target.disabled = true;
+    e.target.textContent = 'Cargando…';
+    document.getElementById('map').innerHTML = '';
+    await initMap();
+    if (farmMap) { renderAll(); farmMap.fitToParcel(); toast('Mapa cargado'); }
+  };
 }
 
 async function reload() {

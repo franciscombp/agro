@@ -2,7 +2,7 @@
 // Lee exactamente los mismos datos que el mapa 2D: una sola fuente de verdad.
 "use strict";
 
-import * as THREE from './vendor/three.module.js';
+import * as THREE from './vendor/three.module.min.js';
 import { OrbitControls } from './vendor/OrbitControls.js';
 import { bbox, centroid, toLocalMeters, interpolateElevation, pointInRing } from './geo.js';
 import { SPECIES, STATUS_COLORS } from './db.js';
