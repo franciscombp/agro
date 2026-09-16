@@ -44,6 +44,11 @@ tareas — incluidas las del sector al que pertenece.
 **Sectores.** Área y perímetro geodésicos, conteo de plantas por especie, rango de
 elevación, riego estimado y tareas a nivel de sector.
 
+**Plan de trabajo compartible.** Desde Tareas, «Compartir plan» arma un texto con las
+tareas atrasadas y próximas, el estado del agua y las plantas a revisar, listo para
+mandar por WhatsApp a quien está en la finca. El manejo es remoto: la app tiene que
+servir para dar instrucciones, no sólo para registrar.
+
 **Marco de siembra.** Genera las posiciones de un bloque entero: especie, distancia
 entre hileras y entre plantas, margen al borde, giro de las hileras y disposición
 rectangular o a tresbolillo. Antes de guardar muestra cuántas plantas caben, la
@@ -57,8 +62,9 @@ fricción (Hazen-Williams, C=150) y la presión neta que queda. Dice si cae dent
 rango de trabajo del goteo autocompensado (1,0–3,5 bar) y sugiere el diámetro comercial
 mínimo. No incluye pérdidas en filtros, válvulas ni codos.
 
-**Agua.** Volumen estimado del reservorio partiendo del último dato duro (nivel medido
-o llenado) descontando la demanda diaria; calculadora de autonomía; alerta bajo X días
+**Agua.** Volumen estimado del reservorio simulando día por día desde el primer dato
+duro: las mediciones de nivel reinician el saldo, llenados y tanqueros suman, y cada día
+descuenta el riego registrado o, si no lo hay, la demanda estimada; calculadora de autonomía; alerta bajo X días
 con el déficit en m³ hasta el próximo turno; demanda por sector y por especie; calendario
 del ciclo de 15 días de la junta de agua.
 
