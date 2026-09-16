@@ -116,3 +116,33 @@ export function fmtArea(m2) {
 export function fmtM(m) {
   return m >= 1000 ? (m / 1000).toFixed(2).replace('.', ',') + ' km' : Math.round(m) + ' m';
 }
+
+/** Inversa de toLocalMeters: de {x, y} en metros a [lat, lng]. */
+export function fromLocalMeters({ x, y }, origin) {
+  const mPerDegLat = 111320;
+  const mPerDegLng = 111320 * Math.cos(toRad(origin[0]));
+  return [origin[0] + y / mPerDegLat, origin[1] + x / mPerDegLng];
+}
+
+/** Distancia en metros de un punto local a un segmento local. */
+export function distanceToSegment(p, a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+/** Distancia mínima en metros de un punto [lat,lng] al borde de un anillo. */
+export function distanceToEdgeM(point, ring) {
+  const origin = centroid(ring);
+  const p = toLocalMeters(point, origin);
+  const local = ring.map(v => toLocalMeters(v, origin));
+  let min = Infinity;
+  for (let i = 0; i < local.length; i++) {
+    min = Math.min(min, distanceToSegment(p, local[i], local[(i + 1) % local.length]));
+  }
+  return min;
+}

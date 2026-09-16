@@ -59,6 +59,21 @@ export async function remove(store, id) {
   await enqueue('delete', store, { id });
 }
 
+/**
+ * Escritura en lote en una sola transacción. Sembrar un bloque entero registro
+ * por registro tarda demasiado y deja la base a medias si algo falla en medio.
+ */
+export async function putMany(store, records) {
+  const stamped = records.map(r => ({ ...r, id: r.id || uid(), updatedAt: new Date().toISOString() }));
+  await tx(store, 'readwrite', s => { for (const r of stamped) s.put(r); });
+  await tx('outbox', 'readwrite', s => {
+    for (const r of stamped) {
+      s.put({ id: uid(), op: 'put', store, recordId: r.id, payload: r, at: new Date().toISOString() });
+    }
+  });
+  return stamped;
+}
+
 export function clearStore(store) {
   return tx(store, 'readwrite', s => s.clear());
 }
