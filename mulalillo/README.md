@@ -79,6 +79,19 @@ satelitales en caché con tope de 1.200 entradas y precarga del área de la finc
 (Ajustes → «Descargar mapa del terreno», zoom 15–19). Toda escritura entra además en una
 cola local (`outbox`) para sincronizar después.
 
+## Diagnóstico
+
+`diagnostico.html` es una página deliberadamente tonta —sin módulos ES, sin imports, sin
+depender de nada de la app— que comprueba en el dispositivo real: navegador, WebGL y
+WebGL2, service worker que controla la página, cachés guardados, descarga de cada archivo
+grande con su tipo y tamaño, ejecución de MapLibre, importación de un módulo mínimo, de
+Three.js y de `view3d.js`, y la creación de un mapa. Sirve justamente cuando la app no
+arranca, que es cuando no hay consola a mano.
+
+`?sw=off` abre la app sin service worker y lo da de baja (`?sw=on` lo revierte). Safari en
+iOS ha tenido fallos sirviendo módulos ES a través de un service worker: si la app
+funciona así y no de la otra forma, el culpable es ese intermediario.
+
 ## Datos
 
 Los datos medidos en campo se siembran una sola vez en IndexedDB (`db.js`): el polígono
