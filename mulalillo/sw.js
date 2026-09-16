@@ -2,7 +2,7 @@
 // Debe funcionar sin señal en el campo: shell precacheado, librerías y tiles en caché.
 "use strict";
 
-const VERSION = "mulalillo-v2";
+const VERSION = "mulalillo-v3";
 const SHELL = "mulalillo-shell-" + VERSION;
 const TILES = "mulalillo-tiles";
 const MAX_TILES = 1200;   // ~el área de la finca a varios niveles de zoom
@@ -21,6 +21,7 @@ const ASSETS = [
   "./vendor/maplibre-gl.js",
   "./vendor/maplibre-gl.css",
   "./vendor/three.module.min.js",
+  "./vendor/three.module.js",
   "./vendor/OrbitControls.js"
 ];
 
@@ -74,18 +75,25 @@ self.addEventListener("fetch", e => {
     return;
   }
 
-  // Recursos propios: caché inmediata y actualización en segundo plano.
+  // Librerías versionadas por nombre: caché primero, no cambian nunca.
+  if (url.pathname.includes("/vendor/")) {
+    e.respondWith(cacheFirst(req, SHELL));
+    return;
+  }
+
+  // Código propio (app.js, view3d.js, …): RED PRIMERO, caché como respaldo.
+  // Servir caché primero dejaba mezclar módulos viejos con archivos nuevos del
+  // servidor, y esa combinación rompe los imports hasta borrar el caché a mano.
   e.respondWith(
-    caches.match(req).then(cached => {
-      const update = fetch(req).then(res => {
+    fetch(req)
+      .then(res => {
         if (res.ok) {
           const copy = res.clone();
           caches.open(SHELL).then(c => c.put(req, copy));
         }
         return res;
-      }).catch(() => cached);
-      return cached || update;
-    })
+      })
+      .catch(() => caches.match(req).then(cached => cached || Response.error()))
   );
 });
 

@@ -15,6 +15,7 @@ const INFRA_TYPES = ['reservorio', 'casa', 'establo', 'cuyera', 'bomba', 'filtro
 const TASK_TYPES = ['riego', 'poda', 'fertilización', 'fumigación', 'cosecha', 'siembra', 'otro'];
 const WATER_TYPES = ['llenado_acequia', 'tanquero', 'riego', 'medición_nivel'];
 const STATUSES = ['sano', 'atención', 'enfermo', 'muerto'];
+const BUILD = 'v3 · 2026-09-16';
 
 const state = {
   parcel: { id: 'parcel-mulalillo', name: 'Finca Mulalillo', boundary: BOUNDARY },
@@ -159,6 +160,8 @@ async function persist(store, record) {
 // ---------------------------------------------------------------------------
 
 function wireChrome() {
+  // Visible de un vistazo: así se sabe siempre qué build está cargado.
+  $('#topbar-sub').textContent = `Salcedo, Cotopaxi · ${BUILD}`;
   $$('.tab').forEach(tab => tab.addEventListener('click', () => showView(tab.dataset.view)));
   $('#btn-settings').addEventListener('click', openSettings);
   $('#sheet-close').addEventListener('click', closeSheet);
@@ -1011,7 +1014,16 @@ async function init3D() {
     terrain.resize();
     renderThreeHint();
   } catch (err) {
-    container.innerHTML = `<p class="warn pad">No se pudo cargar la vista 3D (¿sin conexión la primera vez?).<br><small>${escapeHtml(String(err.message || err))}</small></p>`;
+    container.innerHTML = `
+      <div class="warn pad">
+        <p><strong>No se pudo cargar la vista 3D.</strong></p>
+        <p>Si ya la abriste antes, casi siempre es un archivo viejo guardado en el
+        teléfono. Entra en Ajustes ⚙︎ → <strong>«Reinstalar la app»</strong>: borra lo
+        guardado y vuelve a bajar todo limpio. Tus datos no se tocan.</p>
+        <p><small>Detalle técnico: ${escapeHtml(String(err.message || err))}</small></p>
+        <button class="btn-primary" id="btn-retry-3d">Reintentar</button>
+      </div>`;
+    container.querySelector('#btn-retry-3d').onclick = () => { terrain = null; init3D(); };
   }
 }
 
@@ -1058,8 +1070,12 @@ function openSettings() {
       <button class="btn-ghost" data-act="import">Importar respaldo</button>
       <button class="btn-ghost" data-act="sync">Sincronizar ahora</button>
       <button class="btn-ghost" data-act="tiles">Descargar mapa del terreno</button>
+      <button class="btn-ghost" data-act="reinstall">Reinstalar la app</button>
       <button class="btn-danger" data-act="reset">Restaurar datos medidos</button>
     </div>
+    <p class="hint">Versión instalada: <strong>${BUILD}</strong>. «Reinstalar la app» borra
+    el código y los mapas guardados y los vuelve a bajar; tus sectores, plantas, tareas y
+    registros de agua no se tocan.</p>
     <input type="file" id="import-file" accept="application/json" hidden />
   `, body => {
     body.querySelector('#f').onsubmit = async ev => {
@@ -1112,6 +1128,21 @@ function openSettings() {
     };
 
     body.querySelector('[data-act="tiles"]').onclick = () => prefetchTiles();
+
+    body.querySelector('[data-act="reinstall"]').onclick = async () => {
+      if (!confirm('Se borra el código y los mapas guardados, y se vuelven a bajar.\n\nTus datos (sectores, plantas, tareas, agua) NO se borran. ¿Seguir?')) return;
+      toast('Reinstalando…', 6000);
+      try {
+        const regs = await navigator.serviceWorker?.getRegistrations?.() || [];
+        await Promise.all(regs.map(r => r.unregister()));
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+      } catch (err) {
+        console.warn('reinstalación parcial', err);
+      }
+      // Sin caché por medio: recarga saltándose lo guardado.
+      location.replace(location.pathname + '?nuevo=' + Date.now());
+    };
 
     body.querySelector('[data-act="reset"]').onclick = async () => {
       if (!confirm('Esto borra los datos locales y vuelve a sembrar los datos medidos en campo. ¿Seguir?')) return;

@@ -10,6 +10,9 @@ const FILES = [
   ['node_modules/maplibre-gl/dist/maplibre-gl.js', 'maplibre-gl.js'],
   ['node_modules/maplibre-gl/dist/maplibre-gl.css', 'maplibre-gl.css'],
   ['node_modules/three/build/three.module.min.js', 'three.module.min.js'],
+  // Mismo contenido bajo el nombre anterior: un caché viejo que aún pida
+  // three.module.js encuentra el archivo en vez de romperse con un 404.
+  ['node_modules/three/build/three.module.min.js', 'three.module.js'],
   ['node_modules/three/examples/jsm/controls/OrbitControls.js', 'OrbitControls.js']
 ];
 
