@@ -6,6 +6,8 @@ import * as db from './db.js';
 import { SPECIES, STATUS_COLORS, BOUNDARY } from './db.js';
 import { FarmMap } from './map2d.js';
 import * as water from './water.js';
+import { preview as plantingPreview, LAYOUTS } from './planting.js';
+import * as hyd from './hydraulics.js';
 import {
   areaM2, perimeterM, fmtArea, fmtM, centroid, pointInRing,
   interpolateElevation, staticPressureBar, bbox
@@ -15,7 +17,7 @@ const INFRA_TYPES = ['reservorio', 'casa', 'establo', 'cuyera', 'bomba', 'filtro
 const TASK_TYPES = ['riego', 'poda', 'fertilización', 'fumigación', 'cosecha', 'siembra', 'otro'];
 const WATER_TYPES = ['llenado_acequia', 'tanquero', 'riego', 'medición_nivel'];
 const STATUSES = ['sano', 'atención', 'enfermo', 'muerto'];
-const BUILD = 'v3 · 2026-09-16';
+const BUILD = 'v4 · 2026-09-16';
 
 const state = {
   parcel: { id: 'parcel-mulalillo', name: 'Finca Mulalillo', boundary: BOUNDARY },
@@ -705,13 +707,17 @@ function openSector(id) {
     <h4>Tareas del sector (${tasks.length})</h4>
     ${tasks.length ? `<ul class="mini-list">${tasks.map(taskLine).join('')}</ul>` : '<p class="hint">Sin tareas.</p>'}
     <div class="sheet-actions">
-      <button class="btn-primary" data-act="task">Tarea para todo el sector</button>
+      <button class="btn-primary" data-act="plant">Sembrar en marco</button>
+      <button class="btn-ghost" data-act="water">Riego por gravedad</button>
+      <button class="btn-ghost" data-act="task">Tarea del sector</button>
       <button class="btn-ghost" data-act="edit">Editar datos</button>
       <button class="btn-ghost" data-act="shape">Editar forma</button>
       <button class="btn-danger" data-act="del">Eliminar</button>
     </div>
   `, body => {
     body.querySelector('[data-act="edit"]').onclick = () => openSectorForm(s);
+    body.querySelector('[data-act="plant"]').onclick = () => openPlantingForm(s);
+    body.querySelector('[data-act="water"]').onclick = () => openHydraulics(s);
     body.querySelector('[data-act="task"]').onclick = () => openTaskForm({ targetType: 'sector', targetId: s.id });
     body.querySelector('[data-act="shape"]').onclick = () => {
       if (!farmMap) return toast('El mapa no está disponible.');
@@ -756,6 +762,201 @@ function openSectorForm(s) {
       closeSheet();
       toast(isNew ? 'Sector creado' : 'Sector actualizado');
     };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Marco de siembra
+// ---------------------------------------------------------------------------
+
+/** Genera las posiciones de un bloque entero y las siembra de una vez. */
+function openPlantingForm(sector) {
+  const defaults = { arandano: [2.5, 1.2], aguacate: [6, 6], mora: [3, 2], lavanda: [1, 0.6] };
+
+  openSheet(`Sembrar en ${sector.name}`, `
+    <form id="f">
+      <label>Especie
+        <select name="species">${Object.entries(SPECIES).map(([k, v]) =>
+          `<option value="${k}" ${k === 'arandano' ? 'selected' : ''}>${v.label}</option>`).join('')}</select>
+      </label>
+      <label>Variedad <input name="variety" placeholder="opcional" /></label>
+      <div class="two">
+        <label>Entre hileras (m) <input name="rowSpacingM" type="number" step="0.1" min="0.2" value="2.5" required /></label>
+        <label>Entre plantas (m) <input name="spacingM" type="number" step="0.1" min="0.2" value="1.2" required /></label>
+      </div>
+      <div class="two">
+        <label>Margen al borde (m) <input name="marginM" type="number" step="0.1" min="0" value="1" /></label>
+        <label>Giro de hileras (°) <input name="angleDeg" type="number" step="5" min="0" max="180" value="0" /></label>
+      </div>
+      <label>Disposición
+        <select name="layout">${Object.entries(LAYOUTS).map(([k, v]) =>
+          `<option value="${k}">${v.label}</option>`).join('')}</select>
+      </label>
+      <label>Fecha de siembra <input type="date" name="plantedAt" value="${today()}" /></label>
+      <div id="planting-summary" class="summary-card"></div>
+      <p class="hint">Las posiciones naranjas en el mapa son la propuesta. Nada se guarda hasta confirmar.</p>
+      <button class="btn-primary" type="submit" id="btn-sow">Sembrar</button>
+    </form>
+  `, body => {
+    const form = body.querySelector('#f');
+    let points = [];
+
+    const recompute = () => {
+      const f = new FormData(form);
+      const p = plantingPreview({
+        polygon: sector.polygon,
+        spacingM: Number(f.get('spacingM')) || 1,
+        rowSpacingM: Number(f.get('rowSpacingM')) || 1,
+        marginM: Number(f.get('marginM')) || 0,
+        angleDeg: Number(f.get('angleDeg')) || 0,
+        layout: f.get('layout')
+      });
+      points = p.points;
+      const species = f.get('species');
+      const lppd = SPECIES[species]?.lppd ?? 0;
+      const existing = state.plants.filter(x => x.sectorId === sector.id).length;
+
+      body.querySelector('#planting-summary').innerHTML = `
+        <div><span>Caben</span><strong>${p.count.toLocaleString('es-EC')} plantas</strong></div>
+        <div><span>Densidad</span><strong>${p.densityPerHa.toLocaleString('es-EC')}/ha · ${nf(p.m2PerPlant, 1)} m²/planta</strong></div>
+        <div><span>Riego que suma</span><strong>${nf((p.count * lppd) / 1000, 2)} m³/día</strong></div>
+        ${existing ? `<div><span>Ya sembradas aquí</span><strong>${existing}</strong></div>` : ''}`;
+      body.querySelector('#btn-sow').textContent = p.count ? `Sembrar ${p.count} plantas` : 'No cabe ninguna';
+      body.querySelector('#btn-sow').disabled = p.count === 0;
+      farmMap?.previewPoints(points);
+    };
+
+    form.querySelector('[name="species"]').addEventListener('change', e => {
+      const d = defaults[e.target.value];
+      if (d) {
+        form.querySelector('[name="rowSpacingM"]').value = d[0];
+        form.querySelector('[name="spacingM"]').value = d[1];
+      }
+      recompute();
+    });
+    form.addEventListener('input', recompute);
+    recompute();
+
+    form.onsubmit = async ev => {
+      ev.preventDefault();
+      if (!points.length) return;
+      const f = new FormData(ev.target);
+      if (!confirm(`Se crearán ${points.length} plantas en "${sector.name}". ¿Seguir?`)) return;
+
+      const btn = body.querySelector('#btn-sow');
+      btn.disabled = true;
+      btn.textContent = 'Sembrando…';
+
+      const elevPoints = measuredPoints();
+      const records = points.map(([lat, lng]) => ({
+        sectorId: sector.id,
+        species: f.get('species'),
+        variety: f.get('variety') || undefined,
+        lat, lng,
+        elevationM: round(interpolateElevation([lat, lng], elevPoints), 2),
+        plantedAt: f.get('plantedAt') || undefined,
+        status: 'sano'
+      }));
+
+      await db.putMany('plants', records);
+      await reload();
+      renderAll();
+      farmMap?.previewPoints([]);
+      closeSheet();
+      toast(`${records.length} plantas sembradas en ${sector.name}`, 4000);
+    };
+  });
+
+  // Al cerrar la hoja se limpia la propuesta del mapa.
+  const observer = new MutationObserver(() => {
+    if ($('#sheet').hidden) { farmMap?.previewPoints([]); observer.disconnect(); }
+  });
+  observer.observe($('#sheet'), { attributes: true, attributeFilter: ['hidden'] });
+}
+
+// ---------------------------------------------------------------------------
+// Riego por gravedad
+// ---------------------------------------------------------------------------
+
+/** Presión real disponible en un sector: desnivel menos pérdidas por fricción. */
+function openHydraulics(sector) {
+  const source = state.infra.find(i => i.type === 'reservorio');
+  if (!source) {
+    return openSheet('Riego por gravedad',
+      '<p class="warn">No hay ningún reservorio registrado. Agrégalo desde el mapa para calcular la presión.</p>');
+  }
+
+  const target = centroid(sector.polygon);
+  const targetElev = interpolateElevation(target, measuredPoints());
+  const plants = state.plants.filter(p => p.sectorId === sector.id);
+  const demandL = plants.reduce((sum, p) => sum + (SPECIES[p.species]?.lppd ?? 0), 0);
+
+  openSheet(`Riego por gravedad · ${sector.name}`, `
+    <form id="f">
+      <div class="two">
+        <label>Demanda del sector (L/día) <input name="demandLitresPerDay" type="number" step="1" value="${Math.round(demandL)}" /></label>
+        <label>Horas de riego <input name="irrigationHours" type="number" step="0.5" min="0.5" value="2" /></label>
+      </div>
+      <div class="two">
+        <label>Diámetro de tubería
+          <select name="diameterMm">${hyd.DIAMETERS_MM.map(d =>
+            `<option value="${d}" ${d === 25 ? 'selected' : ''}>${d} mm</option>`).join('')}</select>
+        </label>
+        <label>Recorrido extra (%) <input name="extra" type="number" step="5" min="0" value="25" /></label>
+      </div>
+      <div id="hyd-result"></div>
+    </form>
+  `, body => {
+    const form = body.querySelector('#f');
+
+    const recompute = () => {
+      const f = new FormData(form);
+      const params = {
+        sourceElevationM: source.elevationM,
+        targetElevationM: targetElev,
+        sourceLatLng: [source.lat, source.lng],
+        targetLatLng: target,
+        demandLitresPerDay: Number(f.get('demandLitresPerDay')) || 0,
+        irrigationHours: Number(f.get('irrigationHours')) || 2,
+        extraLengthFactor: 1 + (Number(f.get('extra')) || 0) / 100
+      };
+      const r = hyd.pressureAt({ ...params, diameterMm: Number(f.get('diameterMm')) });
+      const sug = hyd.suggestDiameter(params);
+
+      let veredicto;
+      if (r.tooLow) {
+        veredicto = `<p class="alarm">Presión insuficiente para goteros autocompensados, que necesitan al menos
+          ${nf(hyd.DRIPPER_MIN_BAR, 1)} bar.
+          ${r.lossShare > 0.3
+            ? 'La fricción se está comiendo ' + Math.round(r.lossShare * 100) + '% del desnivel: sube el diámetro.'
+            : 'El desnivel hasta este sector no da para más, por mucho que engroses la tubería. Opciones: goteros no compensados (trabajan desde 0,5 bar), microaspersión de baja presión, o una bomba pequeña.'}</p>`;
+      } else if (r.tooHigh) {
+        veredicto = `<p class="warn">Presión por encima de ${nf(hyd.DRIPPER_MAX_BAR, 1)} bar: conviene un regulador
+          para no forzar goteros y uniones.</p>`;
+      } else {
+        veredicto = `<p class="note">Presión dentro del rango de trabajo del goteo autocompensado
+          (${nf(hyd.DRIPPER_MIN_BAR, 1)}–${nf(hyd.DRIPPER_MAX_BAR, 1)} bar).</p>`;
+      }
+
+      body.querySelector('#hyd-result').innerHTML = `
+        <div class="summary-card">
+          <div><span>Desnivel reservorio → sector</span><strong>${nf(r.dropM)} m</strong></div>
+          <div><span>Presión estática</span><strong>${nf(r.staticBar, 2)} bar</strong></div>
+          <div><span>Tubería estimada</span><strong>${nf(r.pipeLengthM, 0)} m</strong></div>
+          <div><span>Caudal de diseño</span><strong>${nf(r.flowLps, 2)} L/s</strong></div>
+          <div><span>Pérdida por fricción</span><strong>${nf(r.lossM, 2)} m (${Math.round(r.lossShare * 100)}%)</strong></div>
+          <div><span>Presión neta</span><strong class="${r.ok ? 'good' : 'bad'}">${nf(r.netBar, 2)} bar</strong></div>
+          <div><span>Velocidad</span><strong class="${r.fastFlow ? 'bad' : ''}">${nf(r.velocity, 2)} m/s</strong></div>
+        </div>
+        ${veredicto}
+        ${r.fastFlow ? '<p class="warn">Más de 1,5 m/s: golpe de ariete y desgaste. Sube de diámetro.</p>' : ''}
+        <p class="hint">Diámetro mínimo que mantiene la presión y una velocidad sana:
+          <strong>${sug.diameterMm} mm</strong>${sug.insufficient ? ' (aun así no alcanza: el límite es el desnivel, no la tubería)' : ''}.
+          Cálculo por Hazen-Williams con C=${hyd.C_PE} (PE/PVC liso); no incluye pérdidas en filtros, válvulas ni codos.</p>`;
+    };
+
+    form.addEventListener('input', recompute);
+    recompute();
   });
 }
 

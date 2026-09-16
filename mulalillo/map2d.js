@@ -58,7 +58,7 @@ export class FarmMap {
 
   _addLayers() {
     const m = this.map;
-    for (const id of ['boundary', 'sectors', 'draft', 'handles', 'points']) {
+    for (const id of ['boundary', 'sectors', 'draft', 'preview', 'handles', 'points']) {
       m.addSource(id, { type: 'geojson', data: this._emptyFC() });
     }
 
@@ -86,6 +86,18 @@ export class FarmMap {
     m.addLayer({
       id: 'draft-line', type: 'line', source: 'draft',
       paint: { 'line-color': '#ff922b', 'line-width': 2, 'line-dasharray': [2, 1] }
+    });
+
+    // Siembra propuesta: se ve antes de crear nada en la base.
+    m.addLayer({
+      id: 'preview-circle', type: 'circle', source: 'preview',
+      paint: {
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 16, 2.5, 20, 6],
+        'circle-color': '#ff922b',
+        'circle-opacity': 0.85,
+        'circle-stroke-color': '#fff',
+        'circle-stroke-width': 1
+      }
     });
 
     m.addLayer({
@@ -238,6 +250,17 @@ export class FarmMap {
       this._workingSector = sector.polygon.map(p => [...p]);
       this._renderHandles(this._workingSector);
     }
+  }
+
+  /** Dibuja (o limpia) las posiciones propuestas de siembra. */
+  previewPoints(latlngs) {
+    this.map.getSource('preview').setData({
+      type: 'FeatureCollection',
+      features: (latlngs || []).map(([lat, lng]) => ({
+        type: 'Feature', properties: {},
+        geometry: { type: 'Point', coordinates: [lng, lat] }
+      }))
+    });
   }
 
   setColorBy(mode) { this.colorBy = mode; this._renderPoints(); }

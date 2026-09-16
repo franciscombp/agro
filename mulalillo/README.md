@@ -44,6 +44,19 @@ tareas — incluidas las del sector al que pertenece.
 **Sectores.** Área y perímetro geodésicos, conteo de plantas por especie, rango de
 elevación, riego estimado y tareas a nivel de sector.
 
+**Marco de siembra.** Genera las posiciones de un bloque entero: especie, distancia
+entre hileras y entre plantas, margen al borde, giro de las hileras y disposición
+rectangular o a tresbolillo. Antes de guardar muestra cuántas plantas caben, la
+densidad por hectárea y cuánto riego suma al total, con las posiciones dibujadas en el
+mapa. Al confirmar las crea en una sola transacción. Sembrar los 380 arándanos deja de
+ser 380 toques de pantalla.
+
+**Riego por gravedad.** Desde cualquier sector calcula el desnivel hasta el reservorio,
+la presión estática, el caudal de diseño según demanda y horas de riego, la pérdida por
+fricción (Hazen-Williams, C=150) y la presión neta que queda. Dice si cae dentro del
+rango de trabajo del goteo autocompensado (1,0–3,5 bar) y sugiere el diámetro comercial
+mínimo. No incluye pérdidas en filtros, válvulas ni codos.
+
 **Agua.** Volumen estimado del reservorio partiendo del último dato duro (nivel medido
 o llenado) descontando la demanda diaria; calculadora de autonomía; alerta bajo X días
 con el déficit en m³ hasta el próximo turno; demanda por sector y por especie; calendario
@@ -67,8 +80,13 @@ de 11 vértices, las 5 elevaciones, los sectores existentes y planificados, los 
 aguacates y 3 perales, la infraestructura y eventos de agua de ejemplo.
 
 Superficie calculada: **9.675 m²**, perímetro 439 m. Desnivel **16,1 m** entre 2.786,84 y
-2.802,91 msnm → **1,58 bar** de presión estática en el punto bajo (sin descontar pérdidas
-por fricción, que hay que verificar según diámetro y caudal de la tubería).
+2.802,91 msnm → **1,58 bar** de presión estática en el punto bajo.
+
+Ojo con ese 1,58 bar: es la presión en la **parte más baja** de la finca, junto a la casa.
+El bloque de arándanos planificado está en la zona alta, a unos 6,5 m por debajo del
+reservorio, así que ahí la presión estática es de **0,64 bar** y la neta ronda **0,55 bar**
+— por debajo del mínimo de un gotero autocompensado. Engrosar la tubería no lo arregla:
+el límite es el desnivel. La calculadora de cada sector lo muestra con sus números.
 
 Las alturas del centro, el cuyero y las secciones bajas son reales, pero sus **coordenadas
 son estimadas**: aparecen en gris en el mapa y con la nota «coordenada estimada». Parado
@@ -100,8 +118,12 @@ en el punto, «Fijar con mi GPS» las corrige y el modelo de terreno se recalcul
   ajuste por clima, edad ni etapa fenológica.
 - El modelo de terreno interpola desde 5 puntos, 4 con coordenada aproximada. Cada punto
   que se tome con GPS lo mejora.
-- La calculadora de riego por gravedad da la presión estática; no calcula pérdidas por
-  fricción ni dimensiona tubería.
+- La calculadora de riego por gravedad no incluye pérdidas en filtros, válvulas ni
+  codos, y estima el recorrido de tubería desde la distancia en línea recta más un
+  porcentaje configurable. Para el diseño definitivo hay que medir el trazado real.
+- Los polígonos de los sectores sembrados son estimaciones mías sobre la imagen
+  satelital, no medidas en campo: conviene ajustarlos arrastrando los vértices antes de
+  fiarse de las áreas y de los conteos de siembra.
 
 ## Archivos
 
@@ -113,5 +135,7 @@ en el punto, «Fijar con mi GPS» las corrige y el modelo de terreno se recalcul
 | `geo.js` | Área y perímetro geodésicos, IDW de elevación, presión estática |
 | `map2d.js` | MapLibre: capas, dibujo, arrastre de vértices y puntos |
 | `water.js` | Demanda, volumen estimado, autonomía, turnos |
+| `planting.js` | Marco de siembra: rejilla girada, recorte al sector y margen |
+| `hydraulics.js` | Pérdidas por fricción, presión neta y diámetro sugerido |
 | `view3d.js` | Three.js: terreno, sectores, plantas, flechas de escurrimiento |
 | `sw.js` | Caché offline y precarga de tiles |
