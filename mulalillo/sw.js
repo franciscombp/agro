@@ -2,7 +2,7 @@
 // Debe funcionar sin señal en el campo: shell precacheado, librerías y tiles en caché.
 "use strict";
 
-const VERSION = "mulalillo-v6";
+const VERSION = "mulalillo-v7";
 const SHELL = "mulalillo-shell-" + VERSION;
 const TILES = "mulalillo-tiles";
 const MAX_TILES = 1200;   // ~el área de la finca a varios niveles de zoom
@@ -21,11 +21,11 @@ const ASSETS = [
   "./view3d.js",
   "./manifest.webmanifest",
   "./diagnostico.html",
-  "./vendor/maplibre-gl.js",
-  "./vendor/maplibre-gl.css",
-  "./vendor/three.module.min.js",
-  "./vendor/three.module.js",
-  "./vendor/OrbitControls.js"
+  "./lib/maplibre-gl.js",
+  "./lib/maplibre-gl.css",
+  "./lib/three.module.min.js",
+  "./lib/three.module.js",
+  "./lib/OrbitControls.js"
 ];
 
 const TILE_HOSTS = ["server.arcgisonline.com"];
@@ -79,7 +79,7 @@ self.addEventListener("fetch", e => {
   }
 
   // Librerías versionadas por nombre: caché primero, no cambian nunca.
-  if (url.pathname.includes("/vendor/")) {
+  if (url.pathname.includes("/lib/")) {
     e.respondWith(cacheFirst(req, SHELL));
     return;
   }

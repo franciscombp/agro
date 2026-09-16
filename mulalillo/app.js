@@ -17,7 +17,7 @@ const INFRA_TYPES = ['reservorio', 'casa', 'establo', 'cuyera', 'bomba', 'filtro
 const TASK_TYPES = ['riego', 'poda', 'fertilización', 'fumigación', 'cosecha', 'siembra', 'otro'];
 const WATER_TYPES = ['llenado_acequia', 'tanquero', 'riego', 'medición_nivel'];
 const STATUSES = ['sano', 'atención', 'enfermo', 'muerto'];
-const BUILD = 'v6 · 2026-09-16';
+const BUILD = 'v7 · 2026-09-16';
 
 const state = {
   parcel: { id: 'parcel-mulalillo', name: 'Finca Mulalillo', boundary: BOUNDARY },
@@ -81,7 +81,7 @@ async function ensureMapLibre(attempts = 2) {
   let reason = diag.network ? 'la descarga se cortó' : 'la librería no está disponible';
   for (let i = 0; i < attempts; i++) {
     try {
-      await loadScript('./vendor/maplibre-gl.js');
+      await loadScript('./lib/maplibre-gl.js');
     } catch {
       reason = 'la descarga se cortó';
       continue;

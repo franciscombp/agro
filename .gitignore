@@ -32,4 +32,4 @@ lerna-debug.log*
 .DS_Store
 
 # PoC Mulalillo: librerías copiadas desde node_modules en el build
-mulalillo/vendor/
+mulalillo/lib/

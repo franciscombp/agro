@@ -17,7 +17,7 @@ npm run build   # emite dist/mulalillo/
 ```
 
 `npm run dev` y `npm run build` ejecutan antes `scripts/vendor-mulalillo.mjs`, que copia
-MapLibre y Three.js desde `node_modules` a `mulalillo/vendor/` (carpeta ignorada por git).
+MapLibre y Three.js desde `node_modules` a `mulalillo/lib/` (carpeta ignorada por git).
 
 ## Qué hay implementado
 
@@ -119,8 +119,12 @@ en el punto, «Fijar con mi GPS» las corrige y el modelo de terreno se recalcul
 - **IndexedDB en lugar de Turso/Supabase.** No hay backend en GitHub Pages. IndexedDB
   cumple el requisito real (nada de `localStorage`, los datos sobreviven), y el traspaso
   celular↔escritorio se hace hoy con exportar/importar JSON.
-- **Sin CDN.** MapLibre y Three.js se sirven desde la propia app para que la primera carga
-  también funcione sin señal.
+- **Sin CDN.** MapLibre y Three.js se sirven desde la propia app (`mulalillo/lib/`) para que
+  la primera carga también funcione sin señal. El directorio se llama `lib/` y no `vendor/`
+  a propósito: `vendor/` está en la lista de exclusión por defecto de Jekyll, el procesador
+  que GitHub Pages aplica salvo que exista un `.nojekyll`, y con ese nombre las librerías
+  devolvían 404 en el sitio publicado aunque estuvieran en la rama. El build emite además
+  su propio `.nojekyll`.
 - **Dibujo propio en vez de mapbox-gl-draw.** Unas 120 líneas sobre fuentes GeoJSON, sin
   el desfase de versiones entre `mapbox-gl-draw` y MapLibre 4.
 

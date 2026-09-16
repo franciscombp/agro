@@ -37,6 +37,16 @@ export default defineConfig({
       }
     },
     {
+      name: 'nojekyll',
+      apply: 'build',
+      writeBundle() {
+        // Sin este archivo, GitHub Pages pasa el sitio por Jekyll, que descarta
+        // directorios de su lista de exclusión (vendor/, node_modules/…). Por eso
+        // mulalillo/vendor/ devolvía 404 aunque estuviera en la rama publicada.
+        fs.writeFileSync(path.join(process.cwd(), 'dist', '.nojekyll'), '')
+      }
+    },
+    {
       name: 'copy-mulalillo',
       apply: 'build',
       writeBundle() {

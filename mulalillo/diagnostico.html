@@ -121,7 +121,7 @@ function correr() {
   }
 
   // ¿Llegan los archivos?
-  var archivos = ['./app.js', './view3d.js', './vendor/maplibre-gl.js', './vendor/three.module.min.js'];
+  var archivos = ['./app.js', './view3d.js', './lib/maplibre-gl.js', './lib/three.module.min.js'];
   var cadena = Promise.resolve();
   archivos.forEach(function (f) {
     cadena = cadena.then(function () {
@@ -133,7 +133,7 @@ function correr() {
 
   // ¿Se ejecutan?
   cadena.then(function () {
-    return cargarScript('./vendor/maplibre-gl.js').then(function (err) {
+    return cargarScript('./lib/maplibre-gl.js').then(function (err) {
       if (err) return fila('Ejecutar MapLibre', err, 'bad');
       fila('Ejecutar MapLibre', typeof maplibregl !== 'undefined'
         ? 'OK, versión ' + (maplibregl.getVersion ? maplibregl.getVersion() : '?')
@@ -147,7 +147,7 @@ function correr() {
       .then(function () { fila('Módulos ES (básico)', 'OK', 'ok'); })
       .catch(function (e) { fila('Módulos ES (básico)', 'falló: ' + e.message, 'bad'); });
   }).then(function () {
-    return import('./vendor/three.module.min.js')
+    return import('./lib/three.module.min.js')
       .then(function (m) { fila('Importar Three.js', 'OK, revisión ' + (m.REVISION || '?'), 'ok'); })
       .catch(function (e) { fila('Importar Three.js', 'falló: ' + e.message, 'bad'); });
   }).then(function () {

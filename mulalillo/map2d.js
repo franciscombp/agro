@@ -1,4 +1,4 @@
-// Mapa 2D sobre imagen satelital. MapLibre GL (global `maplibregl`, servido desde ./vendor/).
+// Mapa 2D sobre imagen satelital. MapLibre GL (global `maplibregl`, servido desde ./lib/).
 // Fuente única de verdad: el estado que entrega app.js. Aquí sólo se dibuja y se editan geometrías.
 "use strict";
 
