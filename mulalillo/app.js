@@ -17,7 +17,7 @@ const INFRA_TYPES = ['reservorio', 'casa', 'establo', 'cuyera', 'bomba', 'filtro
 const TASK_TYPES = ['riego', 'poda', 'fertilización', 'fumigación', 'cosecha', 'siembra', 'otro'];
 const WATER_TYPES = ['llenado_acequia', 'tanquero', 'riego', 'medición_nivel'];
 const STATUSES = ['sano', 'atención', 'enfermo', 'muerto'];
-const BUILD = 'v4 · 2026-09-16';
+const BUILD = 'v5 · 2026-09-16';
 
 const state = {
   parcel: { id: 'parcel-mulalillo', name: 'Finca Mulalillo', boundary: BOUNDARY },
@@ -193,6 +193,7 @@ function wireChrome() {
   $('#btn-new-sector').addEventListener('click', startDrawSector);
   $('#btn-new-plant').addEventListener('click', () => promptPlacement('plant'));
   $('#btn-new-task').addEventListener('click', () => openTaskForm({}));
+  $('#btn-share-plan').addEventListener('click', sharePlan);
   $('#btn-new-water').addEventListener('click', () => openWaterForm({}));
   $('#plant-search').addEventListener('input', renderPlants);
 
@@ -1080,6 +1081,82 @@ function openTaskForm(t = {}) {
       await reload(); renderAll(); closeSheet();
     });
   });
+}
+
+/**
+ * Parte de trabajo en texto plano para mandar por WhatsApp a quien está en la
+ * finca. El dueño maneja a distancia: la app tiene que servir para dar
+ * instrucciones, no sólo para registrar.
+ */
+function buildPlan() {
+  const pendientes = state.tasks
+    .filter(t => !t.doneAt)
+    .sort((a, b) => (a.dueAt || '9999').localeCompare(b.dueAt || '9999'));
+
+  const lineas = [`FINCA MULALILLO — plan de trabajo`, fmtDate(today()), ''];
+
+  if (!pendientes.length) {
+    lineas.push('No hay tareas pendientes.');
+  } else {
+    const atrasadas = pendientes.filter(t => t.dueAt && t.dueAt < today());
+    const resto = pendientes.filter(t => !atrasadas.includes(t));
+
+    const escribir = (titulo, lista) => {
+      if (!lista.length) return;
+      lineas.push(titulo);
+      for (const t of lista) {
+        const cuando = t.dueAt ? fmtDate(t.dueAt) : 'sin fecha';
+        lineas.push(`• ${cap(t.type)} — ${targetName(t)} (${cuando})`);
+        if (t.quantity) lineas.push(`  cantidad: ${t.quantity} ${t.unit || ''}`.trimEnd());
+        if (t.notes) lineas.push(`  ${t.notes}`);
+      }
+      lineas.push('');
+    };
+
+    escribir(`ATRASADAS (${atrasadas.length})`, atrasadas);
+    escribir(`PRÓXIMAS (${resto.length})`, resto);
+  }
+
+  const w = water.summary(state);
+  lineas.push('AGUA');
+  lineas.push(`• Reservorio estimado: ${nf(w.volume.volumeM3)} m³ de ${nf(state.config.reservorioVolumenM3 || 0, 0)} m³`);
+  lineas.push(`• Autonomía: ${Number.isFinite(w.autonomyDays) ? nf(w.autonomyDays) + ' días' : 'sin consumo registrado'}`);
+  if (w.turns[0]) {
+    lineas.push(`• Próximo turno de la junta: ${fmtDate(w.turns[0].date)} (en ${w.turns[0].inDays} días)`);
+  }
+  if (w.alert) {
+    lineas.push(`• ATENCIÓN: faltarían ${nf(w.deficitM3)} m³ para llegar al próximo turno.`);
+  }
+
+  const atencion = state.plants.filter(p => p.status === 'atención' || p.status === 'enfermo');
+  if (atencion.length) {
+    lineas.push('', `PLANTAS A REVISAR (${atencion.length})`);
+    for (const p of atencion.slice(0, 20)) {
+      const sector = state.sectors.find(s => s.id === p.sectorId)?.name || 'sin sector';
+      lineas.push(`• ${SPECIES[p.species]?.label || p.species} en ${sector} — ${p.status}${p.notes ? ': ' + p.notes : ''}`);
+    }
+    if (atencion.length > 20) lineas.push(`• …y ${atencion.length - 20} más`);
+  }
+
+  return lineas.join('\n');
+}
+
+async function sharePlan() {
+  const texto = buildPlan();
+  try {
+    if (navigator.share) {
+      await navigator.share({ title: 'Plan de trabajo — Finca Mulalillo', text: texto });
+      return;
+    }
+    await navigator.clipboard.writeText(texto);
+    toast('Plan copiado al portapapeles', 3500);
+  } catch (err) {
+    if (err?.name === 'AbortError') return;   // el usuario cerró el diálogo de compartir
+    openSheet('Plan de trabajo', `
+      <p class="hint">Copia este texto y mándalo por WhatsApp.</p>
+      <textarea id="plan-text" rows="16" readonly></textarea>`,
+      body => { body.querySelector('#plan-text').value = texto; });
+  }
 }
 
 function targetName(t) {

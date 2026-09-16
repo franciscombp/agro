@@ -35,39 +35,70 @@ export function demand(plants, sectors) {
 }
 
 /**
- * Volumen estimado hoy en el reservorio.
- * Parte del último dato duro (nivel medido o llenado) y descuenta la demanda diaria.
+ * Volumen estimado hoy en el reservorio, simulando día por día desde el primer
+ * dato duro: las mediciones de nivel reinician el saldo, los llenados y tanqueros
+ * suman, y cada día descuenta lo consumido.
+ *
+ * El consumo de un día es el riego registrado si lo hay, y si no la demanda
+ * estimada. Antes se restaban los dos, así que registrar un riego lo descontaba
+ * dos veces.
  */
 export function currentVolumeM3(events, config, dailyM3) {
-  const sorted = [...events].sort((a, b) => a.date.localeCompare(b.date));
   const capacity = config.reservorioVolumenM3 || 0;
   const alturaUtil = config.reservorioAlturaUtilM || 1;
+  const sorted = [...events].filter(e => e.date).sort((a, b) => a.date.localeCompare(b.date));
 
-  let anchor = null;
+  const isReading = e => e.type === 'medición_nivel' && typeof e.levelM === 'number';
+  const isInflow = e => (e.type === 'llenado_acequia' || e.type === 'tanquero') && typeof e.volumeM3 === 'number';
+  const first = sorted.find(e => isReading(e) || isInflow(e));
+  if (!first) return { volumeM3: 0, source: 'sin datos', sinceDays: 0 };
+
+  const byDay = new Map();
   for (const e of sorted) {
-    if (e.type === 'medición_nivel' && typeof e.levelM === 'number') {
-      anchor = { date: e.date, volume: Math.min(capacity, (e.levelM / alturaUtil) * capacity), source: 'nivel medido' };
-    } else if ((e.type === 'llenado_acequia' || e.type === 'tanquero') && typeof e.volumeM3 === 'number') {
-      const base = anchor ? decay(anchor, e.date, dailyM3) : 0;
-      anchor = { date: e.date, volume: Math.min(capacity, base + e.volumeM3), source: e.type.replace('_', ' ') };
-    } else if (e.type === 'riego' && typeof e.volumeM3 === 'number' && anchor) {
-      anchor = { date: e.date, volume: Math.max(0, decay(anchor, e.date, dailyM3) - e.volumeM3), source: 'riego' };
-    }
+    if (!byDay.has(e.date)) byDay.set(e.date, []);
+    byDay.get(e.date).push(e);
   }
-  if (!anchor) return { volumeM3: 0, source: 'sin datos', sinceDays: 0 };
 
   const today = new Date().toISOString().slice(0, 10);
-  return {
-    volumeM3: Math.max(0, decay(anchor, today, dailyM3)),
-    source: anchor.source,
-    anchorDate: anchor.date,
-    sinceDays: daysBetween(anchor.date, today)
-  };
-}
+  const totalDays = Math.min(daysBetween(first.date, today), 3650);
 
-function decay(anchor, toDate, dailyM3) {
-  const days = daysBetween(anchor.date, toDate);
-  return Math.max(0, anchor.volume - days * dailyM3);
+  let volume = 0;
+  let source = 'sin datos';
+  let anchorDate = first.date;
+  let day = new Date(first.date + 'T00:00:00Z');
+
+  for (let i = 0; i <= totalDays; i++) {
+    const key = day.toISOString().slice(0, 10);
+    const dayEvents = byDay.get(key) || [];
+
+    const reading = dayEvents.find(isReading);
+    if (reading) {
+      volume = Math.min(capacity, (reading.levelM / alturaUtil) * capacity);
+      source = 'nivel medido';
+      anchorDate = key;
+    }
+
+    for (const e of dayEvents.filter(isInflow)) {
+      volume = Math.min(capacity, volume + e.volumeM3);
+      source = e.type.replace('_', ' ');
+      anchorDate = key;
+    }
+
+    const riegos = dayEvents.filter(e => e.type === 'riego' && typeof e.volumeM3 === 'number');
+    const consumo = riegos.length
+      ? riegos.reduce((sum, e) => sum + e.volumeM3, 0)
+      : dailyM3;
+    volume = Math.max(0, volume - consumo);
+
+    day = new Date(day.getTime() + 86400000);
+  }
+
+  return {
+    volumeM3: volume,
+    source,
+    anchorDate,
+    sinceDays: daysBetween(anchorDate, today)
+  };
 }
 
 export function daysBetween(a, b) {
