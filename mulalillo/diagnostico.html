@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Diagnóstico — Finca Mulalillo</title>
+<!--
+  Página deliberadamente tonta: sin módulos ES, sin imports, sin depender de nada
+  de la app. Tiene que funcionar incluso cuando la app no arranca, porque su
+  trabajo es explicar por qué no arranca.
+-->
+<style>
+  body { font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         margin: 0; padding: 16px; background: #f6f8f6; color: #1b2a20; }
+  h1 { font-size: 1.15rem; margin: 0 0 4px; }
+  p.sub { color: #5f6f65; font-size: .85rem; margin: 0 0 16px; }
+  .row { background: #fff; border: 1px solid #dbe4dd; border-radius: 10px;
+         padding: 10px 12px; margin-bottom: 8px; }
+  .row b { display: block; font-size: .8rem; color: #5f6f65; font-weight: 600; }
+  .row span { font-size: .9rem; word-break: break-word; }
+  .ok { color: #2f9e44; font-weight: 600; }
+  .bad { color: #c92a2a; font-weight: 600; }
+  .warn { color: #b45309; font-weight: 600; }
+  button { font: inherit; font-weight: 600; width: 100%; padding: 12px;
+           border-radius: 10px; border: 0; margin-top: 8px; cursor: pointer; }
+  .primary { background: #1f7a3d; color: #fff; }
+  .ghost { background: #fff; color: #14532d; border: 1px solid #dbe4dd; }
+  textarea { width: 100%; height: 180px; font-family: ui-monospace, Menlo, monospace;
+             font-size: 11px; margin-top: 10px; border: 1px solid #dbe4dd; border-radius: 8px; padding: 8px; }
+  a { color: #1f7a3d; }
+</style>
+</head>
+<body>
+
+<h1>Diagnóstico</h1>
+<p class="sub">Qué puede y qué no puede hacer este navegador con la app.</p>
+
+<div id="out"></div>
+
+<button class="primary" id="btn-copy">Copiar resultados</button>
+<button class="ghost" id="btn-nosw">Abrir la app sin service worker</button>
+<button class="ghost" id="btn-reset">Borrar service worker y cachés</button>
+<button class="ghost" onclick="location.href='./'">Volver a la app</button>
+
+<textarea id="dump" readonly hidden></textarea>
+
+<script>
+"use strict";
+var resultados = [];
+
+function fila(titulo, valor, clase) {
+  resultados.push(titulo + ': ' + valor);
+  var d = document.createElement('div');
+  d.className = 'row';
+  var b = document.createElement('b');
+  b.textContent = titulo;
+  var s = document.createElement('span');
+  s.textContent = valor;
+  if (clase) s.className = clase;
+  d.appendChild(b); d.appendChild(s);
+  document.getElementById('out').appendChild(d);
+}
+
+function webgl(version) {
+  try {
+    var c = document.createElement('canvas');
+    var gl = version === 2 ? c.getContext('webgl2')
+                           : (c.getContext('webgl') || c.getContext('experimental-webgl'));
+    if (!gl) return null;
+    var info = gl.getExtension('WEBGL_debug_renderer_info');
+    return info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : 'disponible';
+  } catch (e) { return null; }
+}
+
+function probarArchivo(url) {
+  return fetch(url, { cache: 'no-store' }).then(function (r) {
+    if (!r.ok) return { estado: 'HTTP ' + r.status, ok: false };
+    return r.text().then(function (t) {
+      return {
+        estado: 'HTTP ' + r.status + ' · ' + (r.headers.get('content-type') || 'sin tipo') +
+                ' · ' + Math.round(t.length / 1024) + ' kB',
+        ok: true
+      };
+    });
+  }).catch(function (e) {
+    return { estado: 'falló: ' + (e && e.message ? e.message : e), ok: false };
+  });
+}
+
+function cargarScript(url) {
+  return new Promise(function (resolve) {
+    var s = document.createElement('script');
+    s.src = url;
+    s.onload = function () { resolve(null); };
+    s.onerror = function () { resolve('no se pudo descargar o ejecutar'); };
+    document.head.appendChild(s);
+  });
+}
+
+function correr() {
+  fila('Navegador', navigator.userAgent);
+  fila('Modo', window.matchMedia('(display-mode: standalone)').matches || navigator.standalone
+    ? 'instalada en pantalla de inicio' : 'pestaña del navegador');
+  fila('Conexión', navigator.onLine ? 'en línea' : 'sin conexión',
+    navigator.onLine ? 'ok' : 'bad');
+
+  var gl1 = webgl(1), gl2 = webgl(2);
+  fila('WebGL', gl1 || 'NO disponible', gl1 ? 'ok' : 'bad');
+  fila('WebGL2', gl2 || 'NO disponible', gl2 ? 'ok' : 'warn');
+
+  if ('serviceWorker' in navigator) {
+    fila('Service worker', navigator.serviceWorker.controller
+      ? 'controlando: ' + navigator.serviceWorker.controller.scriptURL
+      : 'ninguno controla esta página');
+  } else {
+    fila('Service worker', 'no soportado', 'warn');
+  }
+
+  if (window.caches) {
+    caches.keys().then(function (k) { fila('Cachés guardados', k.length ? k.join(', ') : 'ninguno'); });
+  }
+
+  // ¿Llegan los archivos?
+  var archivos = ['./app.js', './view3d.js', './vendor/maplibre-gl.js', './vendor/three.module.min.js'];
+  var cadena = Promise.resolve();
+  archivos.forEach(function (f) {
+    cadena = cadena.then(function () {
+      return probarArchivo(f).then(function (r) {
+        fila('Descarga ' + f, r.estado, r.ok ? 'ok' : 'bad');
+      });
+    });
+  });
+
+  // ¿Se ejecutan?
+  cadena.then(function () {
+    return cargarScript('./vendor/maplibre-gl.js').then(function (err) {
+      if (err) return fila('Ejecutar MapLibre', err, 'bad');
+      fila('Ejecutar MapLibre', typeof maplibregl !== 'undefined'
+        ? 'OK, versión ' + (maplibregl.getVersion ? maplibregl.getVersion() : '?')
+        : 'cargó pero no definió maplibregl', typeof maplibregl !== 'undefined' ? 'ok' : 'bad');
+    });
+  }).then(function () {
+    // Un módulo mínimo: separa "los módulos no van" de "three no va".
+    var blob = new Blob(['export const ok = 1;'], { type: 'text/javascript' });
+    var url = URL.createObjectURL(blob);
+    return import(url)
+      .then(function () { fila('Módulos ES (básico)', 'OK', 'ok'); })
+      .catch(function (e) { fila('Módulos ES (básico)', 'falló: ' + e.message, 'bad'); });
+  }).then(function () {
+    return import('./vendor/three.module.min.js')
+      .then(function (m) { fila('Importar Three.js', 'OK, revisión ' + (m.REVISION || '?'), 'ok'); })
+      .catch(function (e) { fila('Importar Three.js', 'falló: ' + e.message, 'bad'); });
+  }).then(function () {
+    return import('./view3d.js')
+      .then(function () { fila('Importar view3d.js', 'OK', 'ok'); })
+      .catch(function (e) { fila('Importar view3d.js', 'falló: ' + e.message, 'bad'); });
+  }).then(function () {
+    if (typeof maplibregl === 'undefined') return fila('Crear un mapa', 'omitido: MapLibre no cargó', 'warn');
+    try {
+      var div = document.createElement('div');
+      div.style.cssText = 'width:200px;height:200px;position:absolute;left:-9999px';
+      document.body.appendChild(div);
+      var m = new maplibregl.Map({
+        container: div,
+        style: { version: 8, sources: {}, layers: [] },
+        center: [-78.6248, -1.0792], zoom: 15
+      });
+      m.on('load', function () { fila('Crear un mapa', 'OK', 'ok'); m.remove(); });
+      m.on('error', function (e) {
+        fila('Crear un mapa', 'error: ' + (e && e.error ? e.error.message : 'desconocido'), 'bad');
+      });
+      setTimeout(function () {
+        if (resultados.join().indexOf('Crear un mapa') === -1) fila('Crear un mapa', 'no respondió en 8 s', 'bad');
+      }, 8000);
+    } catch (e) {
+      fila('Crear un mapa', 'excepción: ' + e.message, 'bad');
+    }
+  });
+}
+
+document.getElementById('btn-copy').onclick = function () {
+  var texto = 'DIAGNÓSTICO FINCA MULALILLO\n' + new Date().toISOString() + '\n\n' + resultados.join('\n');
+  var ta = document.getElementById('dump');
+  ta.hidden = false;
+  ta.value = texto;
+  ta.select();
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(texto).then(function () { alert('Resultados copiados.'); },
+      function () { alert('Copia el texto del recuadro de abajo.'); });
+  } else {
+    alert('Copia el texto del recuadro de abajo.');
+  }
+};
+
+document.getElementById('btn-nosw').onclick = function () {
+  location.href = './?sw=off';
+};
+
+document.getElementById('btn-reset').onclick = function () {
+  var pasos = [];
+  if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+    pasos.push(navigator.serviceWorker.getRegistrations().then(function (rs) {
+      return Promise.all(rs.map(function (r) { return r.unregister(); }));
+    }));
+  }
+  if (window.caches) {
+    pasos.push(caches.keys().then(function (ks) {
+      return Promise.all(ks.map(function (k) { return caches.delete(k); }));
+    }));
+  }
+  Promise.all(pasos).then(function () { location.reload(); });
+};
+
+correr();
+</script>
+</body>
+</html>

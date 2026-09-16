@@ -17,7 +17,7 @@ const INFRA_TYPES = ['reservorio', 'casa', 'establo', 'cuyera', 'bomba', 'filtro
 const TASK_TYPES = ['riego', 'poda', 'fertilización', 'fumigación', 'cosecha', 'siembra', 'otro'];
 const WATER_TYPES = ['llenado_acequia', 'tanquero', 'riego', 'medición_nivel'];
 const STATUSES = ['sano', 'atención', 'enfermo', 'muerto'];
-const BUILD = 'v5 · 2026-09-16';
+const BUILD = 'v6 · 2026-09-16';
 
 const state = {
   parcel: { id: 'parcel-mulalillo', name: 'Finca Mulalillo', boundary: BOUNDARY },
@@ -113,6 +113,8 @@ function showMapError(err) {
         : 'Suele ser señal débil cortando la descarga de la librería (800 kB). Toca «Reintentar».'}</p>
       <p>Las listas de sectores, plantas, tareas y agua funcionan igual mientras tanto.</p>
       <button class="btn-primary" id="btn-retry-map">Reintentar</button>
+      <p class="hint">¿Sigue fallando? Abre el <a href="./diagnostico.html">diagnóstico</a>:
+      dice exactamente qué no puede hacer este navegador.</p>
     </div>`;
   document.getElementById('btn-retry-map').onclick = async e => {
     e.target.disabled = true;
@@ -163,7 +165,7 @@ async function persist(store, record) {
 
 function wireChrome() {
   // Visible de un vistazo: así se sabe siempre qué build está cargado.
-  $('#topbar-sub').textContent = `Salcedo, Cotopaxi · ${BUILD}`;
+  $('#topbar-sub').textContent = `Salcedo, Cotopaxi · ${BUILD}` + (swDisabled() ? ' · sin SW' : '');
   $$('.tab').forEach(tab => tab.addEventListener('click', () => showView(tab.dataset.view)));
   $('#btn-settings').addEventListener('click', openSettings);
   $('#sheet-close').addEventListener('click', closeSheet);
@@ -1300,6 +1302,7 @@ async function init3D() {
         guardado y vuelve a bajar todo limpio. Tus datos no se tocan.</p>
         <p><small>Detalle técnico: ${escapeHtml(String(err.message || err))}</small></p>
         <button class="btn-primary" id="btn-retry-3d">Reintentar</button>
+        <p class="hint">¿Sigue fallando? Abre el <a href="./diagnostico.html">diagnóstico</a>.</p>
       </div>`;
     container.querySelector('#btn-retry-3d').onclick = () => { terrain = null; init3D(); };
   }
@@ -1349,6 +1352,7 @@ function openSettings() {
       <button class="btn-ghost" data-act="sync">Sincronizar ahora</button>
       <button class="btn-ghost" data-act="tiles">Descargar mapa del terreno</button>
       <button class="btn-ghost" data-act="reinstall">Reinstalar la app</button>
+      <button class="btn-ghost" data-act="diag">Diagnóstico</button>
       <button class="btn-danger" data-act="reset">Restaurar datos medidos</button>
     </div>
     <p class="hint">Versión instalada: <strong>${BUILD}</strong>. «Reinstalar la app» borra
@@ -1406,6 +1410,7 @@ function openSettings() {
     };
 
     body.querySelector('[data-act="tiles"]').onclick = () => prefetchTiles();
+    body.querySelector('[data-act="diag"]').onclick = () => { location.href = './diagnostico.html'; };
 
     body.querySelector('[data-act="reinstall"]').onclick = async () => {
       if (!confirm('Se borra el código y los mapas guardados, y se vuelven a bajar.\n\nTus datos (sectores, plantas, tareas, agua) NO se borran. ¿Seguir?')) return;
@@ -1448,8 +1453,35 @@ function watchConnectivity() {
   paint();
 }
 
+/**
+ * Modo sin service worker: `?sw=off` lo da de baja y no lo vuelve a registrar.
+ * Safari en iOS ha tenido fallos sirviendo módulos ES a través de un service
+ * worker; si la app funciona así, el culpable es ese intermediario y no el código.
+ */
+function swDisabled() {
+  const params = new URLSearchParams(location.search);
+  if (params.get('sw') === 'off') {
+    try { localStorage.setItem('mulalillo-sw', 'off'); } catch {}
+    return true;
+  }
+  if (params.get('sw') === 'on') {
+    try { localStorage.removeItem('mulalillo-sw'); } catch {}
+    return false;
+  }
+  try { return localStorage.getItem('mulalillo-sw') === 'off'; } catch { return false; }
+}
+
 function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) return;
+
+  if (swDisabled()) {
+    navigator.serviceWorker.getRegistrations?.()
+      .then(rs => Promise.all(rs.map(r => r.unregister())))
+      .then(() => { document.body.classList.add('sin-sw'); })
+      .catch(() => {});
+    return;
+  }
+
   navigator.serviceWorker.register('./sw.js', { scope: './' }).catch(() => {});
   navigator.serviceWorker.addEventListener('message', e => {
     if (e.data?.type === 'prefetch-done') {
