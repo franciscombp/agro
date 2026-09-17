@@ -1,0 +1,147 @@
+/* ============================================================
+   Sistema de diseño — Mi Huerto
+   Fuente única de los tokens y las primitivas que comparten todas las
+   aplicaciones del proyecto. Lo que vive aquí NO debe conocer ninguna
+   pantalla concreta: sólo color, ritmo tipográfico, formas, botones y
+   movimiento. Cada app añade sus componentes en su propia hoja, que se
+   carga después de esta.
+
+   Uso:
+     <link rel="stylesheet" href="/styles/design-system.css" />
+     <link rel="stylesheet" href="./styles.css" />
+   ============================================================ */
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* Varias reglas de las apps fijan `display`, que gana al atributo hidden. */
+[hidden] { display: none !important; }
+
+:root {
+  /* Color */
+  --green: #1f7a3d;
+  --green-dark: #175c2e;
+  --green-light: #e9f4ec;
+  --amber: #b45309;
+  --amber-light: #fef3e2;
+  --red: #b91c1c;
+  --red-light: #fdecec;
+  --blue: #1f6fb2;
+  --blue-light: #eef4fb;
+  --ink: #1a1a1a;
+  --gray: #6f6f6f;
+  --gray-2: #a3a3a3;
+  --line: #e8e8e8;
+  --bg: #fafaf8;
+  --bg-2: #f1f1ee;
+  --card: #ffffff;
+
+  /* Elevación y forma */
+  --shadow: 0 1px 2px rgba(20, 40, 25, .06), 0 6px 20px rgba(20, 40, 25, .05);
+  --shadow-lift: 0 2px 4px rgba(20, 40, 25, .07), 0 12px 28px rgba(20, 40, 25, .10);
+  --radius: 16px;
+  --radius-s: 12px;
+
+  /* Movimiento y navegación */
+  --ease: cubic-bezier(.2, .8, .3, 1);
+  --rail: 232px;
+}
+
+html, body { height: 100%; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color: var(--ink);
+  background: linear-gradient(180deg, var(--bg), #f3f4ef 60%);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button { font: inherit; color: inherit; }
+button, input, select, textarea { touch-action: manipulation; }
+
+:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; border-radius: 4px; }
+
+/* ---------- Movimiento ---------- */
+@keyframes screenIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(10px) scale(.985); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes viewIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes sheetIn {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes growBar { from { width: 0; } }
+@keyframes popIn {
+  0% { opacity: 0; transform: scale(.85); }
+  60% { transform: scale(1.03); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* ---------- Botones ---------- */
+.btn-primary {
+  width: 100%; padding: 15px 12px; background: var(--green); color: #fff;
+  border: none; border-radius: var(--radius-s); font-size: 1rem; font-weight: 700; cursor: pointer;
+  box-shadow: 0 4px 14px rgba(31,122,61,.3);
+  transition: transform .15s var(--ease), box-shadow .2s, background .2s;
+}
+.btn-primary:hover { background: var(--green-dark); box-shadow: 0 6px 18px rgba(31,122,61,.38); }
+.btn-primary:active { transform: scale(.97); box-shadow: 0 2px 8px rgba(31,122,61,.3); }
+.btn-primary:disabled { background: var(--gray-2); box-shadow: none; cursor: default; }
+
+.btn-secondary {
+  width: 100%; padding: 15px 12px; background: var(--card); color: var(--ink);
+  border: 1.5px solid var(--ink); border-radius: var(--radius-s); font-size: 1rem; font-weight: 700; cursor: pointer;
+  transition: transform .15s var(--ease), background .2s;
+}
+.btn-secondary:hover { background: var(--bg-2); }
+.btn-secondary:active { transform: scale(.97); }
+
+/* Botón de apoyo: mismo peso visual que una tarjeta, no compite con el primario. */
+.btn-ghost {
+  padding: 13px 14px; font-size: .95rem; font-weight: 700; cursor: pointer;
+  background: var(--card); color: var(--ink);
+  border: 1px solid var(--line); border-radius: var(--radius-s);
+  box-shadow: var(--shadow);
+  transition: transform .15s var(--ease), background .2s;
+}
+.btn-ghost:hover { background: var(--bg-2); }
+.btn-ghost:active { transform: scale(.97); }
+
+/* Acción destructiva: sólo el texto en rojo; el relleno llega al pasar por encima. */
+.btn-danger {
+  padding: 13px 14px; font-size: .95rem; font-weight: 700; cursor: pointer;
+  background: var(--card); color: var(--red);
+  border: 1px solid #f0cccc; border-radius: var(--radius-s);
+  transition: transform .15s var(--ease), background .2s;
+}
+.btn-danger:hover { background: var(--red-light); }
+.btn-danger:active { transform: scale(.97); }
+
+/* Acción compacta para cabeceras de lista. */
+.btn-small {
+  padding: 9px 14px; font-size: .84rem; font-weight: 700; white-space: nowrap; cursor: pointer;
+  background: var(--green); color: #fff;
+  border: 1px solid transparent; border-radius: var(--radius-s);
+  box-shadow: 0 3px 10px rgba(31,122,61,.25);
+  transition: transform .15s var(--ease), background .2s;
+}
+.btn-small:hover { background: var(--green-dark); }
+.btn-small:active { transform: scale(.96); }
+.btn-small.ghost {
+  background: var(--card); color: var(--ink);
+  border-color: var(--line); box-shadow: var(--shadow);
+}

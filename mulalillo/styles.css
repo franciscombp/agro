@@ -1,76 +1,22 @@
 /* ============================================================
-   Finca Mulalillo — hereda el sistema de diseño de Mi Huerto
-   Mismos tokens, radios, sombras y curva de animación que la app madre,
-   para que se sienta la misma familia. Móvil primero, rail en escritorio.
+   Finca Mulalillo — componentes de esta app
+   Los tokens, el reset, la tipografía base, el movimiento y los botones
+   viven en /styles/design-system.css, que se carga antes que esta hoja.
+   Aquí sólo va lo propio: mapa, sectores, agua, relieve 3D.
    ============================================================ */
-* { margin: 0; padding: 0; box-sizing: border-box; }
 
-/* Varias reglas fijan `display`, que de otro modo gana al atributo hidden. */
-[hidden] { display: none !important; }
-
+/* Medidas del cromo de esta app; el resto de tokens llega del sistema. */
 :root {
-  --green: #1f7a3d;
-  --green-dark: #175c2e;
-  --green-light: #e9f4ec;
-  --amber: #b45309;
-  --amber-light: #fef3e2;
-  --red: #b91c1c;
-  --red-light: #fdecec;
-  --blue: #1f6fb2;
-  --blue-light: #eef4fb;
-  --ink: #1a1a1a;
-  --gray: #6f6f6f;
-  --gray-2: #a3a3a3;
-  --line: #e8e8e8;
-  --bg: #fafaf8;
-  --bg-2: #f1f1ee;
-  --card: #ffffff;
-  --shadow: 0 1px 2px rgba(20, 40, 25, .06), 0 6px 20px rgba(20, 40, 25, .05);
-  --shadow-lift: 0 2px 4px rgba(20, 40, 25, .07), 0 12px 28px rgba(20, 40, 25, .10);
-  --radius: 16px;
-  --radius-s: 12px;
-  --ease: cubic-bezier(.2, .8, .3, 1);
-  --rail: 232px;
   --topbar: 56px;
   --tabbar: 62px;
 }
 
-html, body { height: 100%; }
-
-body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  font-size: 16px;
-  line-height: 1.45;
-  color: var(--ink);
-  background: linear-gradient(180deg, var(--bg), #f3f4ef 60%);
-  background-attachment: fixed;
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
-  -webkit-text-size-adjust: 100%;
-  -webkit-tap-highlight-color: transparent;
-  overscroll-behavior: none;
-}
-
-button { font: inherit; color: inherit; }
-button, input, select, textarea, .card { touch-action: manipulation; }
-:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; border-radius: 4px; }
+body { font-size: 16px; line-height: 1.45; overscroll-behavior: none; }
+.card { touch-action: manipulation; }
 
 h2 { font-size: 1.45rem; font-weight: 800; letter-spacing: -.01em; }
 h3 { font-size: 1.1rem; font-weight: 700; letter-spacing: -.01em; }
 h4 { font-size: .95rem; font-weight: 700; margin: 22px 0 10px; color: var(--ink); }
-
-@keyframes cardIn {
-  from { opacity: 0; transform: translateY(10px) scale(.985); }
-  to { opacity: 1; transform: none; }
-}
-@keyframes viewIn {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: none; }
-}
-@keyframes sheetIn {
-  from { opacity: 0; transform: translateY(24px); }
-  to { opacity: 1; transform: none; }
-}
 
 /* ---------- Barra superior ---------- */
 .topbar {
@@ -146,46 +92,10 @@ h4 { font-size: .95rem; font-weight: 700; margin: 22px 0 10px; color: var(--ink)
 .tab.active { color: var(--green); }
 .tab.active svg { transform: translateY(-1px); }
 
-/* ---------- Botones ---------- */
-.btn-primary, .btn-ghost, .btn-danger, .btn-small {
-  font-weight: 700; border-radius: var(--radius-s); cursor: pointer;
-  border: 1px solid transparent;
-  transition: transform .15s var(--ease), box-shadow .2s, background .2s;
-}
-.btn-primary {
-  width: 100%; padding: 15px 12px; font-size: 1rem;
-  background: var(--green); color: #fff;
-  box-shadow: 0 4px 14px rgba(31, 122, 61, .3);
-}
-.btn-primary:hover { background: var(--green-dark); box-shadow: 0 6px 18px rgba(31, 122, 61, .38); }
-.btn-primary:active { transform: scale(.97); }
-.btn-primary:disabled { background: var(--gray-2); box-shadow: none; cursor: default; }
+/* ---------- Ajustes locales sobre los botones del sistema ---------- */
+.sheet-actions .btn-ghost, .sheet-actions .btn-danger { flex: 1 1 45%; }
 
-.btn-ghost {
-  padding: 13px 14px; font-size: .95rem;
-  background: var(--card); color: var(--ink); border-color: var(--line);
-  box-shadow: var(--shadow);
-}
-.btn-ghost:hover { background: var(--bg-2); }
-.btn-ghost:active { transform: scale(.97); }
-
-.btn-danger {
-  padding: 13px 14px; font-size: .95rem;
-  background: var(--card); color: var(--red); border-color: #f0cccc;
-}
-.btn-danger:hover { background: var(--red-light); }
-
-.btn-small {
-  padding: 9px 14px; font-size: .84rem; white-space: nowrap;
-  background: var(--green); color: #fff;
-  box-shadow: 0 3px 10px rgba(31, 122, 61, .25);
-}
-.btn-small:active { transform: scale(.96); }
-.btn-small.ghost {
-  background: var(--card); color: var(--ink);
-  border-color: var(--line); box-shadow: var(--shadow);
-}
-
+/* ---------- Segmentos ---------- */
 .seg { display: flex; gap: 8px; margin-bottom: 14px; }
 .seg-btn {
   flex: 1; font: inherit; font-size: .85rem; font-weight: 600; padding: 10px; cursor: pointer;
@@ -453,11 +363,6 @@ input[type="checkbox"] { accent-color: var(--green); }
   background: rgba(20, 30, 22, .95); color: #fff; padding: 12px 20px; border-radius: 999px;
   font-size: .88rem; font-weight: 600; max-width: 90vw; text-align: center;
   box-shadow: var(--shadow-lift); animation: cardIn .25s var(--ease) both;
-}
-
-/* ---------- Movimiento reducido ---------- */
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 
 /* ============================================================

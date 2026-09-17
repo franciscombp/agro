@@ -1,47 +1,11 @@
 /* ============================================================
-   Mi Huerto — sistema de diseño
-   Mobile-first · rail lateral en desktop · microinteracciones CSS
+   Mi Huerto — componentes de esta app
+   Los tokens, el reset, la tipografía base y los botones viven en
+   /styles/design-system.css, que se carga antes que esta hoja.
    ============================================================ */
-* { margin: 0; padding: 0; box-sizing: border-box; }
 
-:root {
-  --green: #1f7a3d;
-  --green-dark: #175c2e;
-  --green-light: #e9f4ec;
-  --amber: #b45309;
-  --amber-light: #fef3e2;
-  --red: #b91c1c;
-  --red-light: #fdecec;
-  --blue-light: #eef4fb;
-  --ink: #1a1a1a;
-  --gray: #6f6f6f;
-  --gray-2: #a3a3a3;
-  --line: #e8e8e8;
-  --bg: #fafaf8;
-  --bg-2: #f1f1ee;
-  --card: #ffffff;
-  --shadow: 0 1px 2px rgba(20,40,25,.06), 0 6px 20px rgba(20,40,25,.05);
-  --shadow-lift: 0 2px 4px rgba(20,40,25,.07), 0 12px 28px rgba(20,40,25,.10);
-  --radius: 16px;
-  --radius-s: 12px;
-  --ease: cubic-bezier(.2,.8,.3,1);
-  --rail: 232px;
-}
-
-html, body { height: 100%; }
-body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  color: var(--ink);
-  background: linear-gradient(180deg, var(--bg), #f3f4ef 60%);
-  background-attachment: fixed;
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
-  -webkit-tap-highlight-color: transparent;
-}
-button { font: inherit; color: inherit; }
-button, input, .plant-card, .option-card { touch-action: manipulation; }
-
-:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; border-radius: 4px; }
+/* Superficies propias de esta app que responden al toque. */
+.plant-card, .option-card { touch-action: manipulation; }
 
 /* ---------- Pantallas y transiciones ---------- */
 .screen {
@@ -53,20 +17,6 @@ button, input, .plant-card, .option-card { touch-action: manipulation; }
 }
 .screen.active { display: flex; animation: screenIn .3s var(--ease) both; }
 
-@keyframes screenIn {
-  from { opacity: 0; transform: translateY(12px); }
-  to   { opacity: 1; transform: none; }
-}
-@keyframes cardIn {
-  from { opacity: 0; transform: translateY(10px) scale(.985); }
-  to   { opacity: 1; transform: none; }
-}
-@keyframes growBar { from { width: 0; } }
-@keyframes popIn {
-  0% { opacity: 0; transform: scale(.85); }
-  60% { transform: scale(1.03); }
-  100% { opacity: 1; transform: scale(1); }
-}
 
 /* Entrada escalonada de listas */
 :is(#plant-list, #explore-list, #almanac-list, #garden-list, #best-days, #add-list, #manual-zones, #space-options, #price-list, #sell-window, #intl-prices) > * {
@@ -156,21 +106,6 @@ h3.list-title { font-size: 1rem; font-weight: 700; margin: 26px 0 12px; }
 }
 .bottom-bar.above-tabs { bottom: 62px; }
 .bottom-bar.dual { display: flex; gap: 10px; }
-.btn-primary {
-  width: 100%; padding: 15px 12px; background: var(--green); color: #fff;
-  border: none; border-radius: var(--radius-s); font-size: 1rem; font-weight: 700; cursor: pointer;
-  box-shadow: 0 4px 14px rgba(31,122,61,.3);
-  transition: transform .15s var(--ease), box-shadow .2s, background .2s;
-}
-.btn-primary:hover { background: var(--green-dark); box-shadow: 0 6px 18px rgba(31,122,61,.38); }
-.btn-primary:active { transform: scale(.97); box-shadow: 0 2px 8px rgba(31,122,61,.3); }
-.btn-secondary {
-  width: 100%; padding: 15px 12px; background: var(--card); color: var(--ink);
-  border: 1.5px solid var(--ink); border-radius: var(--radius-s); font-size: 1rem; font-weight: 700; cursor: pointer;
-  transition: transform .15s var(--ease), background .2s;
-}
-.btn-secondary:hover { background: var(--bg-2); }
-.btn-secondary:active { transform: scale(.97); }
 
 /* ---------- Home ---------- */
 .home-top { display: flex; padding-top: 14px; margin-bottom: 10px; }
@@ -613,11 +548,6 @@ select.field-input { appearance: auto; cursor: pointer; }
 .tab:active svg { transform: scale(.85); }
 .tab.on { color: var(--green); }
 .tab.on svg { transform: translateY(-1px); }
-
-/* ---------- Movimiento reducido ---------- */
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; transition: none !important; }
-}
 
 /* ============================================================
    Desktop (≥ 900 px): rail lateral + grillas

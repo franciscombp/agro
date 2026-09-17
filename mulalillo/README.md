@@ -95,11 +95,19 @@ cola local (`outbox`) para sincronizar después.
 
 ## Interfaz
 
-Hereda el sistema de diseño de *Mi Huerto*: los mismos tokens de color, radios, sombras y
-curva de animación (`--ease`), la barra de pestañas translúcida con iconos SVG de trazo, el
-rail lateral de 232 px a partir de 900 px de ancho, y la entrada escalonada de las
-tarjetas. No comparte el archivo de estilos —la PoC es autónoma— pero sí el vocabulario
-visual, para que se sienta la misma familia de aplicaciones.
+Comparte el sistema de diseño del proyecto: **`/styles/design-system.css`**, una sola
+fuente para los tokens de color, las sombras, los radios, la curva de animación, la
+tipografía base, el foco visible, los fotogramas clave y los botones. Lo cargan tanto esta
+app como *Mi Huerto*, antes de su propia hoja:
+
+```html
+<link rel="stylesheet" href="../styles/design-system.css" />
+<link rel="stylesheet" href="./styles.css" />
+```
+
+`mulalillo/styles.css` sólo contiene lo propio de esta app: barra superior, pestañas,
+mapa, tarjetas, agua y relieve 3D. Un cambio de marca o de paleta se hace una vez, en el
+sistema, y llega a todas las aplicaciones del repositorio.
 
 ## Diagnóstico
 
