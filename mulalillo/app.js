@@ -17,7 +17,7 @@ const INFRA_TYPES = ['reservorio', 'casa', 'establo', 'cuyera', 'bomba', 'filtro
 const TASK_TYPES = ['riego', 'poda', 'fertilización', 'fumigación', 'cosecha', 'siembra', 'otro'];
 const WATER_TYPES = ['llenado_acequia', 'tanquero', 'riego', 'medición_nivel'];
 const STATUSES = ['sano', 'atención', 'enfermo', 'muerto'];
-const BUILD = 'v8 · 2026-09-17';
+const BUILD = 'v9 · 2026-09-17';
 
 const state = {
   parcel: { id: 'parcel-mulalillo', name: 'Finca Mulalillo', boundary: BOUNDARY },
@@ -212,6 +212,13 @@ function wireChrome() {
     state.config = await db.saveConfig({ exageracion3D: v });
   });
   $('#chk-arrows').addEventListener('change', e => terrain?.toggleArrows(e.target.checked));
+  $('#btn-recenter').addEventListener('click', () => terrain?.recentrar());
+  $('#three-toggle').addEventListener('click', e => {
+    const panel = $('#three-controls');
+    const abierto = panel.classList.toggle('abierto');
+    e.currentTarget.setAttribute('aria-expanded', String(abierto));
+    setTimeout(() => terrain?.resize(), 60);
+  });
 }
 
 function showView(id) {
