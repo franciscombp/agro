@@ -2,7 +2,7 @@
 // Debe funcionar sin señal en el campo: shell precacheado, librerías y tiles en caché.
 "use strict";
 
-const VERSION = "mulalillo-v7";
+const VERSION = "mulalillo-v8";
 const SHELL = "mulalillo-shell-" + VERSION;
 const TILES = "mulalillo-tiles";
 const MAX_TILES = 1200;   // ~el área de la finca a varios niveles de zoom
@@ -24,7 +24,6 @@ const ASSETS = [
   "./lib/maplibre-gl.js",
   "./lib/maplibre-gl.css",
   "./lib/three.module.min.js",
-  "./lib/three.module.js",
   "./lib/OrbitControls.js"
 ];
 

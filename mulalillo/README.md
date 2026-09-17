@@ -17,7 +17,11 @@ npm run build   # emite dist/mulalillo/
 ```
 
 `npm run dev` y `npm run build` ejecutan antes `scripts/vendor-mulalillo.mjs`, que copia
-MapLibre y Three.js desde `node_modules` a `mulalillo/lib/` (carpeta ignorada por git).
+MapLibre y Three.js desde `node_modules` a `mulalillo/lib/`. **Esos archivos están
+versionados en el repositorio a propósito**: GitHub Pages sirve la rama `main` tal cual, así
+que una librería que no esté commiteada devuelve 404 en el sitio publicado aunque el build
+la genere. Si actualizas las versiones en `package.json`, vuelve a correr el script y
+commitea el resultado.
 
 ## Qué hay implementado
 
@@ -88,6 +92,11 @@ grande con su tipo y tamaño, ejecución de MapLibre, importación de un módulo
 Three.js y de `view3d.js`, y la creación de un mapa. Sirve justamente cuando la app no
 arranca, que es cuando no hay consola a mano.
 
+Entre las pruebas está «Origen del sitio», que distingue si lo servido viene de `main` o de
+un artefacto de build. Esa distinción fue la que destrabó un fallo de varios días: el
+workflow publicaba en `gh-pages` mientras Pages servía `main`, así que las librerías
+generadas por el build nunca llegaban al navegador.
+
 `?sw=off` abre la app sin service worker y lo da de baja (`?sw=on` lo revierte). Safari en
 iOS ha tenido fallos sirviendo módulos ES a través de un service worker: si la app
 funciona así y no de la otra forma, el culpable es ese intermediario.
@@ -120,11 +129,8 @@ en el punto, «Fijar con mi GPS» las corrige y el modelo de terreno se recalcul
   cumple el requisito real (nada de `localStorage`, los datos sobreviven), y el traspaso
   celular↔escritorio se hace hoy con exportar/importar JSON.
 - **Sin CDN.** MapLibre y Three.js se sirven desde la propia app (`mulalillo/lib/`) para que
-  la primera carga también funcione sin señal. El directorio se llama `lib/` y no `vendor/`
-  a propósito: `vendor/` está en la lista de exclusión por defecto de Jekyll, el procesador
-  que GitHub Pages aplica salvo que exista un `.nojekyll`, y con ese nombre las librerías
-  devolvían 404 en el sitio publicado aunque estuvieran en la rama. El build emite además
-  su propio `.nojekyll`.
+  la primera carga también funcione sin señal. Los archivos van commiteados porque el sitio
+  publicado sale de la rama `main`, no del artefacto de build.
 - **Dibujo propio en vez de mapbox-gl-draw.** Unas 120 líneas sobre fuentes GeoJSON, sin
   el desfase de versiones entre `mapbox-gl-draw` y MapLibre 4.
 
