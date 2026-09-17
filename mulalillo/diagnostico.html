@@ -120,8 +120,21 @@ function correr() {
     caches.keys().then(function (k) { fila('Cachés guardados', k.length ? k.join(', ') : 'ninguno'); });
   }
 
+  // ¿Qué rama sirve el sitio? package.json existe en main pero no en gh-pages,
+  // y assets/ es al revés. Saberlo evita volver a deducirlo a ciegas.
+  Promise.all([
+    fetch('../package.json', { cache: 'no-store' }).then(function (r) { return r.status; }).catch(function () { return 0; }),
+    fetch('../vite.config.js', { cache: 'no-store' }).then(function (r) { return r.status; }).catch(function () { return 0; })
+  ]).then(function (c) {
+    var enMain = c[0] === 200 || c[1] === 200;
+    fila('Origen del sitio', enMain
+      ? 'rama main (se sirve el código fuente tal cual)'
+      : 'rama gh-pages o artefacto de build');
+  });
+
   // ¿Llegan los archivos?
-  var archivos = ['./app.js', './view3d.js', './lib/maplibre-gl.js', './lib/three.module.min.js'];
+  var archivos = ['./app.js', './view3d.js', './lib/maplibre-gl.js', './lib/three.module.min.js',
+                  './lib/maplibre-gl.css', './lib/OrbitControls.js'];
   var cadena = Promise.resolve();
   archivos.forEach(function (f) {
     cadena = cadena.then(function () {
