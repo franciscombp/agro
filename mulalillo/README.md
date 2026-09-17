@@ -78,10 +78,28 @@ infraestructura se proyectan **desde los mismos registros del mapa 2D** — no h
 segundo modelo. Las flechas azules marcan la dirección de máxima pendiente descendente:
 hacia dónde corre el agua por gravedad.
 
+El terreno es un bloque con faldón lateral, no una sábana flotando: se lee el volumen de
+la loma. Los árboles llevan tronco y copa facetada con porte por especie (un aguacate no
+es un arándano) y giro y tamaño variados por un hash del id, de modo que un bloque
+sembrado no parece un sello repetido; van en malla instanciada, así cientos de plantas no
+cuestan fotogramas. Las construcciones tienen techo a dos aguas y el reservorio muestra
+lámina de agua. El sol proyecta sombras, que es lo que permite leer la pendiente. El
+encuadre inicial se calcula con la esfera que envuelve el terreno contra el campo de
+visión, para que entre completo también en pantalla angosta; «Recentrar vista» vuelve a
+él. El panel de controles se pliega para dejar la vista entera.
+
 **Offline.** Service worker con alcance `./`: shell y librerías precacheadas, tiles
 satelitales en caché con tope de 1.200 entradas y precarga del área de la finca
 (Ajustes → «Descargar mapa del terreno», zoom 15–19). Toda escritura entra además en una
 cola local (`outbox`) para sincronizar después.
+
+## Interfaz
+
+Hereda el sistema de diseño de *Mi Huerto*: los mismos tokens de color, radios, sombras y
+curva de animación (`--ease`), la barra de pestañas translúcida con iconos SVG de trazo, el
+rail lateral de 232 px a partir de 900 px de ancho, y la entrada escalonada de las
+tarjetas. No comparte el archivo de estilos —la PoC es autónoma— pero sí el vocabulario
+visual, para que se sienta la misma familia de aplicaciones.
 
 ## Diagnóstico
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <meta name="theme-color" content="#14532d" />
+  <meta name="theme-color" content="#1f7a3d" />
   <meta name="description" content="Gestión de la Finca Mulalillo: mapa satelital, sectores, plantas, tareas, agua y relieve 3D." />
   <title>Finca Mulalillo — gestión</title>
 
@@ -139,22 +139,48 @@
 <!-- Vista 3D -->
 <main class="view" id="view-3d">
   <div id="three"></div>
-  <div class="three-controls">
-    <label>Exageración vertical <output id="out-exag">3×</output>
-      <input type="range" id="range-exag" min="1" max="12" step="0.5" value="3" />
-    </label>
-    <label class="row"><input type="checkbox" id="chk-arrows" checked /> Flechas de escurrimiento</label>
-    <p class="hint" id="three-hint"></p>
+  <div class="three-controls abierto" id="three-controls">
+    <button class="three-head" id="three-toggle" aria-expanded="true">
+      Relieve y escurrimiento <span class="caret">▾</span>
+    </button>
+    <div class="three-body">
+      <label>Exageración vertical <output id="out-exag">3×</output>
+        <input type="range" id="range-exag" min="1" max="12" step="0.5" value="3" />
+      </label>
+      <label class="row"><input type="checkbox" id="chk-arrows" checked /> Flechas de escurrimiento</label>
+      <div class="three-actions">
+        <button class="btn-ghost" id="btn-recenter">Recentrar vista</button>
+      </div>
+      <p class="hint" id="three-hint"></p>
+    </div>
   </div>
 </main>
 
 <nav class="tabbar">
-  <button class="tab active" data-view="view-map"><span>🗺️</span>Mapa</button>
-  <button class="tab" data-view="view-sectors"><span>▦</span>Sectores</button>
-  <button class="tab" data-view="view-plants"><span>🌿</span>Plantas</button>
-  <button class="tab" data-view="view-tasks"><span>✓</span>Tareas</button>
-  <button class="tab" data-view="view-water"><span>💧</span>Agua</button>
-  <button class="tab" data-view="view-3d"><span>⛰️</span>3D</button>
+  <button class="tab active" data-view="view-map">
+    <svg viewBox="0 0 24 24"><path d="m9 4-6 2.5v13L9 17l6 3 6-2.5v-13L15 7 9 4z"/><path d="M9 4v13M15 7v13"/></svg>
+    <span>Mapa</span>
+  </button>
+  <button class="tab" data-view="view-sectors">
+    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>
+    <span>Sectores</span>
+  </button>
+  <button class="tab" data-view="view-plants">
+    <svg viewBox="0 0 24 24"><path d="M12 21v-8"/><path d="M12 13c0-4 3-7 8-7 0 5-3 8-8 8z"/><path d="M12 15c0-3-2.5-5.5-6-5.5 0 3.8 2.4 6 6 6z"/></svg>
+    <span>Plantas</span>
+  </button>
+  <button class="tab" data-view="view-tasks">
+    <svg viewBox="0 0 24 24"><path d="M9 11l2.5 2.5L16 8"/><rect x="3" y="4" width="18" height="17" rx="2.5"/><path d="M8 2v4M16 2v4"/></svg>
+    <span>Tareas</span>
+  </button>
+  <button class="tab" data-view="view-water">
+    <svg viewBox="0 0 24 24"><path d="M12 3s6 6.4 6 10.5A6 6 0 0 1 6 13.5C6 9.4 12 3 12 3z"/></svg>
+    <span>Agua</span>
+  </button>
+  <button class="tab" data-view="view-3d">
+    <svg viewBox="0 0 24 24"><path d="m3 19 6-9 4 5.5 2.5-3L21 19H3z"/><circle cx="8" cy="6.5" r="2"/></svg>
+    <span>Relieve</span>
+  </button>
 </nav>
 
 <!-- Hoja modal reutilizable -->
