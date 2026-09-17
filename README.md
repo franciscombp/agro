@@ -34,7 +34,8 @@ App web para **agricultura de subsistencia rural y huertos urbanos** (escala má
 Todos los archivos de la app viven en la raíz del proyecto:
 
 - `index.html` — pantallas y barra de pestañas (Hoy · Almanaque · Mercado · Mi huerto · Explorar)
-- `styles.css` — estilos mobile-first con rail lateral en desktop
+- `styles/design-system.css` — sistema de diseño compartido: tokens, tipografía base, movimiento y botones. Lo consumen esta app y las del repositorio; se carga antes que `styles.css`
+- `styles.css` — componentes de esta app, mobile-first con rail lateral en desktop
 - `app.js` — navegación, geolocalización, clima, almanaque, mercado, seguimiento, calculadora
 - `data.js` — catálogo con rangos de altitud, meses de siembra y de mejor precio, costos y precios locales (Ecuador)
 - `notify.js` — lógica de luna y notificaciones

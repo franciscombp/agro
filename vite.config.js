@@ -37,6 +37,16 @@ export default defineConfig({
       }
     },
     {
+      name: 'copy-design-system',
+      apply: 'build',
+      writeBundle() {
+        // Hoja compartida por todas las apps del repositorio.
+        const src = path.join(process.cwd(), 'styles')
+        const dest = path.join(process.cwd(), 'dist', 'styles')
+        if (fs.existsSync(src)) copyDir(src, dest)
+      }
+    },
+    {
       name: 'nojekyll',
       apply: 'build',
       writeBundle() {

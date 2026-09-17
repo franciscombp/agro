@@ -3,7 +3,7 @@
 // APIs externas network-first con último dato guardado como respaldo.
 "use strict";
 
-const VERSION = "v9";
+const VERSION = "v10";
 const CACHE_SHELL = "mihuerto-shell-" + VERSION;
 const CACHE_RUNTIME = "mihuerto-runtime";
 
@@ -11,6 +11,7 @@ const ASSETS = [
   "./",
   "./index.html",
   "./styles.css",
+  "./styles/design-system.css",
   "./app.js",
   "./data.js",
   "./notify.js",
