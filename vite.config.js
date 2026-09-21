@@ -40,10 +40,11 @@ export default defineConfig({
       name: 'copy-design-system',
       apply: 'build',
       writeBundle() {
-        // Hoja compartida por todas las apps del repositorio.
-        const src = path.join(process.cwd(), 'styles')
-        const dest = path.join(process.cwd(), 'dist', 'styles')
-        if (fs.existsSync(src)) copyDir(src, dest)
+        // mal-ds vendorizado (ds/) y los tokens heredados de Mi Huerto (styles/).
+        for (const dir of ['ds', 'styles']) {
+          const src = path.join(process.cwd(), dir)
+          if (fs.existsSync(src)) copyDir(src, path.join(process.cwd(), 'dist', dir))
+        }
       }
     },
     {

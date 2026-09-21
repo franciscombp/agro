@@ -34,7 +34,8 @@ App web para **agricultura de subsistencia rural y huertos urbanos** (escala má
 Todos los archivos de la app viven en la raíz del proyecto:
 
 - `index.html` — pantallas y barra de pestañas (Hoy · Almanaque · Mercado · Mi huerto · Explorar)
-- `styles/design-system.css` — sistema de diseño compartido: tokens, tipografía base, movimiento y botones. Lo consumen esta app y las del repositorio; se carga antes que `styles.css`
+- `ds/` — [mal-ds](https://github.com/franciscombp/mal/tree/main/ds) vendorizado y fijado a una versión: el sistema de diseño del proyecto. Lo consume la app de la finca (`mulalillo/`). Se actualiza con `npm run vendor:ds`
+- `styles/design-system.css` — tokens heredados que todavía usa esta app; pendiente de migrar a `ds/`
 - `styles.css` — componentes de esta app, mobile-first con rail lateral en desktop
 - `app.js` — navegación, geolocalización, clima, almanaque, mercado, seguimiento, calculadora
 - `data.js` — catálogo con rangos de altitud, meses de siembra y de mejor precio, costos y precios locales (Ecuador)

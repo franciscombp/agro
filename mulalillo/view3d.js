@@ -29,6 +29,9 @@ export class Terrain3D {
     this.exaggeration = 3;
     this.showArrows = true;
     this.colorBy = 'species';
+    // Fracción inferior del lienzo que tapa el panel de controles. El encuadre
+    // centra en la parte VISIBLE, no en el lienzo entero.
+    this.ocluidoAbajo = 0;
 
     this.scene = new THREE.Scene();
     // Cielo sólido + niebla del mismo tono: el horizonte se funde sin trucos.
@@ -82,6 +85,15 @@ export class Terrain3D {
     this.renderer.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+  }
+
+  /** Qué parte inferior del lienzo está tapada (0–0,6). Reencuadra si cambia. */
+  setOclusion(fraccion) {
+    const f = Math.max(0, Math.min(0.6, fraccion || 0));
+    if (Math.abs(f - this.ocluidoAbajo) < 0.02) return;
+    this.ocluidoAbajo = f;
+    this._encuadrado = false;
+    if (this.state) this.render(this.state);
   }
 
   setExaggeration(v) { this.exaggeration = v; if (this.state) this.render(this.state); }
@@ -152,13 +164,16 @@ export class Terrain3D {
    * Después manda el usuario y no se le vuelve a mover la cámara.
    */
   _encuadrar(ancho, fondo, alturaCentro) {
-    this.controls.target.set(0, alturaCentro * 0.4, 0);
+    const vFov = (this.camera.fov * Math.PI) / 180;
+    const radio = Math.hypot(ancho, fondo) / 2;
+    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * this.camera.aspect);
+    // En vertical manda el campo horizontal: si no, el terreno se sale por los lados.
+    const dist = (radio / Math.tan(Math.min(vFov, hFov) / 2)) * (1.02 + this.ocluidoAbajo * 0.55);
+    // Bajar el objetivo sube la finca en el encuadre, fuera de la zona tapada.
+    const subir = Math.tan(vFov / 2) * dist * this.ocluidoAbajo * 0.5;
+
+    this.controls.target.set(0, alturaCentro * 0.4 - subir, 0);
     if (!this._encuadrado) {
-      const radio = Math.hypot(ancho, fondo) / 2;
-      const vFov = (this.camera.fov * Math.PI) / 180;
-      const hFov = 2 * Math.atan(Math.tan(vFov / 2) * this.camera.aspect);
-      // En vertical manda el campo horizontal: si no, el terreno se sale por los lados.
-      const dist = (radio / Math.tan(Math.min(vFov, hFov) / 2)) * 1.02;
       const dir = new THREE.Vector3(0.62, 0.52, 0.58).normalize();
       this.camera.position.copy(dir.multiplyScalar(dist)).add(this.controls.target);
       this.camera.updateProjectionMatrix();

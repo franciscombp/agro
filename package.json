@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "vendor:mulalillo": "node scripts/vendor-mulalillo.mjs",
     "prebuild": "node scripts/vendor-mulalillo.mjs",
-    "predev": "node scripts/vendor-mulalillo.mjs"
+    "predev": "node scripts/vendor-mulalillo.mjs",
+    "vendor:ds": "node scripts/vendor-ds.mjs",
+    "verifica:ds": "node scripts/vendor-ds.mjs --verifica"
   },
   "devDependencies": {
     "vite": "^5.0.0"
