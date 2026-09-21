@@ -1,14 +1,13 @@
 /* ============================================================
-   Sistema de diseño — Mi Huerto
-   Fuente única de los tokens y las primitivas que comparten todas las
-   aplicaciones del proyecto. Lo que vive aquí NO debe conocer ninguna
-   pantalla concreta: sólo color, ritmo tipográfico, formas, botones y
-   movimiento. Cada app añade sus componentes en su propia hoja, que se
-   carga después de esta.
+   Tokens heredados de Mi Huerto — PENDIENTE DE MIGRAR
+   El sistema de diseño del proyecto es mal-ds, vendorizado en `ds/`.
+   La app de la finca (mulalillo/) ya lo consume; Mi Huerto todavía no,
+   porque migrarla le cambia la paleta y el ritmo: es una decisión de
+   producto, no una refactorización, y necesita mirarse pantalla a
+   pantalla antes de hacerla.
 
-   Uso:
-     <link rel="stylesheet" href="/styles/design-system.css" />
-     <link rel="stylesheet" href="./styles.css" />
+   Mientras tanto esta hoja guarda SÓLO los tokens y botones que usa
+   Mi Huerto. No la consuman apps nuevas: para eso está ../ds/.
    ============================================================ */
 
 * { margin: 0; padding: 0; box-sizing: border-box; }

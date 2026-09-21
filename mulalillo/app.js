@@ -17,7 +17,7 @@ const INFRA_TYPES = ['reservorio', 'casa', 'establo', 'cuyera', 'bomba', 'filtro
 const TASK_TYPES = ['riego', 'poda', 'fertilización', 'fumigación', 'cosecha', 'siembra', 'otro'];
 const WATER_TYPES = ['llenado_acequia', 'tanquero', 'riego', 'medición_nivel'];
 const STATUSES = ['sano', 'atención', 'enfermo', 'muerto'];
-const BUILD = 'v10 · 2026-09-17';
+const BUILD = 'v11';
 
 const state = {
   parcel: { id: 'parcel-mulalillo', name: 'Finca Mulalillo', boundary: BOUNDARY },
@@ -37,6 +37,7 @@ const $$ = sel => [...document.querySelectorAll(sel)];
 // ---------------------------------------------------------------------------
 
 async function boot() {
+  cargarIconos();
   await db.seedIfEmpty();
   await reload();
   await initMap();
@@ -44,6 +45,27 @@ async function boot() {
   renderAll();
   registerServiceWorker();
   watchConnectivity();
+}
+
+/**
+ * El sprite del sistema hay que meterlo en el documento: `<use href>` a un
+ * archivo externo no lo resuelve ningún navegador de los que importan. No se
+ * usa mal.js porque esta app ya trae su propia mecánica de pestañas y hoja, y
+ * cargarlo duplicaría los manejadores.
+ */
+async function cargarIconos() {
+  if (document.getElementById('mal-iconos')) return;
+  try {
+    const svg = await fetch('../ds/mal/iconos.svg').then(r => r.ok ? r.text() : null);
+    if (!svg) return;
+    const cont = document.createElement('div');
+    cont.id = 'mal-iconos';
+    cont.hidden = true;
+    cont.innerHTML = svg;
+    document.body.prepend(cont);
+  } catch {
+    /* Sin iconos la app se usa igual: los rótulos de texto siguen ahí. */
+  }
 }
 
 /** El mapa es la vista principal, pero si falla el resto de la app sigue sirviendo. */
@@ -106,13 +128,13 @@ function showMapError(err) {
   const msg = String(err.message || err);
   const offline = !navigator.onLine;
   document.getElementById('map').innerHTML = `
-    <div class="warn pad">
+    <div class="aviso aviso--atencion pad">
       <p><strong>No se pudo cargar el mapa:</strong> ${escapeHtml(msg)}.</p>
       <p>${offline
         ? 'El dispositivo está sin conexión. Con señal, toca «Reintentar»: al cargar una vez, el mapa queda guardado y ya funciona sin señal.'
         : 'Suele ser señal débil cortando la descarga de la librería (800 kB). Toca «Reintentar».'}</p>
       <p>Las listas de sectores, plantas, tareas y agua funcionan igual mientras tanto.</p>
-      <button class="btn-primary" id="btn-retry-map">Reintentar</button>
+      <button class="btn btn--rojo btn-block" id="btn-retry-map">Reintentar</button>
       <p class="hint">¿Sigue fallando? Abre el <a href="./diagnostico.html">diagnóstico</a>:
       dice exactamente qué no puede hacer este navegador.</p>
     </div>`;
@@ -165,11 +187,13 @@ async function persist(store, record) {
 
 function wireChrome() {
   // Visible de un vistazo: así se sabe siempre qué build está cargado.
-  $('#topbar-sub').textContent = `Salcedo, Cotopaxi · ${BUILD}` + (swDisabled() ? ' · sin SW' : '');
-  $$('.tab').forEach(tab => tab.addEventListener('click', () => showView(tab.dataset.view)));
+  $('#topbar-sub').textContent = `Salcedo · ${BUILD}` + (swDisabled() ? ' · sin SW' : '');
+  $$('.nav-item').forEach(b => b.addEventListener('click', () => showView(b.dataset.view)));
   $('#btn-settings').addEventListener('click', openSettings);
   $('#sheet-close').addEventListener('click', closeSheet);
-  $('#sheet-backdrop').addEventListener('click', closeSheet);
+  // Cerrar tocando fuera y limpiar también cuando cierra el propio navegador.
+  $('#sheet').addEventListener('click', e => { if (e.target === e.currentTarget) closeSheet(); });
+  $('#sheet').addEventListener('close', () => { $('#sheet-body').innerHTML = ''; });
 
   $('#btn-fit').addEventListener('click', () => farmMap?.fitToParcel());
   $('#btn-gps').addEventListener('click', locateMe);
@@ -178,7 +202,7 @@ function wireChrome() {
     if (!farmMap) return;
     const on = farmMap.mode !== 'move';
     farmMap.setMode(on ? 'move' : 'view');
-    e.currentTarget.classList.toggle('on', on);
+    e.currentTarget.setAttribute('aria-pressed', String(on));
     banner(on ? 'Modo mover: arrastra plantas, infraestructura y puntos de elevación.' : null);
   });
   $$('[data-close-panel]').forEach(b => b.addEventListener('click', () => hidePanels()));
@@ -199,8 +223,8 @@ function wireChrome() {
   $('#btn-new-water').addEventListener('click', () => openWaterForm({}));
   $('#plant-search').addEventListener('input', renderPlants);
 
-  $$('#task-seg .seg-btn').forEach(btn => btn.addEventListener('click', () => {
-    $$('#task-seg .seg-btn').forEach(b => b.classList.toggle('active', b === btn));
+  $$('#task-seg button').forEach(btn => btn.addEventListener('click', () => {
+    $$('#task-seg button').forEach(b => b.setAttribute('aria-selected', String(b === btn)));
     taskFilter = btn.dataset.filter;
     renderTasks();
   }));
@@ -217,13 +241,16 @@ function wireChrome() {
     const panel = $('#three-controls');
     const abierto = panel.classList.toggle('abierto');
     e.currentTarget.setAttribute('aria-expanded', String(abierto));
-    setTimeout(() => terrain?.resize(), 60);
+    setTimeout(() => { terrain?.resize(); medirOclusion3D(); }, 260);
   });
 }
 
 function showView(id) {
   $$('.view').forEach(v => v.classList.toggle('active', v.id === id));
-  $$('.tab').forEach(t => t.classList.toggle('active', t.dataset.view === id));
+  $$('.nav-item').forEach(b => {
+    if (b.dataset.view === id) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  });
   hidePanels();
   if (id === 'view-3d') init3D();
   if (id === 'view-map') setTimeout(() => farmMap?.map.resize(), 60);
@@ -240,7 +267,8 @@ function hidePanels() { $$('.panel').forEach(p => (p.hidden = true)); }
 
 function toast(msg, ms = 2600) {
   const el = $('#toast');
-  el.textContent = msg;
+  el.innerHTML = '<svg class="icono" aria-hidden="true"><use href="#i-info"/></svg>';
+  el.append(msg);
   el.hidden = false;
   clearTimeout(toast._t);
   toast._t = setTimeout(() => (el.hidden = true), ms);
@@ -258,16 +286,16 @@ function banner(html) {
 // ---------------------------------------------------------------------------
 
 function openSheet(title, bodyHtml, onMount) {
+  const dlg = $('#sheet');
   $('#sheet-title').textContent = title;
   $('#sheet-body').innerHTML = bodyHtml;
-  $('#sheet').hidden = false;
-  $('#sheet-backdrop').hidden = false;
+  if (!dlg.open) dlg.showModal();   // el navegador pone el foco y cierra con Escape
   onMount?.($('#sheet-body'));
 }
 
 function closeSheet() {
-  $('#sheet').hidden = true;
-  $('#sheet-backdrop').hidden = true;
+  const dlg = $('#sheet');
+  if (dlg.open) dlg.close();
   $('#sheet-body').innerHTML = '';
 }
 
@@ -278,10 +306,10 @@ function closeSheet() {
 function openAddMenu() {
   openSheet('Agregar', `
     <div class="grid-actions">
-      <button class="big-action" data-add="plant"><span>🌿</span>Planta</button>
-      <button class="big-action" data-add="infra"><span>🏠</span>Infraestructura</button>
-      <button class="big-action" data-add="sector"><span>▦</span>Sector</button>
-      <button class="big-action" data-add="elevation"><span>📐</span>Punto de elevación</button>
+      <button class="btn big-action" data-add="plant"><svg class="icono" aria-hidden="true"><use href="#i-hoja"/></svg>Planta</button>
+      <button class="btn big-action" data-add="infra"><svg class="icono" aria-hidden="true"><use href="#i-casa"/></svg>Infraestructura</button>
+      <button class="btn big-action" data-add="sector"><svg class="icono" aria-hidden="true"><use href="#i-cuadricula"/></svg>Sector</button>
+      <button class="btn big-action" data-add="elevation"><svg class="icono" aria-hidden="true"><use href="#i-balanza"/></svg>Punto de elevación</button>
     </div>
     <p class="hint">Los puntos se pueden colocar con tu ubicación GPS o tocando el mapa.</p>
   `, body => {
@@ -429,25 +457,25 @@ function openPlant(id) {
     .sort(byDateDesc);
 
   openSheet(`${SPECIES[p.species]?.label || p.species}${p.variety ? ' · ' + p.variety : ''}`, `
-    <div class="pill-row">
-      <span class="pill" style="background:${STATUS_COLORS[p.status]}">${p.status}</span>
-      ${sector ? `<span class="pill ghost">${escapeHtml(sector.name)}</span>` : '<span class="pill ghost">Sin sector</span>'}
+    <div class="chips">
+      <span class="badge" style="background:${STATUS_COLORS[p.status]};color:#fff">${p.status}</span>
+      ${sector ? `<span class="badge">${escapeHtml(sector.name)}</span>` : '<span class="badge">Sin sector</span>'}
     </div>
-    <dl class="facts">
+    <dl class="hechos">
       <dt>Sembrada</dt><dd>${p.plantedAt ? fmtDate(p.plantedAt) + ' · ' + ageLabel(p.plantedAt) : '—'}</dd>
       <dt>Elevación</dt><dd>${p.elevationM ? nf(p.elevationM, 2) + ' msnm' : '—'}</dd>
       <dt>Coordenadas</dt><dd>${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}</dd>
       <dt>Riego estimado</dt><dd>${SPECIES[p.species]?.lppd ?? '—'} L/día</dd>
     </dl>
-    ${p.notes ? `<p class="note">${escapeHtml(p.notes)}</p>` : ''}
+    ${p.notes ? `<p class="aviso aviso--ok">${escapeHtml(p.notes)}</p>` : ''}
     ${p.photos?.length ? `<div class="photos">${p.photos.map(src => `<img src="${src}" alt="" />`).join('')}</div>` : ''}
     <h4>Historial y tareas (${tasks.length})</h4>
     ${tasks.length ? `<ul class="mini-list">${tasks.map(taskLine).join('')}</ul>` : '<p class="hint">Sin tareas registradas.</p>'}
     <div class="sheet-actions">
-      <button class="btn-primary" data-act="task">Nueva tarea</button>
-      <button class="btn-ghost" data-act="edit">Editar</button>
-      <button class="btn-ghost" data-act="center">Ver en mapa</button>
-      <button class="btn-danger" data-act="del">Eliminar</button>
+      <button class="btn btn--rojo btn-block" data-act="task">Nueva tarea</button>
+      <button class="btn" data-act="edit">Editar</button>
+      <button class="btn" data-act="center">Ver en mapa</button>
+      <button class="btn btn-danger" data-act="del">Eliminar</button>
     </div>
   `, body => {
     body.querySelector('[data-act="edit"]').onclick = () => openPlantForm(p);
@@ -479,14 +507,14 @@ function openPlantForm(p) {
         <select name="status">${STATUSES.map(s =>
           `<option value="${s}" ${p.status === s ? 'selected' : ''}>${s}</option>`).join('')}</select>
       </label>
-      <div class="two">
+      <div class="field-grid-2">
         <label>Latitud <input name="lat" type="number" step="0.0000001" value="${attr(p.lat)}" required /></label>
         <label>Longitud <input name="lng" type="number" step="0.0000001" value="${attr(p.lng)}" required /></label>
       </div>
       <label>Elevación (msnm) <input name="elevationM" type="number" step="0.01" value="${attr(p.elevationM)}" /></label>
       <label>Notas <textarea name="notes" rows="3">${escapeHtml(p.notes || '')}</textarea></label>
       <label>Fotos <input type="file" name="photo" accept="image/*" capture="environment" multiple /></label>
-      <button class="btn-primary" type="submit">Guardar</button>
+      <button class="btn btn--rojo btn-block" type="submit">Guardar</button>
     </form>
   `, body => {
     body.querySelector('#f').onsubmit = async ev => {
@@ -518,16 +546,16 @@ function openInfra(id) {
   const low = Math.min(...measuredPoints().map(p => p.elevationM));
   const head = i.elevationM ? i.elevationM - low : null;
   openSheet(cap(i.type), `
-    <dl class="facts">
+    <dl class="hechos">
       <dt>Elevación</dt><dd>${i.elevationM ? nf(i.elevationM, 2) + ' msnm' : '—'}</dd>
       ${head != null ? `<dt>Carga al punto más bajo</dt><dd>${nf(head)} m · ${nf(staticPressureBar(head), 2)} bar</dd>` : ''}
       <dt>Coordenadas</dt><dd>${i.lat.toFixed(6)}, ${i.lng.toFixed(6)}</dd>
       ${Object.entries(i.props || {}).map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(v))}</dd>`).join('')}
     </dl>
     <div class="sheet-actions">
-      <button class="btn-ghost" data-act="edit">Editar</button>
-      <button class="btn-ghost" data-act="center">Ver en mapa</button>
-      <button class="btn-danger" data-act="del">Eliminar</button>
+      <button class="btn" data-act="edit">Editar</button>
+      <button class="btn" data-act="center">Ver en mapa</button>
+      <button class="btn btn-danger" data-act="del">Eliminar</button>
     </div>
   `, body => {
     body.querySelector('[data-act="edit"]').onclick = () => openInfraForm(i);
@@ -547,14 +575,14 @@ function openInfraForm(i) {
         <select name="type">${INFRA_TYPES.map(t =>
           `<option value="${t}" ${i.type === t ? 'selected' : ''}>${cap(t)}</option>`).join('')}</select>
       </label>
-      <div class="two">
+      <div class="field-grid-2">
         <label>Latitud <input name="lat" type="number" step="0.0000001" value="${attr(i.lat)}" required /></label>
         <label>Longitud <input name="lng" type="number" step="0.0000001" value="${attr(i.lng)}" required /></label>
       </div>
       <label>Elevación (msnm) <input name="elevationM" type="number" step="0.01" value="${attr(i.elevationM)}" /></label>
       <label>Volumen (m³) — sólo reservorio <input name="volumenM3" type="number" step="0.1" value="${attr(i.props?.volumenM3)}" /></label>
       <label>Material <input name="material" value="${attr(i.props?.material)}" /></label>
-      <button class="btn-primary" type="submit">Guardar</button>
+      <button class="btn btn--rojo btn-block" type="submit">Guardar</button>
     </form>
   `, body => {
     body.querySelector('#f').onsubmit = async ev => {
@@ -581,15 +609,15 @@ function openElevation(id) {
   const e = state.elevations.find(x => x.id === id);
   if (!e) return;
   openSheet(e.name || 'Punto de elevación', `
-    <dl class="facts">
+    <dl class="hechos">
       <dt>Elevación</dt><dd>${nf(e.elevationM, 2)} msnm</dd>
       <dt>Coordenada</dt><dd>${e.lat.toFixed(6)}, ${e.lng.toFixed(6)} ${e.measured ? '' : '<em>(estimada)</em>'}</dd>
     </dl>
-    ${e.measured ? '' : '<p class="warn">La altura es real pero la coordenada aún no se ha tomado con GPS. Párate en el punto y usa “Fijar con mi GPS”.</p>'}
+    ${e.measured ? '' : '<p class="aviso aviso--atencion">La altura es real pero la coordenada aún no se ha tomado con GPS. Párate en el punto y usa “Fijar con mi GPS”.</p>'}
     <div class="sheet-actions">
-      <button class="btn-primary" data-act="gps">Fijar con mi GPS</button>
-      <button class="btn-ghost" data-act="edit">Editar</button>
-      <button class="btn-danger" data-act="del">Eliminar</button>
+      <button class="btn btn--rojo btn-block" data-act="gps">Fijar con mi GPS</button>
+      <button class="btn" data-act="edit">Editar</button>
+      <button class="btn btn-danger" data-act="del">Eliminar</button>
     </div>
   `, body => {
     body.querySelector('[data-act="edit"]').onclick = () => openElevationForm(e);
@@ -618,13 +646,13 @@ function openElevationForm(e) {
     <form id="f">
       <label>Nombre <input name="name" value="${attr(e.name)}" placeholder="Cuyero, esquina norte…" required /></label>
       <label>Elevación (msnm) <input name="elevationM" type="number" step="0.01" value="${attr(e.elevationM)}" required /></label>
-      <div class="two">
+      <div class="field-grid-2">
         <label>Latitud <input name="lat" type="number" step="0.0000001" value="${attr(e.lat)}" required /></label>
         <label>Longitud <input name="lng" type="number" step="0.0000001" value="${attr(e.lng)}" required /></label>
       </div>
       <label class="row"><input type="checkbox" name="measured" ${e.measured ? 'checked' : ''} /> Coordenada tomada con GPS</label>
       <p class="hint">Cada punto nuevo afina el modelo del terreno y la vista 3D.</p>
-      <button class="btn-primary" type="submit">Guardar</button>
+      <button class="btn btn--rojo btn-block" type="submit">Guardar</button>
     </form>
   `, body => {
     body.querySelector('#f').onsubmit = async ev => {
@@ -655,28 +683,34 @@ function renderSectors() {
     const area = areaM2(s.polygon);
     const plants = state.plants.filter(p => p.sectorId === s.id);
     return `
-      <button class="card" data-sector="${s.id}">
-        <span class="swatch" style="background:${s.color}"></span>
-        <span class="card-main">
+      <button class="list-row" data-sector="${s.id}">
+        <span class="franja" style="background:${s.color}"></span>
+        <span class="fila-main">
           <strong>${escapeHtml(s.name)}</strong>
           <small>${fmtArea(area)} · ${plants.length} plantas${s.irrigationZone ? ' · ' + escapeHtml(s.irrigationZone) : ''}</small>
         </span>
-        <span class="card-go">›</span>
+        <span class="fila-go"><svg class="icono icono--s" aria-hidden="true"><use href="#i-chevron-der"/></svg></span>
       </button>`;
   }).join('');
 
   $('#sectors-list').innerHTML = `
-    <div class="summary-card">
+    <div class="card datos card--ancha">
       <div><span>Superficie total</span><strong>${fmtArea(total)}</strong></div>
       <div><span>Perímetro</span><strong>${fmtM(perimeterM(state.parcel.boundary))}</strong></div>
       <div><span>En sectores</span><strong>${fmtArea(used)} (${Math.round((used / total) * 100)}%)</strong></div>
     </div>
-    <button class="card" id="edit-boundary">
-      <span class="swatch" style="background:#ffd43b"></span>
-      <span class="card-main"><strong>Límite del terreno</strong><small>${state.parcel.boundary.length} vértices · editar en el mapa</small></span>
-      <span class="card-go">›</span>
-    </button>
-    ${rows || '<p class="hint">Aún no hay sectores. Usa “Dibujar sector”.</p>'}
+    <div class="card card--filas card--ancha">
+      <button class="list-row" id="edit-boundary">
+        <span class="franja" style="background:var(--mal-ambar)"></span>
+        <span class="fila-main">
+          <strong>Límite del terreno</strong>
+          <small>${state.parcel.boundary.length} vértices · editar en el mapa</small>
+        </span>
+        <span class="fila-go"><svg class="icono icono--s" aria-hidden="true"><use href="#i-chevron-der"/></svg></span>
+      </button>
+      ${rows}
+    </div>
+    ${state.sectors.length ? '' : '<p class="hint">Aún no hay sectores. Usa “Dibujar sector”.</p>'}
   `;
   $('#sectors-list').querySelectorAll('[data-sector]').forEach(el =>
     el.addEventListener('click', () => openSector(el.dataset.sector)));
@@ -702,7 +736,7 @@ function openSector(id) {
   const elevs = s.polygon.map(p => interpolateElevation(p, measuredPoints()));
 
   openSheet(s.name, `
-    <dl class="facts">
+    <dl class="hechos">
       <dt>Área</dt><dd>${fmtArea(area)}</dd>
       <dt>Perímetro</dt><dd>${fmtM(perimeterM(s.polygon))}</dd>
       <dt>Plantas</dt><dd>${plants.length}</dd>
@@ -712,17 +746,17 @@ function openSector(id) {
     </dl>
     <h4>Plantas por especie</h4>
     ${bySpecies.size ? `<ul class="mini-list">${[...bySpecies].map(([sp, n]) =>
-      `<li><span class="dot" style="background:${SPECIES[sp]?.color}"></span>${SPECIES[sp]?.label || sp}<b>${n}</b></li>`).join('')}</ul>`
+      `<li><span class="punto" style="background:${SPECIES[sp]?.color}"></span>${SPECIES[sp]?.label || sp}<b>${n}</b></li>`).join('')}</ul>`
       : '<p class="hint">Sin plantas registradas en este sector.</p>'}
     <h4>Tareas del sector (${tasks.length})</h4>
     ${tasks.length ? `<ul class="mini-list">${tasks.map(taskLine).join('')}</ul>` : '<p class="hint">Sin tareas.</p>'}
     <div class="sheet-actions">
-      <button class="btn-primary" data-act="plant">Sembrar en marco</button>
-      <button class="btn-ghost" data-act="water">Riego por gravedad</button>
-      <button class="btn-ghost" data-act="task">Tarea del sector</button>
-      <button class="btn-ghost" data-act="edit">Editar datos</button>
-      <button class="btn-ghost" data-act="shape">Editar forma</button>
-      <button class="btn-danger" data-act="del">Eliminar</button>
+      <button class="btn btn--rojo btn-block" data-act="plant">Sembrar en marco</button>
+      <button class="btn" data-act="water">Riego por gravedad</button>
+      <button class="btn" data-act="task">Tarea del sector</button>
+      <button class="btn" data-act="edit">Editar datos</button>
+      <button class="btn" data-act="shape">Editar forma</button>
+      <button class="btn btn-danger" data-act="del">Eliminar</button>
     </div>
   `, body => {
     body.querySelector('[data-act="edit"]').onclick = () => openSectorForm(s);
@@ -755,7 +789,7 @@ function openSectorForm(s) {
       <label>Nombre <input name="name" value="${attr(s.name)}" placeholder="Bloque arándanos" required /></label>
       <label>Color <input type="color" name="color" value="${s.color || '#2f9e44'}" /></label>
       <label>Zona de riego <input name="irrigationZone" value="${attr(s.irrigationZone)}" placeholder="Zona alta" /></label>
-      <button class="btn-primary" type="submit">Guardar</button>
+      <button class="btn btn--rojo btn-block" type="submit">Guardar</button>
     </form>
   `, body => {
     body.querySelector('#f').onsubmit = async ev => {
@@ -790,11 +824,11 @@ function openPlantingForm(sector) {
           `<option value="${k}" ${k === 'arandano' ? 'selected' : ''}>${v.label}</option>`).join('')}</select>
       </label>
       <label>Variedad <input name="variety" placeholder="opcional" /></label>
-      <div class="two">
+      <div class="field-grid-2">
         <label>Entre hileras (m) <input name="rowSpacingM" type="number" step="0.1" min="0.2" value="2.5" required /></label>
         <label>Entre plantas (m) <input name="spacingM" type="number" step="0.1" min="0.2" value="1.2" required /></label>
       </div>
-      <div class="two">
+      <div class="field-grid-2">
         <label>Margen al borde (m) <input name="marginM" type="number" step="0.1" min="0" value="1" /></label>
         <label>Giro de hileras (°) <input name="angleDeg" type="number" step="5" min="0" max="180" value="0" /></label>
       </div>
@@ -803,9 +837,9 @@ function openPlantingForm(sector) {
           `<option value="${k}">${v.label}</option>`).join('')}</select>
       </label>
       <label>Fecha de siembra <input type="date" name="plantedAt" value="${today()}" /></label>
-      <div id="planting-summary" class="summary-card"></div>
+      <div id="planting-summary" class="card datos"></div>
       <p class="hint">Las posiciones naranjas en el mapa son la propuesta. Nada se guarda hasta confirmar.</p>
-      <button class="btn-primary" type="submit" id="btn-sow">Sembrar</button>
+      <button class="btn btn--rojo btn-block" type="submit" id="btn-sow">Sembrar</button>
     </form>
   `, body => {
     const form = body.querySelector('#f');
@@ -893,7 +927,7 @@ function openHydraulics(sector) {
   const source = state.infra.find(i => i.type === 'reservorio');
   if (!source) {
     return openSheet('Riego por gravedad',
-      '<p class="warn">No hay ningún reservorio registrado. Agrégalo desde el mapa para calcular la presión.</p>');
+      '<p class="aviso aviso--atencion">No hay ningún reservorio registrado. Agrégalo desde el mapa para calcular la presión.</p>');
   }
 
   const target = centroid(sector.polygon);
@@ -903,11 +937,11 @@ function openHydraulics(sector) {
 
   openSheet(`Riego por gravedad · ${sector.name}`, `
     <form id="f">
-      <div class="two">
+      <div class="field-grid-2">
         <label>Demanda del sector (L/día) <input name="demandLitresPerDay" type="number" step="1" value="${Math.round(demandL)}" /></label>
         <label>Horas de riego <input name="irrigationHours" type="number" step="0.5" min="0.5" value="2" /></label>
       </div>
-      <div class="two">
+      <div class="field-grid-2">
         <label>Diámetro de tubería
           <select name="diameterMm">${hyd.DIAMETERS_MM.map(d =>
             `<option value="${d}" ${d === 25 ? 'selected' : ''}>${d} mm</option>`).join('')}</select>
@@ -935,21 +969,21 @@ function openHydraulics(sector) {
 
       let veredicto;
       if (r.tooLow) {
-        veredicto = `<p class="alarm">Presión insuficiente para goteros autocompensados, que necesitan al menos
+        veredicto = `<p class="aviso aviso--atencion">Presión insuficiente para goteros autocompensados, que necesitan al menos
           ${nf(hyd.DRIPPER_MIN_BAR, 1)} bar.
           ${r.lossShare > 0.3
             ? 'La fricción se está comiendo ' + Math.round(r.lossShare * 100) + '% del desnivel: sube el diámetro.'
             : 'El desnivel hasta este sector no da para más, por mucho que engroses la tubería. Opciones: goteros no compensados (trabajan desde 0,5 bar), microaspersión de baja presión, o una bomba pequeña.'}</p>`;
       } else if (r.tooHigh) {
-        veredicto = `<p class="warn">Presión por encima de ${nf(hyd.DRIPPER_MAX_BAR, 1)} bar: conviene un regulador
+        veredicto = `<p class="aviso aviso--atencion">Presión por encima de ${nf(hyd.DRIPPER_MAX_BAR, 1)} bar: conviene un regulador
           para no forzar goteros y uniones.</p>`;
       } else {
-        veredicto = `<p class="note">Presión dentro del rango de trabajo del goteo autocompensado
+        veredicto = `<p class="aviso aviso--ok">Presión dentro del rango de trabajo del goteo autocompensado
           (${nf(hyd.DRIPPER_MIN_BAR, 1)}–${nf(hyd.DRIPPER_MAX_BAR, 1)} bar).</p>`;
       }
 
       body.querySelector('#hyd-result').innerHTML = `
-        <div class="summary-card">
+        <div class="card datos">
           <div><span>Desnivel reservorio → sector</span><strong>${nf(r.dropM)} m</strong></div>
           <div><span>Presión estática</span><strong>${nf(r.staticBar, 2)} bar</strong></div>
           <div><span>Tubería estimada</span><strong>${nf(r.pipeLengthM, 0)} m</strong></div>
@@ -959,7 +993,7 @@ function openHydraulics(sector) {
           <div><span>Velocidad</span><strong class="${r.fastFlow ? 'bad' : ''}">${nf(r.velocity, 2)} m/s</strong></div>
         </div>
         ${veredicto}
-        ${r.fastFlow ? '<p class="warn">Más de 1,5 m/s: golpe de ariete y desgaste. Sube de diámetro.</p>' : ''}
+        ${r.fastFlow ? '<p class="aviso aviso--atencion">Más de 1,5 m/s: golpe de ariete y desgaste. Sube de diámetro.</p>' : ''}
         <p class="hint">Diámetro mínimo que mantiene la presión y una velocidad sana:
           <strong>${sug.diameterMm} mm</strong>${sug.insufficient ? ' (aun así no alcanza: el límite es el desnivel, no la tubería)' : ''}.
           Cálculo por Hazen-Williams con C=${hyd.C_PE} (PE/PVC liso); no incluye pérdidas en filtros, válvulas ni codos.</p>`;
@@ -989,15 +1023,16 @@ function renderPlants() {
       ${[...counts].map(([sp, n]) =>
         `<span class="chip" style="border-color:${SPECIES[sp]?.color}">${SPECIES[sp]?.label || sp}: ${n}</span>`).join('')}
     </div>
-    ${rows.map(p => `
-      <button class="card" data-plant="${p.id}">
-        <span class="swatch" style="background:${SPECIES[p.species]?.color}"></span>
-        <span class="card-main">
+    <div class="card card--filas">${rows.map(p => `
+      <button class="list-row" data-plant="${p.id}">
+        <span class="franja" style="background:${SPECIES[p.species]?.color}"></span>
+        <span class="fila-main">
           <strong>${SPECIES[p.species]?.label || p.species}${p.variety ? ' · ' + escapeHtml(p.variety) : ''}</strong>
           <small>${state.sectors.find(s => s.id === p.sectorId)?.name || 'Sin sector'}${p.plantedAt ? ' · ' + ageLabel(p.plantedAt) : ''}</small>
         </span>
-        <span class="pill sm" style="background:${STATUS_COLORS[p.status]}">${p.status}</span>
-      </button>`).join('') || '<p class="hint">Sin resultados.</p>'}
+        <span class="badge" style="background:${STATUS_COLORS[p.status]};color:#fff">${p.status}</span>
+      </button>`).join('')}</div>
+    ${rows.length ? '' : '<p class="hint">Sin resultados.</p>'}
   `;
   $('#plants-list').querySelectorAll('[data-plant]').forEach(el =>
     el.addEventListener('click', () => openPlant(el.dataset.plant)));
@@ -1015,16 +1050,17 @@ function renderTasks() {
   const overdue = state.tasks.filter(t => !t.doneAt && t.dueAt && t.dueAt < today()).length;
 
   $('#tasks-list').innerHTML = `
-    ${overdue ? `<p class="warn">${overdue} tarea${overdue > 1 ? 's' : ''} atrasada${overdue > 1 ? 's' : ''}.</p>` : ''}
-    ${rows.map(t => `
-      <div class="card ${!t.doneAt && t.dueAt && t.dueAt < today() ? 'overdue' : ''}">
+    ${overdue ? `<p class="aviso aviso--atencion">${overdue} tarea${overdue > 1 ? 's' : ''} atrasada${overdue > 1 ? 's' : ''}.</p>` : ''}
+    <div class="card card--filas">${rows.map(t => `
+      <div class="list-row ${!t.doneAt && t.dueAt && t.dueAt < today() ? 'atrasada' : ''}">
         <input type="checkbox" class="chk" data-done="${t.id}" ${t.doneAt ? 'checked' : ''} />
-        <button class="card-main as-button" data-task="${t.id}">
+        <button class="fila-main" data-task="${t.id}">
           <strong>${cap(t.type)} · ${escapeHtml(targetName(t))}</strong>
           <small>${t.doneAt ? 'Hecha ' + fmtDate(t.doneAt) : t.dueAt ? 'Para ' + fmtDate(t.dueAt) : 'Sin fecha'}${t.quantity ? ` · ${t.quantity} ${escapeHtml(t.unit || '')}` : ''}</small>
           ${t.notes ? `<small class="muted">${escapeHtml(t.notes)}</small>` : ''}
         </button>
-      </div>`).join('') || '<p class="hint">Nada por aquí.</p>'}
+      </div>`).join('')}</div>
+    ${rows.length ? '' : '<p class="hint">Nada por aquí.</p>'}
   `;
   $('#tasks-list').querySelectorAll('[data-done]').forEach(el => el.addEventListener('change', async () => {
     const t = state.tasks.find(x => x.id === el.dataset.done);
@@ -1058,13 +1094,13 @@ function openTaskForm(t = {}) {
       </label>
       <label>Fecha prevista <input type="date" name="dueAt" value="${attr(t.dueAt)}" /></label>
       <label>Fecha realizada <input type="date" name="doneAt" value="${attr(t.doneAt)}" /></label>
-      <div class="two">
+      <div class="field-grid-2">
         <label>Cantidad <input type="number" step="0.01" name="quantity" value="${attr(t.quantity)}" /></label>
         <label>Unidad <input name="unit" value="${attr(t.unit)}" placeholder="kg, L, sacos" /></label>
       </div>
       <label>Notas <textarea name="notes" rows="3">${escapeHtml(t.notes || '')}</textarea></label>
-      <button class="btn-primary" type="submit">Guardar</button>
-      ${t.id ? '<button class="btn-danger" type="button" data-act="del">Eliminar</button>' : ''}
+      <button class="btn btn--rojo btn-block" type="submit">Guardar</button>
+      ${t.id ? '<button class="btn btn-danger" type="button" data-act="del">Eliminar</button>' : ''}
     </form>
   `, body => {
     body.querySelector('#f').onsubmit = async ev => {
@@ -1176,7 +1212,7 @@ function targetName(t) {
 }
 
 function taskLine(t) {
-  return `<li><span class="dot" style="background:${t.doneAt ? '#2f9e44' : '#f59f00'}"></span>
+  return `<li><span class="punto" style="background:${t.doneAt ? '#2f9e44' : '#f59f00'}"></span>
     ${cap(t.type)} — ${t.doneAt ? fmtDate(t.doneAt) : t.dueAt ? 'para ' + fmtDate(t.dueAt) : 'sin fecha'}
     ${t.notes ? `<em>${escapeHtml(t.notes)}</em>` : ''}</li>`;
 }
@@ -1194,17 +1230,17 @@ function renderWater() {
   const high = Math.max(...measuredPoints().map(p => p.elevationM));
 
   $('#water-body').innerHTML = `
-    ${s.alert ? `<p class="alarm">⚠︎ Autonomía por debajo de ${s.alertDays} días. El próximo turno es en ${s.turns[0]?.inDays ?? '—'} días: faltarían ${nf(s.deficitM3)} m³.</p>` : ''}
+    ${s.alert ? `<p class="aviso aviso--atencion">⚠︎ Autonomía por debajo de ${s.alertDays} días. El próximo turno es en ${s.turns[0]?.inDays ?? '—'} días: faltarían ${nf(s.deficitM3)} m³.</p>` : ''}
 
-    <div class="gauge">
-      <div class="gauge-bar"><span style="width:${pct.toFixed(1)}%"></span></div>
+    <div class="card">
+      <div class="result-bar agua"><span style="width:${pct.toFixed(1)}%"></span></div>
       <div class="gauge-legend">
         <strong>${nf(s.volume.volumeM3)} m³</strong> de ${nf(capacityM3, 0)} m³
         <small>estimado desde ${s.volume.source}${s.volume.anchorDate ? ' del ' + fmtDate(s.volume.anchorDate) : ''}${s.volume.sinceDays ? ` (hace ${s.volume.sinceDays} d)` : ''}</small>
       </div>
     </div>
 
-    <div class="summary-card">
+    <div class="card datos">
       <div><span>Demanda diaria</span><strong>${nf(s.dailyM3, 2)} m³/día</strong></div>
       <div><span>Autonomía</span><strong class="${s.alert ? 'bad' : 'good'}">${days == null ? '∞' : nf(days) + ' días'}</strong></div>
       <div><span>Desnivel</span><strong>${nf(high - low)} m · ${nf(staticPressureBar(high - low), 2)} bar</strong></div>
@@ -1213,7 +1249,7 @@ function renderWater() {
     <h4>Turno de la junta de agua</h4>
     <p class="hint">5 horas cada ${state.config.cicloTurnoDias || 15} días.</p>
     <ul class="mini-list">
-      ${s.turns.map(t => `<li><span class="dot" style="background:#1c7ed6"></span>${fmtDate(t.date)}<b>${t.inDays === 0 ? 'hoy' : 'en ' + t.inDays + ' d'}</b></li>`).join('')}
+      ${s.turns.map(t => `<li><span class="punto" style="background:#1c7ed6"></span>${fmtDate(t.date)}<b>${t.inDays === 0 ? 'hoy' : 'en ' + t.inDays + ' d'}</b></li>`).join('')}
     </ul>
 
     <h4>Demanda por sector</h4>
@@ -1224,20 +1260,21 @@ function renderWater() {
 
     <h4>Demanda por especie</h4>
     <ul class="mini-list">
-      ${s.demand.bySpecies.map(x => `<li><span class="dot" style="background:${SPECIES[x.species]?.color}"></span>${escapeHtml(x.label)}<b>${Math.round(x.litres)} L/día</b></li>`).join('') || '<li>—</li>'}
+      ${s.demand.bySpecies.map(x => `<li><span class="punto" style="background:${SPECIES[x.species]?.color}"></span>${escapeHtml(x.label)}<b>${Math.round(x.litres)} L/día</b></li>`).join('') || '<li>—</li>'}
     </ul>
 
     <h4>Eventos registrados</h4>
-    ${[...state.water].sort(byDateDesc).map(e => `
-      <button class="card" data-water="${e.id}">
-        <span class="swatch" style="background:${e.type === 'tanquero' ? '#e8590c' : '#1c7ed6'}"></span>
-        <span class="card-main">
+    <div class="card card--filas">${[...state.water].sort(byDateDesc).map(e => `
+      <button class="list-row" data-water="${e.id}">
+        <span class="franja" style="background:${e.type === 'tanquero' ? '#e8590c' : '#1c7ed6'}"></span>
+        <span class="fila-main">
           <strong>${cap2(e.type)}</strong>
           <small>${fmtDate(e.date)}${e.volumeM3 != null ? ` · ${e.volumeM3} m³` : ''}${e.levelM != null ? ` · nivel ${e.levelM} m` : ''}</small>
           ${e.notes ? `<small class="muted">${escapeHtml(e.notes)}</small>` : ''}
         </span>
-        <span class="card-go">›</span>
-      </button>`).join('') || '<p class="hint">Sin eventos.</p>'}
+        <span class="fila-go"><svg class="icono icono--s" aria-hidden="true"><use href="#i-chevron-der"/></svg></span>
+      </button>`).join('')}</div>
+    ${state.water.length ? '' : '<p class="hint">Sin eventos.</p>'}
   `;
   $('#water-body').querySelectorAll('[data-water]').forEach(el =>
     el.addEventListener('click', () => openWaterForm(state.water.find(w => w.id === el.dataset.water))));
@@ -1254,8 +1291,8 @@ function openWaterForm(e = {}) {
       <label>Volumen (m³) <input type="number" step="0.1" name="volumeM3" value="${attr(e.volumeM3)}" /></label>
       <label>Nivel medido en el reservorio (m) <input type="number" step="0.01" name="levelM" value="${attr(e.levelM)}" /></label>
       <label>Notas <textarea name="notes" rows="2">${escapeHtml(e.notes || '')}</textarea></label>
-      <button class="btn-primary" type="submit">Guardar</button>
-      ${e.id ? '<button class="btn-danger" type="button" data-act="del">Eliminar</button>' : ''}
+      <button class="btn btn--rojo btn-block" type="submit">Guardar</button>
+      ${e.id ? '<button class="btn btn-danger" type="button" data-act="del">Eliminar</button>' : ''}
     </form>
   `, body => {
     body.querySelector('#f').onsubmit = async ev => {
@@ -1299,20 +1336,31 @@ async function init3D() {
     terrain.setColorBy($('#sel-colorby').value);
     terrain.render(state);
     terrain.resize();
+    medirOclusion3D();
     renderThreeHint();
   } catch (err) {
     container.innerHTML = `
-      <div class="warn pad">
+      <div class="aviso aviso--atencion pad">
         <p><strong>No se pudo cargar la vista 3D.</strong></p>
         <p>Si ya la abriste antes, casi siempre es un archivo viejo guardado en el
         teléfono. Entra en Ajustes ⚙︎ → <strong>«Reinstalar la app»</strong>: borra lo
         guardado y vuelve a bajar todo limpio. Tus datos no se tocan.</p>
         <p><small>Detalle técnico: ${escapeHtml(String(err.message || err))}</small></p>
-        <button class="btn-primary" id="btn-retry-3d">Reintentar</button>
+        <button class="btn btn--rojo btn-block" id="btn-retry-3d">Reintentar</button>
         <p class="hint">¿Sigue fallando? Abre el <a href="./diagnostico.html">diagnóstico</a>.</p>
       </div>`;
     container.querySelector('#btn-retry-3d').onclick = () => { terrain = null; init3D(); };
   }
+}
+
+/** Le dice al relieve cuánto lienzo le tapa el panel de controles. */
+function medirOclusion3D() {
+  if (!terrain) return;
+  const panel = $('#three-controls');
+  const lienzo = $('#three');
+  if (!panel || !lienzo || !lienzo.clientHeight) return;
+  const tapado = panel.getBoundingClientRect().height + 28;
+  terrain.setOclusion(tapado / lienzo.clientHeight);
 }
 
 function renderThreeHint() {
@@ -1337,30 +1385,30 @@ function openSettings() {
   openSheet('Ajustes', `
     <form id="f">
       <h4>Reservorio</h4>
-      <div class="two">
+      <div class="field-grid-2">
         <label>Capacidad (m³) <input type="number" step="0.1" name="reservorioVolumenM3" value="${attr(c.reservorioVolumenM3)}" /></label>
         <label>Altura útil (m) <input type="number" step="0.01" name="reservorioAlturaUtilM" value="${attr(c.reservorioAlturaUtilM)}" /></label>
       </div>
       <h4>Agua</h4>
       <label>Demanda diaria manual (m³/día) <input type="number" step="0.01" name="demandaDiariaM3" value="${attr(c.demandaDiariaM3)}" placeholder="vacío = calculada desde las plantas" /></label>
       <label>Alertar bajo (días de autonomía) <input type="number" name="alertaAutonomiaDias" value="${attr(c.alertaAutonomiaDias)}" /></label>
-      <div class="two">
+      <div class="field-grid-2">
         <label>Próximo turno <input type="date" name="proximoTurno" value="${attr(c.proximoTurno)}" /></label>
         <label>Ciclo (días) <input type="number" name="cicloTurnoDias" value="${attr(c.cicloTurnoDias)}" /></label>
       </div>
       <h4>Sincronización</h4>
       <label>Endpoint de sincronización <input name="syncEndpoint" value="${attr(c.syncEndpoint)}" placeholder="https://…/sync" /></label>
       <p class="hint">Sin endpoint, los cambios quedan en la cola local y se pueden trasladar con el respaldo JSON.</p>
-      <button class="btn-primary" type="submit">Guardar ajustes</button>
+      <button class="btn btn--rojo btn-block" type="submit">Guardar ajustes</button>
     </form>
     <div class="sheet-actions">
-      <button class="btn-ghost" data-act="export">Exportar respaldo</button>
-      <button class="btn-ghost" data-act="import">Importar respaldo</button>
-      <button class="btn-ghost" data-act="sync">Sincronizar ahora</button>
-      <button class="btn-ghost" data-act="tiles">Descargar mapa del terreno</button>
-      <button class="btn-ghost" data-act="reinstall">Reinstalar la app</button>
-      <button class="btn-ghost" data-act="diag">Diagnóstico</button>
-      <button class="btn-danger" data-act="reset">Restaurar datos medidos</button>
+      <button class="btn" data-act="export">Exportar respaldo</button>
+      <button class="btn" data-act="import">Importar respaldo</button>
+      <button class="btn" data-act="sync">Sincronizar ahora</button>
+      <button class="btn" data-act="tiles">Descargar mapa del terreno</button>
+      <button class="btn" data-act="reinstall">Reinstalar la app</button>
+      <button class="btn" data-act="diag">Diagnóstico</button>
+      <button class="btn btn-danger" data-act="reset">Restaurar datos medidos</button>
     </div>
     <p class="hint">Versión instalada: <strong>${BUILD}</strong>. «Reinstalar la app» borra
     el código y los mapas guardados y los vuelve a bajar; tus sectores, plantas, tareas y
@@ -1602,6 +1650,6 @@ function randomColor() {
 
 boot().catch(err => {
   document.body.insertAdjacentHTML('afterbegin',
-    `<p class="warn pad">No se pudo iniciar la aplicación: ${escapeHtml(String(err.message || err))}</p>`);
+    `<p class="aviso aviso--atencion pad">No se pudo iniciar la aplicación: ${escapeHtml(String(err.message || err))}</p>`);
   console.error(err);
 });

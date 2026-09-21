@@ -93,21 +93,48 @@ satelitales en caché con tope de 1.200 entradas y precarga del área de la finc
 (Ajustes → «Descargar mapa del terreno», zoom 15–19). Toda escritura entra además en una
 cola local (`outbox`) para sincronizar después.
 
-## Interfaz
+## Interfaz: consume mal-ds
 
-Comparte el sistema de diseño del proyecto: **`/styles/design-system.css`**, una sola
-fuente para los tokens de color, las sombras, los radios, la curva de animación, la
-tipografía base, el foco visible, los fotogramas clave y los botones. Lo cargan tanto esta
-app como *Mi Huerto*, antes de su propia hoja:
+Esta app **no tiene sistema de diseño propio**. Usa
+[mal-ds](https://github.com/franciscombp/mal/tree/main/ds), el sistema del proyecto, con
+el tema de producto y el tinte de agro declarados en la raíz:
 
 ```html
-<link rel="stylesheet" href="../styles/design-system.css" />
-<link rel="stylesheet" href="./styles.css" />
+<html lang="es" data-marca="apps" data-app="agro">
+<link rel="stylesheet" href="../ds/mal/mal.css">
+<link rel="stylesheet" href="./styles.css">
 ```
 
-`mulalillo/styles.css` sólo contiene lo propio de esta app: barra superior, pestañas,
-mapa, tarjetas, agua y relieve 3D. Un cambio de marca o de paleta se hace una vez, en el
-sistema, y llega a todas las aplicaciones del repositorio.
+Del sistema salen los tokens, los botones, los campos, las tarjetas, las insignias, el
+segmentado, la navegación inferior, la hoja modal, el toast y los 81 iconos del sprite.
+`mulalillo/styles.css` sólo añade lo que el sistema no cubre —el cromo de pantalla
+completa, el mapa, el medidor del reservorio y el relieve— y habla siempre sus roles
+(`--app-*`, `--mal-*`), nunca colores sueltos.
+
+### La copia vendorizada
+
+`ds/` es una copia de mal-ds **fijada a una versión**, no un enlace al CDN. La razón es el
+campo: la app tiene que abrir sin señal desde la primera visita, y GitHub Pages sirve la
+rama `main` tal cual, así que lo que no esté commiteado devuelve 404. Es el tercer camino
+que ofrece el propio README del sistema.
+
+```bash
+npm run vendor:ds    # actualiza ds/ desde un clon de franciscombp/mal
+npm run verifica:ds  # falla si ds/ se desvió del clon — para CI
+```
+
+De `fonts/` se copian sólo las tres del tema `apps` (Inter, Inter cursiva y JetBrains
+Mono): las otras ocho son de los temas del periódico y la marca, y meterían 180 kB sin uso.
+`ds/PROCEDENCIA.json` deja anotada la versión y la fecha de la copia.
+
+Dos detalles que resolvió la migración y conviene conocer:
+
+- **No se carga `mal.js`.** Esta app ya trae su propia mecánica de pestañas, hoja y toast;
+  cargarlo duplicaría los manejadores. Lo único que hacía falta de él era inyectar el
+  sprite de iconos —`<use href>` a un archivo externo no lo resuelve ningún navegador— y
+  eso son seis líneas en `app.js`.
+- **La hoja modal pasó a `<dialog>`** (`.modal--hoja` del sistema): el navegador se encarga
+  del foco y de cerrar con Escape, que a mano estaba sin resolver.
 
 ## Diagnóstico
 
