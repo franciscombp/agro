@@ -1,0 +1,52 @@
+/* ============================================================
+   Tipografía del proyecto para Mi Huerto
+   Las fuentes son las del sistema de diseño y los archivos son los suyos
+   (../ds/fonts/), no una segunda copia. Esta hoja existe porque Mi Huerto
+   todavía no carga mal-ds completo —eso le cambiaría la paleta y el ritmo—
+   pero sí puede usar su tipografía desde ya.
+
+   Cuando Mi Huerto migre a mal-ds, esta hoja se borra: mal.css ya declara
+   estas mismas @font-face. Lo ideal sería que el sistema publicara su
+   bloque de fuentes aparte (un `ds/mal/fonts.css`) para no reescribirlo
+   aquí; mientras no exista, vive este archivo.
+
+   Las tres son las del tema `apps`: Inter para todo lo que se lee y
+   JetBrains Mono para cifras y rótulos de dato.
+   ============================================================ */
+
+@font-face {
+  font-family: "Inter";
+  src: url("../ds/fonts/inter.woff2") format("woff2");
+  font-weight: 300 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("../ds/fonts/inter-italic.woff2") format("woff2");
+  font-weight: 300 800;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("../ds/fonts/jetbrains-mono.woff2") format("woff2");
+  font-weight: 100 800;
+  font-display: swap;
+}
+
+:root {
+  --fuente: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --fuente-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+body { font-family: var(--fuente); }
+
+/* Cifras: ancho fijo para que una columna de números no baile, y la mono
+   del sistema donde el dato manda sobre la prosa. */
+.tabular, .price-val, .money, .num,
+.day-date strong, .stat-val, .calc-val {
+  font-family: var(--fuente-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.01em;
+}

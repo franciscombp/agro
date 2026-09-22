@@ -13,6 +13,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="Mi Huerto" />
+  <link rel="stylesheet" href="/agro/styles/fonts.css" />
   <link rel="stylesheet" href="/agro/styles/design-system.css" />
   <link rel="stylesheet" href="/agro/styles.css" />
 </head>
@@ -94,6 +95,8 @@
     <div class="content">
       <h2 class="page-title">Almanaque</h2>
       <p class="sub">Pronóstico y mejores fechas para sembrar en tu zona.</p>
+      <h3 class="list-title">Cómo viene el agua</h3>
+      <div id="clima-card"></div>
       <h3 class="list-title">Próximos días</h3>
       <div id="best-days"></div>
       <h3 class="list-title">Calendario de siembra</h3>
@@ -245,6 +248,7 @@
   </nav>
 
   <script src="/agro/data.js"></script>
+  <script src="/agro/clima.js"></script>
   <script src="/agro/notify.js"></script>
   <script src="/agro/app.js"></script>
 </body>

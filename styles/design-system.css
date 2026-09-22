@@ -48,7 +48,7 @@
 html, body { height: 100%; }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* La familia la pone styles/fonts.css, que carga antes; aquí sólo el resto. */
   color: var(--ink);
   background: linear-gradient(180deg, var(--bg), #f3f4ef 60%);
   background-attachment: fixed;

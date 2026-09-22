@@ -617,3 +617,73 @@ select.field-input { appearance: auto; cursor: pointer; }
 @media (min-width: 1240px) {
   .screen.with-tabs .content { max-width: 840px; }
 }
+
+/* ---------- Estado del agua (almanaque) ----------
+   La lectura del año seco tiene que verse antes que la lista de siembras:
+   recomendar por fecha sin mirar el agua era el error que esto corrige. */
+.clima-box {
+  background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--gray-2);
+  border-radius: var(--radius); padding: 16px; margin-bottom: 16px; box-shadow: var(--shadow);
+}
+.clima-box.cargando { border-left-color: var(--line); }
+.clima-verde { border-left-color: var(--green); }
+.clima-ambar { border-left-color: var(--amber); }
+.clima-rojo  { border-left-color: var(--red); }
+.clima-azul  { border-left-color: var(--blue); }
+.clima-neutro { border-left-color: var(--gray-2); }
+
+.clima-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.clima-head strong { font-size: 1.05rem; font-weight: 800; letter-spacing: -.01em; }
+.clima-fase {
+  border: 1px solid var(--line); background: var(--bg-2); color: var(--ink);
+  border-radius: 999px; padding: 6px 12px; font-size: .78rem; font-weight: 700; cursor: pointer;
+}
+
+.clima-cifras { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.clima-cifras > div { display: flex; flex-direction: column; gap: 2px; justify-content: space-between; }
+.clima-cifras small { font-size: .72rem; color: var(--gray); font-weight: 600; }
+.clima-cifras strong { font-size: 1.15rem; font-weight: 800; }
+/* La unidad no es el dato: en mono ocupaba tanto como la cifra. */
+.clima-cifras strong i { font-style: normal; font-family: var(--fuente); font-size: .82rem; font-weight: 700; color: var(--gray); margin-left: 3px; }
+
+.clima-lectura { font-size: .88rem; margin-bottom: 10px; }
+.clima-patron { font-size: .85rem; color: var(--gray); margin-bottom: 10px; }
+.clima-patron em { display: block; margin-top: 4px; color: var(--amber); font-style: normal; }
+
+.clima-pregunta { border-top: 1px solid var(--line); padding-top: 12px; }
+.clima-pregunta p { font-size: .85rem; font-weight: 600; margin-bottom: 8px; }
+.clima-botones { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn-chip {
+  border: 1px solid var(--line); background: var(--card); color: var(--ink);
+  border-radius: 999px; padding: 10px 16px; font-size: .85rem; font-weight: 700; cursor: pointer;
+}
+.btn-chip:hover { background: var(--green-light); border-color: var(--green); }
+.clima-riego { font-size: .8rem; color: var(--gray); border-top: 1px solid var(--line); padding-top: 10px; }
+.link-sm { background: none; border: 0; color: var(--green); text-decoration: underline; font: inherit; font-size: .8rem; cursor: pointer; }
+
+.clima-opciones { display: flex; flex-direction: column; gap: 8px; }
+.clima-opcion {
+  text-align: left; border: 1px solid var(--line); background: var(--card);
+  border-radius: var(--radius-s); padding: 12px 14px; cursor: pointer;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.clima-opcion.on { border-color: var(--green); background: var(--green-light); }
+.clima-opcion strong { font-size: .95rem; font-weight: 700; }
+.clima-opcion small { font-size: .8rem; color: var(--gray); }
+
+/* El consejo va pegado a su tarjeta, no en una lista aparte. */
+.consejo-agua {
+  margin: -6px 0 14px; padding: 10px 14px;
+  border-radius: 0 0 var(--radius) var(--radius);
+  font-size: .84rem; line-height: 1.4;
+}
+.consejo-agua.t-bueno { background: var(--green-light); color: var(--green-dark); }
+.consejo-agua.t-atencion { background: var(--amber-light); color: var(--amber); }
+.consejo-agua.t-malo { background: var(--red-light); color: var(--red); }
+
+/* Aviso de que la lista viene reordenada por el estado del agua. */
+.orden-nota {
+  font-size: .85rem; color: var(--gray); margin: -4px 0 12px;
+  display: flex; gap: 6px; align-items: baseline;
+}
+.orden-nota::before { content: "↓"; color: var(--green); font-weight: 700; }
