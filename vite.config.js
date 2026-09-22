@@ -22,7 +22,7 @@ export default defineConfig({
       name: 'copy-assets',
       apply: 'build',
       generateBundle() {
-        const filesToCopy = ['index.html', 'styles.css', 'app.js', 'data.js', 'notify.js', 'sw.js', 'manifest.webmanifest'];
+        const filesToCopy = ['index.html', 'styles.css', 'app.js', 'data.js', 'clima.js', 'notify.js', 'sw.js', 'manifest.webmanifest'];
         filesToCopy.forEach(file => {
           const src = path.join(process.cwd(), file);
           if (fs.existsSync(src)) {

@@ -19,6 +19,7 @@ App web para **agricultura de subsistencia rural y huertos urbanos** (escala má
 - 🌾 **Catálogo de ~45 cultivos y animales** (hortalizas, granos, frutales, hierbas y crianza: cuyes, gallinas, cerdos, abejas…) filtrado por **altitud**, espacio y mes
 - 📍 Detección del **poblado/ciudad** por geolocalización (BigDataCloud, sin key)
 - 📅 **Almanaque**: pronóstico de 10 días con luna + lluvia + alerta de heladas, y calendario de siembra mes a mes
+- 🌡️ **Estado del agua y El Niño**: mide cuánto llovió de verdad en los últimos 90 días en ese punto, lo compara con la mediana de 10 años de las mismas fechas y resta lo que evapora el sol. Con eso reordena el calendario de siembra (en año seco, arriba lo que aguanta con menos) y anota cultivo por cultivo si conviene sembrarlo ahora. La fase de El Niño / La Niña se declara a mano y se interpreta por región: en la sierra El Niño trae sequía y en la costa lo contrario, así que el mismo año no aconseja igual en Salcedo que en Guayaquil
 - 🌱 **Mi huerto**: agrega lo que ya tienes sembrado o tus animales y sigue su progreso hasta la cosecha
 - 💰 **Mercado**: libreta de precios de feria con tendencias y mini-gráficas, meses de mejor precio por producto ("¿cuándo vender mejor?"), precios internacionales de referencia (maíz, arroz, café, cacao, banano, azúcar y urea, traducidos a quintal/saco) y consejos de venta que rotan a diario
 - 🌦️ Clima actual con **balance de agua semanal** (lluvia vs. lo que evapora el sol) y alertas de helada / lluvia fuerte
@@ -35,10 +36,12 @@ Todos los archivos de la app viven en la raíz del proyecto:
 
 - `index.html` — pantallas y barra de pestañas (Hoy · Almanaque · Mercado · Mi huerto · Explorar)
 - `ds/` — [mal-ds](https://github.com/franciscombp/mal/tree/main/ds) vendorizado y fijado a una versión: el sistema de diseño del proyecto. Lo consume la app de la finca (`mulalillo/`). Se actualiza con `npm run vendor:ds`
+- `styles/fonts.css` — tipografía del proyecto (Inter y JetBrains Mono) apuntando a los archivos de `ds/fonts/`, no a una segunda copia. Desaparece cuando esta app migre a `ds/`
 - `styles/design-system.css` — tokens heredados que todavía usa esta app; pendiente de migrar a `ds/`
 - `styles.css` — componentes de esta app, mobile-first con rail lateral en desktop
 - `app.js` — navegación, geolocalización, clima, almanaque, mercado, seguimiento, calculadora
 - `data.js` — catálogo con rangos de altitud, meses de siembra y de mejor precio, costos y precios locales (Ecuador)
+- `clima.js` — estado hídrico medido, fases de El Niño / La Niña por región y el consejo por cultivo. Clasifica la demanda de agua leyendo el campo `riego` que ya trae el catálogo, para no mantener el mismo dato en dos sitios
 - `notify.js` — lógica de luna y notificaciones
 - `sw.js` — service worker: shell precacheado, APIs con respaldo offline
 - `manifest.webmanifest` + `icons/` — instalación como app
@@ -53,7 +56,10 @@ npm run build    # genera dist/ listo para GitHub Pages
 
 ## Deploy
 
-Cada push a `main` compila con Vite y publica `dist/` en GitHub Pages (rama `gh-pages`) vía GitHub Actions.
+GitHub Pages sirve la rama `main` directamente desde la raíz, así que lo publicado es lo
+que está commiteado (incluidas `ds/` y `mulalillo/lib/`), no el resultado de `npm run build`.
+`npm run build` sigue existiendo para comprobar que todo se copia bien y para un despliegue
+que sí use `dist/`.
 
 ## PoC aparte: Finca Mulalillo
 

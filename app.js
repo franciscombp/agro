@@ -13,14 +13,17 @@ const state = {
   precios: [],          // [{id, prod, precio, lugar, fecha}] — libreta de precios de feria
   plantaActual: null,
   backTo: "screen-home",
-  forecast: null        // cache del pronóstico diario
+  forecast: null,       // cache del pronóstico diario
+  fase: "neutral",      // fase declarada de El Niño / La Niña
+  riegoPropio: null,    // true si tiene riego; null = no ha contestado
+  hidrico: null         // cache del estado hídrico medido
 };
 
 function saveState() {
   localStorage.setItem(STORE_KEY, JSON.stringify({
     lat: state.lat, lon: state.lon, altitud: state.altitud,
     lugar: state.lugar, espacio: state.espacio, siembras: state.siembras,
-    precios: state.precios
+    precios: state.precios, fase: state.fase, riegoPropio: state.riegoPropio
   }));
 }
 
@@ -33,6 +36,7 @@ function loadState() {
     Object.assign(state, s);
     state.siembras = state.siembras || [];
     state.precios = state.precios || [];
+    state.fase = state.fase || "neutral";
     return true;
   } catch { return false; }
 }
@@ -245,6 +249,81 @@ async function getForecast() {
   return state.forecast;
 }
 
+/**
+ * Lo llovido en los últimos 90 días y lo que evaporó la atmósfera (ET0), más
+ * la MEDIANA de esas mismas fechas en los 10 años anteriores.
+ *
+ * Sin la mediana el dato no dice nada: 40 mm en tres meses es normal en un
+ * páramo y una sequía severa en el subtrópico. La referencia la da el propio
+ * sitio, no una tabla nacional.
+ *
+ * Dos fuentes a propósito, y no es un capricho:
+ *   · Lo reciente sale del endpoint de pronóstico con `past_days`, el mismo
+ *     host que ya usa la app. El archivo histórico va varios días retrasado,
+ *     así que pedirle "hasta ayer" devolvería huecos justo en los días que más
+ *     pesan y subestimaría la lluvia.
+ *   · La normal sale del archivo, donde el retraso es irrelevante porque se
+ *     pregunta por años anteriores.
+ *
+ * Si algo falla, el almanaque sigue funcionando como antes; sólo pierde el
+ * análisis. Nunca deja la pantalla a medias.
+ */
+async function getHidrico() {
+  if (state.hidrico) return state.hidrico;
+  if (state.lat == null) return { conocido: false };
+
+  const iso = d => d.toISOString().slice(0, 10);
+  const base = `latitude=${state.lat}&longitude=${state.lon}&timezone=auto`;
+  const VENTANA = 90;
+
+  let lluvia90 = null, et090 = null, normal90 = null, anios = 0;
+
+  try {
+    const reciente = await fetch('https://api.open-meteo.com/v1/forecast?' + base +
+      `&past_days=${VENTANA}&forecast_days=1` +
+      '&daily=precipitation_sum,et0_fao_evapotranspiration').then(r => r.json());
+
+    // El último día es el pronóstico de hoy: fuera, que aún no ha ocurrido.
+    const p = (reciente?.daily?.precipitation_sum || []).slice(0, VENTANA);
+    const e = (reciente?.daily?.et0_fao_evapotranspiration || []).slice(0, VENTANA);
+    if (p.length) { lluvia90 = CLIMA.suma(p); et090 = CLIMA.suma(e); }
+  } catch { /* sin conexión: se queda sin medición */ }
+
+  if (lluvia90 == null) return { conocido: false };
+
+  try {
+    const fin = new Date(Date.now() - 86400000);
+    const ini = new Date(fin.getTime() - (VENTANA - 1) * 86400000);
+    const rangos = [];
+    for (let k = 1; k <= 10; k++) {
+      const a = new Date(ini); a.setFullYear(a.getFullYear() - k);
+      const b = new Date(fin); b.setFullYear(b.getFullYear() - k);
+      rangos.push([iso(a), iso(b)]);
+    }
+    const hist = await fetch('https://archive-api.open-meteo.com/v1/archive?' + base +
+      `&start_date=${rangos[rangos.length - 1][0]}&end_date=${rangos[0][1]}` +
+      '&daily=precipitation_sum').then(r => r.json());
+
+    const t = hist?.daily?.time || [];
+    const pp = hist?.daily?.precipitation_sum || [];
+    const porAnio = rangos.map(([desde, hasta]) => {
+      let acc = 0, dias = 0;
+      for (let i = 0; i < t.length; i++) {
+        if (t[i] >= desde && t[i] <= hasta) { acc += pp[i] || 0; dias++; }
+      }
+      // Un año con la serie incompleta distorsiona la mediana: se descarta.
+      return dias >= VENTANA * 0.9 ? acc : null;
+    }).filter(v => v != null);
+
+    normal90 = CLIMA.mediana(porAnio);
+    anios = porAnio.length;
+  } catch { /* sin histórico: se informa la lluvia sin comparación */ }
+
+  state.hidrico = CLIMA.estadoHidrico({ lluvia90, et090, normal90 });
+  state.hidrico.anios = anios;
+  return state.hidrico;
+}
+
 const WMO = {
   0: ["☀️","Despejado"], 1: ["🌤️","Mayormente despejado"], 2: ["⛅","Parcialmente nublado"],
   3: ["☁️","Nublado"], 45: ["🌫️","Neblina"], 48: ["🌫️","Neblina"],
@@ -400,7 +479,100 @@ let almanacMes = new Date().getMonth() + 1;
 async function renderAlmanac() {
   renderBestDays();
   renderMonthChips();
-  renderAlmanacList();
+  renderAlmanacList();          // pinta ya, con lo que haya
+  renderClima();                // y se completa cuando llegan los datos
+}
+
+/**
+ * Tarjeta de estado del agua: lo medido primero, la fase declarada después.
+ * Es lo que faltaba para que el almanaque no recomiende igual un año seco que
+ * un año normal.
+ */
+async function renderClima() {
+  const cont = document.getElementById("clima-card");
+  if (!cont) return;
+
+  const reg = CLIMA.region(state.altitud);
+  const fase = CLIMA.FASES[state.fase] || CLIMA.FASES.neutral;
+  const patron = fase[reg];
+
+  cont.innerHTML = `<div class="clima-box cargando"><p class="sub">Midiendo la lluvia de los últimos 90 días…</p></div>`;
+  const e = await getHidrico();
+  state.hidrico = e;
+
+  const medido = e.conocido ? `
+    <div class="clima-cifras">
+      <div><small>Llovió (90 días)</small><strong class="tabular">${e.lluvia90}<i>mm</i></strong></div>
+      ${e.normal90 != null ? `<div><small>Normal de estas fechas</small><strong class="tabular">${e.normal90}<i>mm</i></strong></div>` : ""}
+      ${e.balance != null ? `<div><small>Lluvia menos evaporación</small><strong class="tabular">${e.balance > 0 ? "+" : ""}${e.balance}<i>mm</i></strong></div>` : ""}
+    </div>
+    ${e.desvio != null ? `<p class="clima-lectura">${
+      e.desvio < 0 ? `Llovió <b>${Math.abs(e.desvio)}% menos</b> que lo habitual`
+                   : `Llovió <b>${e.desvio}% más</b> que lo habitual`
+    } en estas fechas${e.anios ? `, comparado con la mediana de ${e.anios} años en este mismo punto` : ""}.${
+      // Sólo cuando la pérdida es material: a −18 mm en 90 días el suelo está
+      // en equilibrio, y decir "pierde agua" justo debajo de "exceso de
+      // lluvia" se contradice y no ayuda a decidir nada.
+      e.balance != null && e.balance < -50 && e.nivel !== "exceso"
+        ? " El balance es negativo: el suelo pierde más agua de la que recibe."
+        : ""}</p>` : ""}
+    ` : `<p class="sub">No se pudo medir la lluvia (sin conexión o sin ubicación). El almanaque sigue recomendando por fecha y altitud.</p>`;
+
+  cont.innerHTML = `
+    <div class="clima-box clima-${e.conocido ? e.color : "neutro"}">
+      <div class="clima-head">
+        <strong>${e.conocido ? e.etiqueta[0].toUpperCase() + e.etiqueta.slice(1) : "Estado del agua"}</strong>
+        <button class="clima-fase" id="btn-fase">${fase.nombre}${reg !== "desconocida" ? " · " + reg : ""}</button>
+      </div>
+      ${medido}
+      ${patron ? `<p class="clima-patron">${patron.dice} <em>${patron.ojo}</em></p>` : ""}
+      ${state.riegoPropio == null ? `
+        <div class="clima-pregunta">
+          <p>¿Tienes riego en tu terreno? Cambia por completo el consejo.</p>
+          <div class="clima-botones">
+            <button class="btn-chip" data-riego="si">Sí, tengo riego</button>
+            <button class="btn-chip" data-riego="no">No, sólo lluvia</button>
+          </div>
+        </div>` : `
+        <p class="clima-riego">${state.riegoPropio ? "Con riego" : "Sólo lluvia"} ·
+          <button class="link-sm" data-riego="cambiar">cambiar</button></p>`}
+    </div>`;
+
+  cont.querySelector("#btn-fase")?.addEventListener("click", abrirFase);
+  cont.querySelectorAll("[data-riego]").forEach(b => b.addEventListener("click", () => {
+    const v = b.dataset.riego;
+    state.riegoPropio = v === "cambiar" ? null : v === "si";
+    saveState();
+    renderClima();
+    renderAlmanacList();
+  }));
+
+  renderAlmanacList();   // los consejos dependen de lo que acaba de llegar
+}
+
+/** Selector de fase. Se declara a mano: no se inventa una fuente que no hay. */
+function abrirFase() {
+  const cont = document.getElementById("clima-card");
+  const reg = CLIMA.region(state.altitud);
+  cont.innerHTML = `
+    <div class="clima-box">
+      <div class="clima-head"><strong>¿Cómo viene el año?</strong></div>
+      <p class="sub">El Niño y La Niña cambian la temporada de lluvias, y no igual en todas partes:
+      en la costa El Niño trae agua de sobra y en la sierra tiende a lo contrario.
+      Esto lo anuncia el INAMHI; declararlo aquí ajusta los consejos de los próximos meses.</p>
+      <div class="clima-opciones">
+        ${Object.entries(CLIMA.FASES).map(([id, f]) => `
+          <button class="clima-opcion ${state.fase === id ? "on" : ""}" data-fase="${id}">
+            <strong>${f.nombre}</strong>
+            <small>${f[reg] ? f[reg].dice : "Año sin señal marcada: manda lo que midan tus últimos 90 días."}</small>
+          </button>`).join("")}
+      </div>
+    </div>`;
+  cont.querySelectorAll("[data-fase]").forEach(b => b.addEventListener("click", () => {
+    state.fase = b.dataset.fase;
+    saveState();
+    renderClima();
+  }));
 }
 
 async function renderBestDays() {
@@ -457,9 +629,34 @@ function renderMonthChips() {
 
 function renderAlmanacList() {
   const cont = document.getElementById("almanac-list");
-  const lista = catalogoZona().filter(c => c.cat !== "animal" && c.mesesSiembra.includes(almanacMes));
+  let lista = catalogoZona().filter(c => c.cat !== "animal" && c.mesesSiembra.includes(almanacMes));
+
+  const ctx = {
+    estado: state.hidrico || { conocido: false },
+    fase: state.fase,
+    altitud: state.altitud,
+    tieneRiego: state.riegoPropio === true
+  };
+  // Con el agua escasa, lo que aguanta seco va primero: el orden ES el consejo.
+  const orden = CLIMA.ordenaPorAgua(lista, ctx);
+  const reordenado = orden[0] !== lista[0];
+  lista = orden;
+
+  // Si se cambió el orden hay que decirlo: una lista que se reordena sola sin
+  // explicarse parece un error, no un consejo.
+  const nota = reordenado
+    ? `<p class="orden-nota">${ctx.estado.nivel === "exceso"
+        ? "Ordenado por el agua de estas fechas: arriba lo que aprovecha la lluvia de sobra."
+        : "Ordenado por el agua de estas fechas: arriba lo que aguanta con menos."}</p>`
+    : "";
+
   cont.innerHTML = lista.length
-    ? lista.map(c => plantCardHTML(c, catInfo(c.cat).nombre, true)).join("")
+    ? nota + lista.map(c => {
+        const consejo = CLIMA.consejoCultivo(c, ctx);
+        return plantCardHTML(c, catInfo(c.cat).nombre, true) +
+          (consejo ? `<p class="consejo-agua t-${consejo.tono}">
+            <b>${consejo.titulo}.</b> ${consejo.texto}</p>` : "");
+      }).join("")
     : `<p class="sub">No hay siembras recomendadas en ${MESES[almanacMes - 1].toLowerCase()} para tu zona.</p>`;
   bindPlantCards(cont, "screen-almanac");
 }
