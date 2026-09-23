@@ -68,9 +68,41 @@ mínimo. No incluye pérdidas en filtros, válvulas ni codos.
 
 **Agua.** Volumen estimado del reservorio simulando día por día desde el primer dato
 duro: las mediciones de nivel reinician el saldo, llenados y tanqueros suman, y cada día
-descuenta el riego registrado o, si no lo hay, la demanda estimada; calculadora de autonomía; alerta bajo X días
-con el déficit en m³ hasta el próximo turno; demanda por sector y por especie; calendario
-del ciclo de 15 días de la junta de agua.
+descuenta el riego registrado o, si no lo hay, la demanda estimada; demanda por sector y
+por especie; calendario del ciclo de 15 días de la junta de agua.
+
+**La demanda no es un número fijo.** Antes eran litros/planta/día por especie, iguales el
+día de aguacero y la semana de sol de páramo. En una finca que vive de 5 horas de agua
+cada 15 días, esa diferencia *es* la decisión. Ahora el cálculo es el de riego de toda la
+vida (FAO-56), en tres pasos:
+
+1. La atmósfera pide **ET0** milímetros al día, y ese dato se mide (Open-Meteo, sin clave).
+2. Cada planta pide `ET0 × Kc`, con el Kc de su especie y **corregido por edad**: un
+   arándano recién sembrado no bebe como uno de cuatro años.
+3. De ahí se descuenta la **lluvia aprovechable** —los primeros 2 mm se evaporan y del
+   resto entra el 75 %— y lo que el **suelo tiene guardado**, hasta 25 mm de reserva en
+   la zona de raíces. Sin esa reserva el modelo olvidaría la lluvia al día siguiente de
+   caer y pediría regar justo cuando no hace falta.
+
+Los milímetros se vuelven litros multiplicando por los m² que cubre la planta, y esa área
+se deduce del `lppd` que ya estaba en el catálogo (`área = lppd / (ET0_ref × Kc)`). Por
+eso **en clima de referencia y con plantas adultas el resultado es exactamente el de
+antes**: el modelo no reescribe la finca, le añade los días que se salen de lo normal.
+
+**La autonomía mira el pronóstico.** Dividir el volumen por una demanda plana se equivoca
+en los dos sentidos y siempre en el peor momento. La proyección va día por día con los 7
+días pronosticados (después, con su promedio) y responde la pregunta que de verdad se
+hace quien maneja la finca: **¿llega el agua al próximo turno?** El aviso y el déficit en
+m³ salen de ahí, y el plan compartible por WhatsApp lleva el motivo —cuánto evapora,
+cuánta lluvia viene— y no sólo el veredicto.
+
+Sin señal se calcula con lo último que bajó; sin nada bajado, con el clima de referencia
+de la zona, y la pantalla lo dice en vez de disfrazar un supuesto de medición.
+
+Tres sitios usan a propósito el **pico adulto** y no la demanda de hoy, porque
+dimensionan en vez de operar: el marco de siembra («riego que suma, adultas»), la
+calculadora de riego por gravedad («demanda a pico») y el techo que muestra la pantalla
+de agua cuando la finca todavía es joven.
 
 **3D.** Terreno interpolado por distancia inversa ponderada (IDW) desde los puntos de
 elevación medidos, con exageración vertical configurable (1×–12×). Sectores, plantas e
@@ -196,8 +228,14 @@ en el punto, «Fijar con mi GPS» las corrige y el modelo de terreno se recalcul
   autenticación y resolución de conflictos.
 - Las fotos se guardan como data URL dentro de IndexedDB. Sirve para decenas de fotos,
   no para cientos: con sincronización deberían ir a almacenamiento de objetos.
-- La demanda de agua usa litros/planta/día fijos por especie (`SPECIES` en `db.js`), sin
-  ajuste por clima, edad ni etapa fenológica.
+- La demanda de agua ya se ajusta por clima y por edad, pero **no por etapa fenológica**:
+  un arándano en llenado de fruta pide más que el mismo arándano en reposo, y eso el
+  modelo todavía no lo distingue. Haría falta registrar la etapa de cada bloque.
+- Los 25 mm de reserva del suelo son un valor razonable para el suelo volcánico de la
+  zona, no una medición. Un análisis de suelo o un tensiómetro lo afinarían.
+- El saldo histórico del reservorio se simula con la demanda de referencia, no con el
+  clima de cada día pasado: guardar la serie diaria permitiría afinarlo, y aplicar el
+  clima de esta semana a meses anteriores sería peor que no aplicarlo.
 - El modelo de terreno interpola desde 5 puntos, 4 con coordenada aproximada. Cada punto
   que se tome con GPS lo mejora.
 - La calculadora de riego por gravedad no incluye pérdidas en filtros, válvulas ni
@@ -216,7 +254,8 @@ en el punto, «Fijar con mi GPS» las corrige y el modelo de terreno se recalcul
 | `db.js` | IndexedDB, cola de sincronización, datos medidos, catálogo de especies |
 | `geo.js` | Área y perímetro geodésicos, IDW de elevación, presión estática |
 | `map2d.js` | MapLibre: capas, dibujo, arrastre de vértices y puntos |
-| `water.js` | Demanda, volumen estimado, autonomía, turnos |
+| `water.js` | Demanda por clima y edad, volumen estimado, proyección con pronóstico, turnos |
+| `clima.js` | ET0 y lluvia del punto de la finca, reserva del suelo, caché offline |
 | `planting.js` | Marco de siembra: rejilla girada, recorte al sector y margen |
 | `hydraulics.js` | Pérdidas por fricción, presión neta y diámetro sugerido |
 | `view3d.js` | Three.js: terreno, sectores, plantas, flechas de escurrimiento |

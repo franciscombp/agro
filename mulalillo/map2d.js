@@ -52,6 +52,8 @@ export class FarmMap {
     });
 
     this.map.on('click', e => this._onClick(e));
+    // Las etiquetas dependen del zoom, así que hay que recolocarlas al mover.
+    this.map.on('move', () => this._ajustarEtiquetas());
   }
 
   _emptyFC() { return { type: 'FeatureCollection', features: [] }; }
@@ -337,6 +339,40 @@ export class FarmMap {
 
     for (const [id, marker] of this._labels) {
       if (!seen.has(id)) { marker.remove(); this._labels.delete(id); }
+    }
+    this._ajustarEtiquetas();
+  }
+
+  /**
+   * Una etiqueta que no cabe dentro de su sector se sale y choca con la del
+   * vecino: alejado el mapa, «Bloque arándanos», «Aguacates nuevos» y
+   * «Perales» se pisaban hasta no leerse ninguna. En vez de apartarlas unas de
+   * otras —que las saca de su sector y miente sobre a quién señalan— cada una
+   * se mide contra el ancho real de SU polígono en pantalla y se encoge o
+   * desaparece. Un sector sin sitio no se rotula: su nombre está a un toque.
+   */
+  _ajustarEtiquetas() {
+    if (!this._labels) return;
+    for (const s of this.state.sectors) {
+      const marker = this._labels.get(s.id);
+      if (!marker) continue;
+      const el = marker.getElement();
+
+      // Ancho del sector en píxeles: el lado corto de su caja proyectada.
+      const pts = s.polygon.map(([lat, lng]) => this.map.project([lng, lat]));
+      const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+      const anchoPx = Math.max(...xs) - Math.min(...xs);
+      const altoPx = Math.max(...ys) - Math.min(...ys);
+
+      el.classList.remove('sector-label--compacta', 'sector-label--sm');
+      el.style.visibility = '';
+      if (anchoPx < 46 || altoPx < 20) { el.style.visibility = 'hidden'; continue; }
+
+      // Tres escalones antes de rendirse, porque perder el nombre de todos los
+      // sectores para evitar un choque es cambiar un defecto por otro peor.
+      const cabe = () => el.offsetWidth <= anchoPx * 0.98;
+      if (!cabe()) el.classList.add('sector-label--sm');
+      if (!cabe()) el.classList.add('sector-label--compacta');
     }
   }
 

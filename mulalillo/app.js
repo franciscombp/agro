@@ -8,6 +8,7 @@ import { FarmMap } from './map2d.js';
 import * as water from './water.js';
 import { preview as plantingPreview, LAYOUTS } from './planting.js';
 import * as hyd from './hydraulics.js';
+import * as clima from './clima.js';
 import {
   areaM2, perimeterM, fmtArea, fmtM, centroid, pointInRing,
   interpolateElevation, staticPressureBar, bbox
@@ -17,11 +18,12 @@ const INFRA_TYPES = ['reservorio', 'casa', 'establo', 'cuyera', 'bomba', 'filtro
 const TASK_TYPES = ['riego', 'poda', 'fertilización', 'fumigación', 'cosecha', 'siembra', 'otro'];
 const WATER_TYPES = ['llenado_acequia', 'tanquero', 'riego', 'medición_nivel'];
 const STATUSES = ['sano', 'atención', 'enfermo', 'muerto'];
-const BUILD = 'v11';
+const BUILD = 'v12';
 
 const state = {
   parcel: { id: 'parcel-mulalillo', name: 'Finca Mulalillo', boundary: BOUNDARY },
-  sectors: [], plants: [], infra: [], tasks: [], water: [], elevations: [], config: {}
+  sectors: [], plants: [], infra: [], tasks: [], water: [], elevations: [], config: {},
+  clima: null            // serie de ET0 y lluvia; null = todavía sin bajar
 };
 
 let farmMap = null;
@@ -45,6 +47,20 @@ async function boot() {
   renderAll();
   registerServiceWorker();
   watchConnectivity();
+  refrescarClima();     // en segundo plano: la app ya está usable sin esto
+}
+
+/**
+ * Baja ET0 y lluvia del punto de la finca. No bloquea el arranque y no avisa
+ * si falla: sin clima la app calcula con el de referencia, que es lo que hacía
+ * antes. Sólo repinta si llegó algo nuevo.
+ */
+async function refrescarClima({ forzar = false } = {}) {
+  const serie = await clima.refrescar(centroid(state.parcel.boundary), { forzar });
+  if (!serie) return null;
+  state.clima = serie;
+  renderWater();
+  return serie;
 }
 
 /**
@@ -160,6 +176,7 @@ async function reload() {
   state.elevations = elevations;
   state.config = config;
   if (parcels[0]) state.parcel = parcels[0];
+  state.clima = await clima.leerCache();
 }
 
 /** Recalcula todo lo derivado y repinta las vistas activas. */
@@ -465,7 +482,8 @@ function openPlant(id) {
       <dt>Sembrada</dt><dd>${p.plantedAt ? fmtDate(p.plantedAt) + ' · ' + ageLabel(p.plantedAt) : '—'}</dd>
       <dt>Elevación</dt><dd>${p.elevationM ? nf(p.elevationM, 2) + ' msnm' : '—'}</dd>
       <dt>Coordenadas</dt><dd>${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}</dd>
-      <dt>Riego estimado</dt><dd>${SPECIES[p.species]?.lppd ?? '—'} L/día</dd>
+      <dt>Riego hoy</dt><dd>${nf(water.litrosPlantaDia(p, diaDeHoy()), 1)} L${
+        SPECIES[p.species] ? ` <small class="muted">· adulta en día normal: ${SPECIES[p.species].lppd} L</small>` : ''}</dd>
     </dl>
     ${p.notes ? `<p class="aviso aviso--ok">${escapeHtml(p.notes)}</p>` : ''}
     ${p.photos?.length ? `<div class="photos">${p.photos.map(src => `<img src="${src}" alt="" />`).join('')}</div>` : ''}
@@ -731,7 +749,9 @@ function openSector(id) {
   const plants = state.plants.filter(p => p.sectorId === s.id);
   const bySpecies = new Map();
   for (const p of plants) bySpecies.set(p.species, (bySpecies.get(p.species) || 0) + 1);
-  const dailyL = plants.reduce((sum, p) => sum + (SPECIES[p.species]?.lppd ?? 0), 0);
+  const dia = diaDeHoy();
+  const dailyL = plants.reduce((sum, p) => sum + water.litrosPlantaDia(p, dia), 0);
+  const dailyAdultoL = plants.reduce((sum, p) => sum + (SPECIES[p.species]?.lppd ?? 0), 0);
   const tasks = state.tasks.filter(t => t.targetType === 'sector' && t.targetId === s.id).sort(byDateDesc);
   const elevs = s.polygon.map(p => interpolateElevation(p, measuredPoints()));
 
@@ -740,7 +760,8 @@ function openSector(id) {
       <dt>Área</dt><dd>${fmtArea(area)}</dd>
       <dt>Perímetro</dt><dd>${fmtM(perimeterM(s.polygon))}</dd>
       <dt>Plantas</dt><dd>${plants.length}</dd>
-      <dt>Riego estimado</dt><dd>${Math.round(dailyL).toLocaleString('es-EC')} L/día</dd>
+      <dt>Riego hoy</dt><dd>${Math.round(dailyL).toLocaleString('es-EC')} L/día${
+        dailyAdultoL > dailyL * 1.05 ? ` <small class="muted">· ${Math.round(dailyAdultoL).toLocaleString('es-EC')} adultas</small>` : ''}</dd>
       <dt>Elevación</dt><dd>${nf(Math.min(...elevs))}–${nf(Math.max(...elevs))} msnm</dd>
       ${s.irrigationZone ? `<dt>Zona de riego</dt><dd>${escapeHtml(s.irrigationZone)}</dd>` : ''}
     </dl>
@@ -863,7 +884,7 @@ function openPlantingForm(sector) {
       body.querySelector('#planting-summary').innerHTML = `
         <div><span>Caben</span><strong>${p.count.toLocaleString('es-EC')} plantas</strong></div>
         <div><span>Densidad</span><strong>${p.densityPerHa.toLocaleString('es-EC')}/ha · ${nf(p.m2PerPlant, 1)} m²/planta</strong></div>
-        <div><span>Riego que suma</span><strong>${nf((p.count * lppd) / 1000, 2)} m³/día</strong></div>
+        <div><span>Riego que suma (adultas)</span><strong>${nf((p.count * lppd) / 1000, 2)} m³/día</strong></div>
         ${existing ? `<div><span>Ya sembradas aquí</span><strong>${existing}</strong></div>` : ''}`;
       body.querySelector('#btn-sow').textContent = p.count ? `Sembrar ${p.count} plantas` : 'No cabe ninguna';
       body.querySelector('#btn-sow').disabled = p.count === 0;
@@ -938,7 +959,7 @@ function openHydraulics(sector) {
   openSheet(`Riego por gravedad · ${sector.name}`, `
     <form id="f">
       <div class="field-grid-2">
-        <label>Demanda del sector (L/día) <input name="demandLitresPerDay" type="number" step="1" value="${Math.round(demandL)}" /></label>
+        <label>Demanda del sector (L/día, a pico) <input name="demandLitresPerDay" type="number" step="1" value="${Math.round(demandL)}" /></label>
         <label>Horas de riego <input name="irrigationHours" type="number" step="0.5" min="0.5" value="2" /></label>
       </div>
       <div class="field-grid-2">
@@ -1162,15 +1183,25 @@ function buildPlan() {
     escribir(`PRÓXIMAS (${resto.length})`, resto);
   }
 
-  const w = water.summary(state);
+  const w = water.summary({ ...state, clima: state.clima });
   lineas.push('AGUA');
   lineas.push(`• Reservorio estimado: ${nf(w.volume.volumeM3)} m³ de ${nf(state.config.reservorioVolumenM3 || 0, 0)} m³`);
-  lineas.push(`• Autonomía: ${Number.isFinite(w.autonomyDays) ? nf(w.autonomyDays) + ' días' : 'sin consumo registrado'}`);
+  lineas.push(`• Alcanza para: ${w.proyeccion.diasHastaVacio != null
+    ? nf(w.proyeccion.diasHastaVacio, 0) + ' días'
+    : 'más de ' + w.proyeccion.alMenosDias + ' días'}`);
+  // Quien está en la finca riega o no riega según esto, así que va el motivo,
+  // no sólo el veredicto: "no riegues el lunes" sin decir que llueve no se
+  // obedece igual.
+  if (w.clima.conocido) {
+    lineas.push(`• Clima: hoy evapora ${nf(w.clima.et0Hoy, 1)} mm` +
+      (w.clima.lluviaHoy > 0.5 ? ` y llueve ${nf(w.clima.lluviaHoy, 1)} mm` : ', sin lluvia') +
+      `. Pronóstico de 7 días: ${nf(w.clima.lluviaFutura, 0)} mm de lluvia.`);
+  }
   if (w.turns[0]) {
     lineas.push(`• Próximo turno de la junta: ${fmtDate(w.turns[0].date)} (en ${w.turns[0].inDays} días)`);
   }
-  if (w.alert) {
-    lineas.push(`• ATENCIÓN: faltarían ${nf(w.deficitM3)} m³ para llegar al próximo turno.`);
+  if (!w.llegaAlTurno && w.turns[0]) {
+    lineas.push(`• ATENCIÓN: con el pronóstico de esta semana el agua NO llega al turno. Faltarían ${nf(w.deficitM3)} m³.`);
   }
 
   const atencion = state.plants.filter(p => p.status === 'atención' || p.status === 'enfermo');
@@ -1221,8 +1252,70 @@ function taskLine(t) {
 // Agua
 // ---------------------------------------------------------------------------
 
+/**
+ * De dónde sale la demanda de hoy. Sin esto el número de arriba cambia solo de
+ * un día para otro y parece un error de la app; con esto se lee la causa.
+ *
+ * Cuando no hay clima bajado lo dice con todas las letras en vez de callarse:
+ * un cálculo con supuestos disfrazado de medición es peor que ningún cálculo.
+ */
+/** El día de hoy según el clima bajado. Sin clima, el de referencia. */
+function diaDeHoy() {
+  const c = clima.contexto(state.clima);
+  return { et0: c.et0Hoy, lluvia: c.lluviaHoy, reservaMm: c.reservaMm };
+}
+
+function renderClimaAgua(s) {
+  const c = s.clima;
+  const d = s.demand;
+
+  if (!c.conocido) {
+    return `<div class="card">
+      <p class="hint">Demanda calculada con el clima de referencia de la zona
+      (ET0 ${clima.ET0_REF} mm/día, sin lluvia): todavía no se ha podido bajar el clima
+      real de este punto. <button class="btn btn--fantasma btn--sm" data-act="clima">Intentar ahora</button></p>
+    </div>`;
+  }
+
+  const ref = d.totalRefL / 1000;
+  const delta = ref > 0 ? Math.round((d.totalM3 / ref - 1) * 100) : 0;
+  const lluviaHoy = c.lluviaHoy || 0;
+
+  return `<div class="card">
+    <div class="datos datos--fila">
+      <div><span>Evapora hoy</span><strong>${nf(c.et0Hoy, 1)} mm</strong></div>
+      <div><span>Llueve hoy</span><strong>${nf(lluviaHoy, 1)} mm</strong></div>
+      <div><span>Lluvia 7 d</span><strong>${nf(c.lluviaFutura, 0)} mm</strong></div>
+    </div>
+
+    <div class="reserva">
+      <span>Agua guardada en el suelo</span>
+      <div class="result-bar agua"><span style="width:${Math.min(100, (c.reservaMm / c.reservaMaxMm) * 100).toFixed(0)}%"></span></div>
+      <small>${nf(c.reservaMm, 0)} de ${c.reservaMaxMm} mm · ${
+        c.reservaMm >= c.reservaMaxMm * 0.8 ? 'el suelo está cargado, hoy no hace falta regar'
+        : c.reservaMm > 3 ? 'todavía hay reserva, se puede estirar un día o dos'
+        : 'el suelo está seco: lo que pidan las plantas sale del reservorio'}</small>
+    </div>
+
+    <p class="hint">${
+      d.totalL === 0
+        ? 'Hoy la demanda es cero: entre la lluvia y lo que guarda el suelo está cubierta.'
+        : Math.abs(delta) < 8
+          ? 'La demanda de hoy está en lo normal de la zona.'
+          : delta < 0
+            ? `Hoy se pide <b>${Math.abs(delta)} % menos</b> que en un día normal de la zona, ${
+                lluviaHoy > 2 ? 'porque está lloviendo'
+                : c.reservaMm > 3 ? 'porque el suelo todavía tiene reserva'
+                : 'porque evapora menos'}.`
+            : `Hoy se pide <b>${delta} % más</b> que en un día normal: evapora más de lo habitual.`
+    } ${c.diasPasados ? `En los últimos ${c.diasPasados} días llovieron ${nf(c.lluviaPasada, 0)} mm, de los que aprovechó la planta unos ${nf(c.lluviaEfectivaPasada, 0)} mm.` : ''}</p>
+    <p class="hint muted">Open-Meteo · ${c.horas < 1 ? 'recién bajado' : 'hace ' + Math.round(c.horas) + ' h'} ·
+      <button class="btn btn--fantasma btn--sm" data-act="clima">Actualizar</button></p>
+  </div>`;
+}
+
 function renderWater() {
-  const s = water.summary(state);
+  const s = water.summary({ ...state, clima: state.clima });
   const days = Number.isFinite(s.autonomyDays) ? s.autonomyDays : null;
   const capacityM3 = state.config.reservorioVolumenM3 || 0;
   const pct = capacityM3 ? Math.min(100, (s.volume.volumeM3 / capacityM3) * 100) : 0;
@@ -1230,7 +1323,11 @@ function renderWater() {
   const high = Math.max(...measuredPoints().map(p => p.elevationM));
 
   $('#water-body').innerHTML = `
-    ${s.alert ? `<p class="aviso aviso--atencion">⚠︎ Autonomía por debajo de ${s.alertDays} días. El próximo turno es en ${s.turns[0]?.inDays ?? '—'} días: faltarían ${nf(s.deficitM3)} m³.</p>` : ''}
+    ${!s.llegaAlTurno && s.turns[0]
+      ? `<p class="aviso aviso--atencion">⚠︎ Con el pronóstico de esta semana el agua no llega al turno del ${fmtDate(s.turns[0].date)} (en ${s.turns[0].inDays} d): faltarían ${nf(s.deficitM3)} m³.</p>`
+      : s.alert
+        ? `<p class="aviso aviso--atencion">⚠︎ Quedan menos de ${s.alertDays} días de agua.</p>`
+        : ''}
 
     <div class="card">
       <div class="result-bar agua"><span style="width:${pct.toFixed(1)}%"></span></div>
@@ -1240,9 +1337,14 @@ function renderWater() {
       </div>
     </div>
 
+    ${renderClimaAgua(s)}
+
     <div class="card datos">
-      <div><span>Demanda diaria</span><strong>${nf(s.dailyM3, 2)} m³/día</strong></div>
-      <div><span>Autonomía</span><strong class="${s.alert ? 'bad' : 'good'}">${days == null ? '∞' : nf(days) + ' días'}</strong></div>
+      <div><span>Demanda de hoy</span><strong>${nf(s.dailyM3, 2)} m³/día</strong></div>
+      <div><span>Alcanza para</span><strong class="${s.alert ? 'bad' : 'good'}">${
+        s.proyeccion.diasHastaVacio != null
+          ? nf(s.proyeccion.diasHastaVacio, 0) + ' días'
+          : 'más de ' + s.proyeccion.alMenosDias + ' días'}</strong></div>
       <div><span>Desnivel</span><strong>${nf(high - low)} m · ${nf(staticPressureBar(high - low), 2)} bar</strong></div>
     </div>
 
@@ -1257,6 +1359,11 @@ function renderWater() {
     <ul class="mini-list">
       ${s.demand.bySector.map(x => `<li>${escapeHtml(x.name)}<b>${Math.round(x.litres)} L/día</b></li>`).join('') || '<li>Sin plantas registradas</li>'}
     </ul>
+
+    ${s.demand.totalAdultoL > s.demand.totalRefL * 1.08 ? `
+      <p class="hint">Las plantas jóvenes todavía no beben como adultas: hoy la finca pide
+      ${nf(s.demand.totalRefL / 1000, 2)} m³ en un día normal, y cuando todas estén crecidas pedirá
+      <b>${nf(s.demand.totalAdultoL / 1000, 2)} m³</b>. Vale la pena mirar ese número antes de sembrar más.</p>` : ''}
 
     <h4>Demanda por especie</h4>
     <ul class="mini-list">
@@ -1278,6 +1385,13 @@ function renderWater() {
   `;
   $('#water-body').querySelectorAll('[data-water]').forEach(el =>
     el.addEventListener('click', () => openWaterForm(state.water.find(w => w.id === el.dataset.water))));
+  $('#water-body').querySelectorAll('[data-act="clima"]').forEach(el =>
+    el.addEventListener('click', async () => {
+      el.disabled = true; el.textContent = 'Bajando…';
+      const ok = await refrescarClima({ forzar: true });
+      toast(ok ? 'Clima actualizado' : 'Sin señal: se sigue con lo guardado');
+      if (!ok) renderWater();
+    }));
 }
 
 function openWaterForm(e = {}) {
