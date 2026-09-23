@@ -182,6 +182,12 @@ button.fila-main {
   pointer-events: none; white-space: nowrap;
 }
 .sector-label strong { font-size: var(--app-t-caption); font-weight: 700; }
+/* Sitio justo: el nombre encoge antes de desaparecer. */
+.sector-label--sm { padding: 3px 6px; }
+.sector-label--sm strong { font-size: 10px; letter-spacing: -.01em; }
+.sector-label--sm span { font-size: 9px; }
+/* Y si ni así cabe, queda el área, que es el dato que se compara. */
+.sector-label--compacta strong { display: none; }
 
 /* ---------- Agua ---------- */
 .gauge-legend { margin-top: 10px; display: flex; flex-direction: column; }
@@ -273,3 +279,16 @@ button.fila-main {
   }
   .three-controls { left: auto; right: 20px; width: 360px; }
 }
+
+/* Tres cifras del clima en una fila: la demanda de hoy se lee de un vistazo
+   junto a lo que la causa. En pantalla angosta caben las tres. */
+.datos--fila { grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.datos--fila > div { flex-direction: column; align-items: flex-start; gap: 2px; }
+
+.hint.muted { color: var(--app-ink-3); }
+
+/* Reserva del suelo: es la explicación de por qué hoy la demanda baja o es
+   cero, así que va con su barra, no escondida en una frase. */
+.reserva { margin: 12px 0 4px; display: grid; gap: 6px; }
+.reserva > span { color: var(--app-ink-3); font-size: var(--app-t-caption); font-weight: 500; }
+.reserva small { color: var(--app-ink-3); font-size: var(--app-t-caption); }

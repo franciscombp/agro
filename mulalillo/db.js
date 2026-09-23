@@ -228,15 +228,32 @@ const SEED_TASKS = [
 ];
 
 /** Demanda de agua estimada por especie, litros/planta/día. Editable en la app. */
+/*
+ * `lppd` son los litros por planta y día de una planta ADULTA en el clima de
+ * referencia de la zona (ET0 3,5 mm/día, sin lluvia). Es el número que ya
+ * estaba y sigue mandando: de él sale todo lo demás.
+ *
+ * `kc` es el coeficiente de cultivo de FAO-56 en plena temporada, y con él
+ * `water.js` deduce cuántos m² de suelo cubre cada planta:
+ *
+ *     área = lppd / (ET0_ref × kc)
+ *
+ * Así el catálogo no repite el mismo dato de dos formas que se desvíen con el
+ * tiempo, y el día que el clima real coincide con el de referencia la demanda
+ * sale idéntica a la de antes.
+ *
+ * `maduraAnios` es cuándo la planta alcanza su copa completa: un arándano
+ * recién sembrado no bebe como uno de cuatro años.
+ */
 export const SPECIES = {
-  aguacate: { label: 'Aguacate', lppd: 30, color: '#2f9e44' },
-  peral: { label: 'Peral', lppd: 25, color: '#f08c00' },
-  arandano: { label: 'Arándano', lppd: 4, color: '#4c6ef5' },
-  mora: { label: 'Mora', lppd: 5, color: '#862e9c' },
-  lavanda: { label: 'Lavanda', lppd: 1.5, color: '#7048e8' },
-  hortaliza: { label: 'Hortaliza (huerto)', lppd: 3, color: '#e8590c' },
-  pasto: { label: 'Pasto', lppd: 0, color: '#66a80f' },
-  otro: { label: 'Otro', lppd: 5, color: '#868e96' }
+  aguacate: { label: 'Aguacate', lppd: 30, kc: 0.85, maduraAnios: 8, color: '#2f9e44' },
+  peral: { label: 'Peral', lppd: 25, kc: 0.90, maduraAnios: 7, color: '#f08c00' },
+  arandano: { label: 'Arándano', lppd: 4, kc: 0.85, maduraAnios: 4, color: '#4c6ef5' },
+  mora: { label: 'Mora', lppd: 5, kc: 0.90, maduraAnios: 3, color: '#862e9c' },
+  lavanda: { label: 'Lavanda', lppd: 1.5, kc: 0.55, maduraAnios: 3, color: '#7048e8' },
+  hortaliza: { label: 'Hortaliza (huerto)', lppd: 3, kc: 0.95, maduraAnios: 0.4, color: '#e8590c' },
+  pasto: { label: 'Pasto', lppd: 0, kc: 0.85, maduraAnios: 1, color: '#66a80f' },
+  otro: { label: 'Otro', lppd: 5, kc: 0.80, maduraAnios: 5, color: '#868e96' }
 };
 
 export const STATUS_COLORS = {
@@ -274,6 +291,16 @@ export async function seedIfEmpty() {
 
 function putRaw(store, record) {
   return tx(store, 'readwrite', s => s.put({ ...record, updatedAt: new Date().toISOString() }));
+}
+
+/**
+ * Guarda un registro de `meta` sin encolarlo para sincronizar. `meta` ya está
+ * excluida de la cola; esto es sólo la puerta pública, para cachés locales como
+ * el clima que no tienen por qué viajar al servidor.
+ */
+export async function saveMeta(record) {
+  await putRaw('meta', record);
+  return record;
 }
 
 export async function config() {
