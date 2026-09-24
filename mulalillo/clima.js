@@ -124,14 +124,14 @@ export async function leerCache() {
  * hoy, la media reciente y el pronóstico, más de dónde salió cada cosa para
  * poder decirlo en pantalla en vez de mostrar un número sin origen.
  */
-export function contexto(serie) {
+export function contexto(serie, { reservaMax = RESERVA_SUELO_MM } = {}) {
   const hoy = new Date().toISOString().slice(0, 10);
   if (!serie?.dias?.length) {
     return {
       conocido: false,
       et0Hoy: ET0_REF, lluviaHoy: 0,
       et0Medio: ET0_REF,
-      reservaMm: 0,
+      reservaMm: 0, reservaMaxMm: reservaMax,
       futuro: [],
       origen: 'clima de referencia de la zona'
     };
@@ -151,8 +151,8 @@ export function contexto(serie) {
     et0Medio: media(pasados.map(d => d.et0)),
     lluviaPasada: pasados.reduce((s, d) => s + d.lluvia, 0),
     lluviaEfectivaPasada: pasados.reduce((s, d) => s + lluviaEfectiva(d.lluvia), 0),
-    reservaMm: reservaSuelo(pasados),
-    reservaMaxMm: RESERVA_SUELO_MM,
+    reservaMm: reservaSuelo(pasados, { max: reservaMax }),
+    reservaMaxMm: reservaMax,
     diasPasados: pasados.length,
     futuro,
     lluviaFutura: futuro.reduce((s, d) => s + d.lluvia, 0),

@@ -18,7 +18,7 @@ const INFRA_TYPES = ['reservorio', 'casa', 'establo', 'cuyera', 'bomba', 'filtro
 const TASK_TYPES = ['riego', 'poda', 'fertilización', 'fumigación', 'cosecha', 'siembra', 'otro'];
 const WATER_TYPES = ['llenado_acequia', 'tanquero', 'riego', 'medición_nivel'];
 const STATUSES = ['sano', 'atención', 'enfermo', 'muerto'];
-const BUILD = 'v12';
+const BUILD = 'v13';
 
 const state = {
   parcel: { id: 'parcel-mulalillo', name: 'Finca Mulalillo', boundary: BOUNDARY },
@@ -706,6 +706,12 @@ function renderSectors() {
         <span class="fila-main">
           <strong>${escapeHtml(s.name)}</strong>
           <small>${fmtArea(area)} · ${plants.length} plantas${s.irrigationZone ? ' · ' + escapeHtml(s.irrigationZone) : ''}</small>
+          ${/* Lo que se hace con un sector depende del agua que pide y de en
+                qué etapa va; el área y la zona no cambian nunca. */
+            plants.length ? `<small class="muted">${
+              Math.round(plants.reduce((sum, p) => sum + water.litrosPlantaDia(p, diaDeHoy()), 0))
+            } L/día${s.etapa ? ` · ${water.ETAPAS[s.etapa].label.toLowerCase()}` : ''}${
+              etapaVieja(s) ? ' ⚠︎' : ''}</small>` : ''}
         </span>
         <span class="fila-go"><svg class="icono icono--s" aria-hidden="true"><use href="#i-chevron-der"/></svg></span>
       </button>`;
@@ -764,7 +770,13 @@ function openSector(id) {
         dailyAdultoL > dailyL * 1.05 ? ` <small class="muted">· ${Math.round(dailyAdultoL).toLocaleString('es-EC')} adultas</small>` : ''}</dd>
       <dt>Elevación</dt><dd>${nf(Math.min(...elevs))}–${nf(Math.max(...elevs))} msnm</dd>
       ${s.irrigationZone ? `<dt>Zona de riego</dt><dd>${escapeHtml(s.irrigationZone)}</dd>` : ''}
+      <dt>Etapa</dt><dd>${s.etapa
+        ? `${water.ETAPAS[s.etapa].label} <small class="muted">· riego ×${water.ETAPAS[s.etapa].kc}</small>`
+        : '<span class="muted">sin declarar</span>'}</dd>
     </dl>
+    ${s.etapa ? `<p class="hint">${water.ETAPAS[s.etapa].dice}</p>` : ''}
+    ${etapaVieja(s) ? `<p class="aviso aviso--atencion">La etapa se declaró hace ${etapaVieja(s)} días.
+      Si el bloque ya pasó a otra, el riego calculado se está quedando corto o largo.</p>` : ''}
     <h4>Plantas por especie</h4>
     ${bySpecies.size ? `<ul class="mini-list">${[...bySpecies].map(([sp, n]) =>
       `<li><span class="punto" style="background:${SPECIES[sp]?.color}"></span>${SPECIES[sp]?.label || sp}<b>${n}</b></li>`).join('')}</ul>`
@@ -802,6 +814,13 @@ function openSector(id) {
   });
 }
 
+/** Días desde que se declaró la etapa, si ya lleva demasiados. */
+function etapaVieja(s) {
+  if (!s.etapa || !s.etapaDesde) return 0;
+  const d = water.daysBetween(s.etapaDesde, today());
+  return d > 90 ? d : 0;
+}
+
 function openSectorForm(s) {
   const isNew = !s.id;
   openSheet(isNew ? 'Nuevo sector' : 'Editar sector', `
@@ -810,6 +829,16 @@ function openSectorForm(s) {
       <label>Nombre <input name="name" value="${attr(s.name)}" placeholder="Bloque arándanos" required /></label>
       <label>Color <input type="color" name="color" value="${s.color || '#2f9e44'}" /></label>
       <label>Zona de riego <input name="irrigationZone" value="${attr(s.irrigationZone)}" placeholder="Zona alta" /></label>
+      <label>Etapa del cultivo
+        <select name="etapa">
+          <option value="">Sin declarar</option>
+          ${Object.entries(water.ETAPAS).map(([id, e]) =>
+            `<option value="${id}" ${s.etapa === id ? 'selected' : ''}>${e.label} (×${e.kc})</option>`).join('')}
+        </select>
+      </label>
+      <p class="hint">Cambia cuánta agua pide el sector. Nadie puede deducirla de la fecha
+      de siembra —en la sierra no hay una estación que la fije—, así que se declara aquí y
+      la app avisa cuando lleva mucho sin tocarse.</p>
       <button class="btn btn--rojo btn-block" type="submit">Guardar</button>
     </form>
   `, body => {
@@ -822,6 +851,9 @@ function openSectorForm(s) {
         name: f.get('name'),
         color: f.get('color'),
         irrigationZone: f.get('irrigationZone') || undefined,
+        etapa: f.get('etapa') || undefined,
+        // Se marca cuándo, porque una etapa de hace seis meses ya no es cierta.
+        etapaDesde: f.get('etapa') && f.get('etapa') !== s.etapa ? today() : s.etapaDesde,
         areaM2: round(areaM2(s.polygon), 1)
       });
       closeSheet();
@@ -1063,6 +1095,33 @@ function renderPlants() {
 // Tareas
 // ---------------------------------------------------------------------------
 
+/**
+ * Cuándo toca una tarea, dicho como se piensa.
+ *
+ * «Para 22 sept 2026» obliga a restar mentalmente contra el calendario de hoy
+ * cada vez. Lo que se quiere saber es si va tarde y cuánto, y eso es una resta
+ * que la app puede hacer. La fecha exacta sigue estando, detrás.
+ */
+function cuando(iso) {
+  const d = water.daysBetween(today(), iso);
+  const atras = iso < today();
+  const dd = water.daysBetween(iso, today());
+  if (iso === today()) return { txt: 'hoy', tono: 'urgente' };
+  if (atras) return { txt: dd === 1 ? 'atrasada 1 día' : `atrasada ${dd} días`, tono: 'atrasada' };
+  if (d === 1) return { txt: 'mañana', tono: 'urgente' };
+  if (d <= 7) return { txt: `en ${d} días`, tono: 'pronto' };
+  return { txt: `en ${d} días`, tono: '' };
+}
+
+/* Los tres grupos son los tres momentos en que se decide algo distinto: lo que
+   ya se pasó, lo de esta semana y lo que todavía no aprieta. Una sola lista
+   ordenada por fecha obliga a leerla entera para encontrar lo urgente. */
+const GRUPOS = [
+  { id: 'atrasadas', titulo: 'Atrasadas', test: t => t.dueAt && t.dueAt < today() },
+  { id: 'semana', titulo: 'Esta semana', test: t => t.dueAt && water.daysBetween(today(), t.dueAt) <= 7 },
+  { id: 'despues', titulo: 'Más adelante', test: () => true }
+];
+
 function renderTasks() {
   const rows = state.tasks
     .filter(t => taskFilter === 'todas' || (taskFilter === 'hechas' ? t.doneAt : !t.doneAt))
@@ -1070,17 +1129,49 @@ function renderTasks() {
 
   const overdue = state.tasks.filter(t => !t.doneAt && t.dueAt && t.dueAt < today()).length;
 
-  $('#tasks-list').innerHTML = `
-    ${overdue ? `<p class="aviso aviso--atencion">${overdue} tarea${overdue > 1 ? 's' : ''} atrasada${overdue > 1 ? 's' : ''}.</p>` : ''}
-    <div class="card card--filas">${rows.map(t => `
-      <div class="list-row ${!t.doneAt && t.dueAt && t.dueAt < today() ? 'atrasada' : ''}">
+  const fila = t => {
+    const c = !t.doneAt && t.dueAt ? cuando(t.dueAt) : null;
+    return `
+      <div class="list-row ${c?.tono === 'atrasada' ? 'atrasada' : ''}">
         <input type="checkbox" class="chk" data-done="${t.id}" ${t.doneAt ? 'checked' : ''} />
         <button class="fila-main" data-task="${t.id}">
           <strong>${cap(t.type)} · ${escapeHtml(targetName(t))}</strong>
-          <small>${t.doneAt ? 'Hecha ' + fmtDate(t.doneAt) : t.dueAt ? 'Para ' + fmtDate(t.dueAt) : 'Sin fecha'}${t.quantity ? ` · ${t.quantity} ${escapeHtml(t.unit || '')}` : ''}</small>
+          <small>${t.doneAt
+            ? 'Hecha ' + fmtDate(t.doneAt)
+            : c
+              ? `<b class="cuando cuando--${c.tono}">${c.txt}</b> <span class="muted">· ${fmtDate(t.dueAt)}</span>`
+              : 'Sin fecha'}${t.quantity ? ` · ${t.quantity} ${escapeHtml(t.unit || '')}` : ''}</small>
           ${t.notes ? `<small class="muted">${escapeHtml(t.notes)}</small>` : ''}
         </button>
-      </div>`).join('')}</div>
+      </div>`;
+  };
+
+  // Agrupar sólo tiene sentido en la lista de pendientes: las hechas se leen
+  // por fecha y «atrasada» ya no significa nada para ellas.
+  let cuerpo;
+  const agrupado = taskFilter === 'pendientes' && rows.length;
+  if (agrupado) {
+    const resto = [...rows];
+    cuerpo = GRUPOS.map(g => {
+      const suyas = [];
+      for (let i = resto.length - 1; i >= 0; i--) {
+        if (g.test(resto[i])) suyas.unshift(...resto.splice(i, 1));
+      }
+      if (!suyas.length) return '';
+      return `<h4 class="grupo-tareas">${g.titulo} <span>${suyas.length}</span></h4>
+        <div class="card card--filas">${suyas.map(fila).join('')}</div>`;
+    }).join('');
+  } else {
+    cuerpo = `<div class="card card--filas">${rows.map(fila).join('')}</div>`;
+  }
+
+  $('#tasks-list').innerHTML = `
+    ${/* Con grupos, el título «Atrasadas · 1» ya lo dice: la cinta sería la
+          misma frase dos veces seguidas. */
+      overdue && taskFilter !== 'hechas' && !agrupado
+      ? `<p class="aviso aviso--atencion">${overdue} tarea${overdue > 1 ? 's' : ''} atrasada${overdue > 1 ? 's' : ''}.</p>`
+      : ''}
+    ${cuerpo}
     ${rows.length ? '' : '<p class="hint">Nada por aquí.</p>'}
   `;
   $('#tasks-list').querySelectorAll('[data-done]').forEach(el => el.addEventListener('change', async () => {
@@ -1261,8 +1352,8 @@ function taskLine(t) {
  */
 /** El día de hoy según el clima bajado. Sin clima, el de referencia. */
 function diaDeHoy() {
-  const c = clima.contexto(state.clima);
-  return { et0: c.et0Hoy, lluvia: c.lluviaHoy, reservaMm: c.reservaMm };
+  const c = clima.contexto(state.clima, { reservaMax: state.config.reservaSueloMm ?? clima.RESERVA_SUELO_MM });
+  return { et0: c.et0Hoy, lluvia: c.lluviaHoy, reservaMm: c.reservaMm, sectors: state.sectors };
 }
 
 function renderClimaAgua(s) {
@@ -1336,6 +1427,8 @@ function renderWater() {
         <small>estimado desde ${s.volume.source}${s.volume.anchorDate ? ' del ' + fmtDate(s.volume.anchorDate) : ''}${s.volume.sinceDays ? ` (hace ${s.volume.sinceDays} d)` : ''}</small>
       </div>
     </div>
+
+    ${renderProyeccion(s)}
 
     ${renderClimaAgua(s)}
 
@@ -1506,6 +1599,14 @@ function openSettings() {
       <h4>Agua</h4>
       <label>Demanda diaria manual (m³/día) <input type="number" step="0.01" name="demandaDiariaM3" value="${attr(c.demandaDiariaM3)}" placeholder="vacío = calculada desde las plantas" /></label>
       <label>Alertar bajo (días de autonomía) <input type="number" name="alertaAutonomiaDias" value="${attr(c.alertaAutonomiaDias)}" /></label>
+      <label>Agua que retiene el suelo (mm)
+        <input type="number" step="1" min="0" max="120" name="reservaSueloMm"
+               value="${attr(c.reservaSueloMm ?? clima.RESERVA_SUELO_MM)}" />
+      </label>
+      <p class="hint">Cuánta lluvia guarda la zona de raíces para los días siguientes. Los
+      ${clima.RESERVA_SUELO_MM} mm de partida son un valor razonable para el suelo volcánico de
+      la zona, no una medición: un análisis de suelo o un tensiómetro lo afinan. Subirlo hace
+      que la app cuente con más agua de la que quizá hay, así que conviene quedarse corto.</p>
       <div class="field-grid-2">
         <label>Próximo turno <input type="date" name="proximoTurno" value="${attr(c.proximoTurno)}" /></label>
         <label>Ciclo (días) <input type="number" name="cicloTurnoDias" value="${attr(c.cicloTurnoDias)}" /></label>
@@ -1538,6 +1639,7 @@ function openSettings() {
         reservorioAlturaUtilM: num('reservorioAlturaUtilM'),
         demandaDiariaM3: num('demandaDiariaM3'),
         alertaAutonomiaDias: num('alertaAutonomiaDias'),
+        reservaSueloMm: num('reservaSueloMm'),
         proximoTurno: f.get('proximoTurno') || null,
         cicloTurnoDias: num('cicloTurnoDias'),
         syncEndpoint: f.get('syncEndpoint') || ''
@@ -1755,7 +1857,7 @@ function ageLabel(iso) {
   if (months < 12) return `${months} meses`;
   const years = Math.floor(months / 12);
   const rest = months % 12;
-  return `${years} año${years > 1 ? 's' : ''}${rest ? ' ' + rest + ' m' : ''}`;
+  return `${years} año${years > 1 ? 's' : ''}${rest ? ` y ${rest} mes${rest > 1 ? 'es' : ''}` : ''}`;
 }
 function randomColor() {
   const palette = ['#2f9e44', '#4c6ef5', '#f08c00', '#862e9c', '#e8590c', '#0ca678', '#c2255c'];
@@ -1767,3 +1869,97 @@ boot().catch(err => {
     `<p class="aviso aviso--atencion pad">No se pudo iniciar la aplicación: ${escapeHtml(String(err.message || err))}</p>`);
   console.error(err);
 });
+
+// ---------------------------------------------------------------------------
+// Proyección del reservorio
+// ---------------------------------------------------------------------------
+
+/**
+ * La curva de 21 días que el módulo de agua ya calculaba y que no se veía por
+ * ningún lado: se mostraba un solo número sacado de ella. Puesta en pantalla
+ * responde de un vistazo lo que el número no puede —cuándo se vacía, si la
+ * lluvia de la semana lo endereza, y si la línea cruza el fondo ANTES o
+ * DESPUÉS del turno de la junta, que es la decisión.
+ *
+ * Una sola serie, un solo tono: el volumen del reservorio. La lluvia NO va en
+ * un segundo eje —dos escalas en un gráfico inventan una correlación que no
+ * está en los datos—; los días con lluvia se marcan con una gota sobre el eje,
+ * que dice "este día llueve" sin fingir una magnitud comparable.
+ *
+ * Los 7 días pronosticados van en línea llena y el resto, que es sólo el
+ * promedio proyectado hacia adelante, en línea punteada. La diferencia entre
+ * lo que se sabe y lo que se supone tiene que verse.
+ */
+function renderProyeccion(s) {
+  const curva = s.proyeccion?.curva;
+  if (!curva?.length) return '';
+  const capacidad = state.config.reservorioVolumenM3 || 0;
+  if (!capacidad) return '';
+
+  const W = 320, H = 108, PL = 6, PR = 6, PT = 8, PB = 26;
+  const n = curva.length;
+  /* El eje llega hasta la CAPACIDAD del reservorio, no hasta el volumen de hoy.
+     Escalar al volumen actual dibuja igual de lleno un reservorio al 20 % que
+     uno al 90 %, y el hueco que queda arriba es justo la información que se
+     necesita para decidir si conviene pedir tanquero. */
+  const maxY = Math.max(capacidad, s.volume.volumeM3);
+  const x = i => PL + (i / (n - 1)) * (W - PL - PR);
+  const y = v => PT + (1 - v / maxY) * (H - PT - PB);
+
+  // El punto de partida es hoy, antes de gastar: por eso va delante de la curva.
+  const pts = [{ volumeM3: s.volume.volumeM3, pronosticado: true, lluvia: 0 }, ...curva];
+  const px = i => PL + (i / pts.length) * (W - PL - PR);
+  const linea = tramo => tramo.map(([i, p]) => `${px(i).toFixed(1)},${y(p.volumeM3).toFixed(1)}`).join(' ');
+
+  const idx = pts.map((p, i) => [i, p]);
+  const corte = pts.findIndex(p => !p.pronosticado);
+  const firmes = corte < 0 ? idx : idx.slice(0, corte + 1);
+  const supuestos = corte < 0 ? [] : idx.slice(corte - 1 < 0 ? 0 : corte - 1);
+
+  const area = `${linea(firmes)} ${px(firmes.length - 1).toFixed(1)},${y(0).toFixed(1)} ${px(0).toFixed(1)},${y(0).toFixed(1)}`;
+
+  const turno = s.turns[0];
+  const xTurno = turno && turno.inDays <= n ? px(turno.inDays) : null;
+  const vacio = s.proyeccion.diasHastaVacio;
+
+  return `
+    <div class="card proyeccion">
+      <div class="proy-head">
+        <strong>Cómo baja el reservorio</strong>
+        <small>${vacio != null
+          ? `se vacía en ${vacio} ${vacio === 1 ? 'día' : 'días'}`
+          : `aguanta los ${n} días proyectados`}</small>
+      </div>
+      <svg viewBox="0 0 ${W} ${H}" class="proy-svg" role="img"
+           aria-label="Volumen del reservorio proyectado a ${n} días${turno ? `, con el turno de la junta en ${turno.inDays} días` : ''}.">
+        <line x1="${PL}" y1="${y(0)}" x2="${W - PR}" y2="${y(0)}" class="proy-eje" />
+        ${/* El rótulo va BAJO el eje: arriba se montaba sobre la curva justo
+              cuando el reservorio está lleno, que es cuando más plana va. */
+          xTurno != null ? `
+          <line x1="${xTurno.toFixed(1)}" y1="${PT}" x2="${xTurno.toFixed(1)}" y2="${y(0)}" class="proy-turno" />
+          <text x="${Math.min(Math.max(xTurno, 16), W - 16).toFixed(1)}" y="${(y(0) + 19).toFixed(1)}"
+                class="proy-turno-txt" text-anchor="middle">turno · ${turno.inDays} d</text>` : ''}
+        ${/* Si se vacía antes del turno, los días sin agua son el déficit del
+              aviso, dibujado: lo que hay que traer en tanquero. */
+          vacio != null && xTurno != null && px(vacio) < xTurno ? `
+          <rect x="${px(vacio).toFixed(1)}" y="${PT}" width="${(xTurno - px(vacio)).toFixed(1)}"
+                height="${(y(0) - PT).toFixed(1)}" class="proy-hueco" />
+          <text x="${((px(vacio) + xTurno) / 2).toFixed(1)}" y="${(y(0) - 5).toFixed(1)}"
+                class="proy-hueco-txt" text-anchor="middle">sin agua</text>` : ''}
+        <polygon points="${area}" class="proy-area" />
+        <polyline points="${linea(firmes)}" class="proy-linea" />
+        ${supuestos.length > 1 ? `<polyline points="${linea(supuestos)}" class="proy-linea proy-linea--supuesta" />` : ''}
+        ${/* Sólo los días PRONOSTICADOS llevan gota. Los siguientes cargan la
+              lluvia media, y marcarlos haría creer que está pronosticado que
+              llueva veintiún días seguidos. */
+          pts.map((p, i) => p.pronosticado && p.lluvia > 2
+          ? `<circle cx="${px(i).toFixed(1)}" cy="${(y(0) + 6).toFixed(1)}" r="2.4" class="proy-gota" />` : '').join('')}
+        <circle cx="${px(0).toFixed(1)}" cy="${y(pts[0].volumeM3).toFixed(1)}" r="4" class="proy-hoy" />
+      </svg>
+      <div class="proy-pie">
+        <span><i class="proy-k proy-k--firme"></i>7 días pronosticados</span>
+        <span><i class="proy-k proy-k--supuesta"></i>después, promedio</span>
+        ${pts.some(p => p.lluvia > 2) ? '<span><i class="proy-k proy-k--gota"></i>días con lluvia</span>' : ''}
+      </div>
+    </div>`;
+}
