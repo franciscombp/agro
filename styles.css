@@ -552,6 +552,48 @@ select.field-input { appearance: auto; cursor: pointer; }
 /* ============================================================
    Desktop (≥ 900 px): rail lateral + grillas
    ============================================================ */
+
+/* ---------- Tablet (700–899 px) ----------
+   Faltaba este escalón: la app saltaba de teléfono a escritorio, así que una
+   tablet en vertical —768 px, el ancho de un iPad— se quedaba con la columna
+   de 480 px centrada y dos franjas vacías a los lados. La navegación baja
+   está bien en la mano; apoyada en la mesa, el pulgar deja de mandar.
+
+   Se adelanta el rail, pero compacto: a este ancho los rótulos al lado de
+   cada icono se comen la mitad de la columna de contenido. */
+@media (min-width: 700px) and (max-width: 899.98px) {
+  :root { --rail: 84px; }
+
+  .tabbar {
+    top: 0; bottom: 0; left: 0; right: auto; width: var(--rail);
+    max-width: none; margin: 0;
+    flex-direction: column; align-items: stretch; justify-content: flex-start;
+    gap: 2px; padding: 14px 8px;
+    border-top: none; border-right: 1px solid var(--line);
+    background: rgba(255,255,255,.85);
+  }
+  .tab { flex: 0 0 auto; padding: 10px 4px; border-radius: var(--radius-s); }
+  .tab.on { background: var(--green-light); color: var(--green); font-weight: 700; }
+
+  .screen.with-tabs { margin: 0 0 0 var(--rail); max-width: none; }
+  .screen.with-tabs .content { max-width: 620px; margin: 0 auto; padding: 22px 24px 120px; }
+  .bottom-bar.above-tabs { left: var(--rail); right: 0; bottom: 0; max-width: none;
+    display: flex; justify-content: center; }
+  .bottom-bar.above-tabs .btn-primary { max-width: 420px; }
+
+  /* Dos columnas donde las tarjetas son piezas sueltas; el almanaque no,
+     porque cada tarjeta puede llevar su consejo de agua debajo y partirlo
+     en dos columnas separa el consejo de su cultivo. */
+  #plant-list, #explore-list, #garden-list, #best-days, #add-list, #price-list {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+  }
+  #plant-list > .sub, #explore-list > .sub, #garden-list > .empty-state,
+  #explore-list > .empty-state, #price-list > .price-empty { grid-column: 1 / -1; }
+  .plant-card, .day-card, .track-card, .price-card { margin-bottom: 0; }
+
+  .month-chips, .cat-chips { flex-wrap: wrap; overflow: visible; }
+}
+
 @media (min-width: 900px) {
   /* Rail de navegación */
   .tabbar {

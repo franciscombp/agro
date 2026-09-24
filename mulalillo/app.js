@@ -18,7 +18,7 @@ const INFRA_TYPES = ['reservorio', 'casa', 'establo', 'cuyera', 'bomba', 'filtro
 const TASK_TYPES = ['riego', 'poda', 'fertilización', 'fumigación', 'cosecha', 'siembra', 'otro'];
 const WATER_TYPES = ['llenado_acequia', 'tanquero', 'riego', 'medición_nivel'];
 const STATUSES = ['sano', 'atención', 'enfermo', 'muerto'];
-const BUILD = 'v13';
+const BUILD = 'v14';
 
 const state = {
   parcel: { id: 'parcel-mulalillo', name: 'Finca Mulalillo', boundary: BOUNDARY },
@@ -1158,8 +1158,10 @@ function renderTasks() {
         if (g.test(resto[i])) suyas.unshift(...resto.splice(i, 1));
       }
       if (!suyas.length) return '';
-      return `<h4 class="grupo-tareas">${g.titulo} <span>${suyas.length}</span></h4>
-        <div class="card card--filas">${suyas.map(fila).join('')}</div>`;
+      return `<section class="col-tareas">
+        <h4 class="grupo-tareas">${g.titulo} <span>${suyas.length}</span></h4>
+        <div class="card card--filas">${suyas.map(fila).join('')}</div>
+      </section>`;
     }).join('');
   } else {
     cuerpo = `<div class="card card--filas">${rows.map(fila).join('')}</div>`;
@@ -1334,7 +1336,7 @@ function targetName(t) {
 }
 
 function taskLine(t) {
-  return `<li><span class="punto" style="background:${t.doneAt ? '#2f9e44' : '#f59f00'}"></span>
+  return `<li><span class="punto punto--${t.doneAt ? 'hecha' : 'pendiente'}"></span>
     ${cap(t.type)} — ${t.doneAt ? fmtDate(t.doneAt) : t.dueAt ? 'para ' + fmtDate(t.dueAt) : 'sin fecha'}
     ${t.notes ? `<em>${escapeHtml(t.notes)}</em>` : ''}</li>`;
 }
@@ -1364,7 +1366,8 @@ function renderClimaAgua(s) {
     return `<div class="card">
       <p class="hint">Demanda calculada con el clima de referencia de la zona
       (ET0 ${clima.ET0_REF} mm/día, sin lluvia): todavía no se ha podido bajar el clima
-      real de este punto. <button class="btn btn--fantasma btn--sm" data-act="clima">Intentar ahora</button></p>
+      real de este punto.</p>
+      <p class="pie-accion"><button class="btn btn--fantasma btn--sm" data-act="clima">Intentar ahora</button></p>
     </div>`;
   }
 
@@ -1400,7 +1403,8 @@ function renderClimaAgua(s) {
                 : 'porque evapora menos'}.`
             : `Hoy se pide <b>${delta} % más</b> que en un día normal: evapora más de lo habitual.`
     } ${c.diasPasados ? `En los últimos ${c.diasPasados} días llovieron ${nf(c.lluviaPasada, 0)} mm, de los que aprovechó la planta unos ${nf(c.lluviaEfectivaPasada, 0)} mm.` : ''}</p>
-    <p class="hint muted">Open-Meteo · ${c.horas < 1 ? 'recién bajado' : 'hace ' + Math.round(c.horas) + ' h'} ·
+    <p class="pie-accion hint muted">
+      <span>Open-Meteo · ${c.horas < 1 ? 'recién bajado' : 'hace ' + Math.round(c.horas) + ' h'}</span>
       <button class="btn btn--fantasma btn--sm" data-act="clima">Actualizar</button></p>
   </div>`;
 }
@@ -1420,17 +1424,13 @@ function renderWater() {
         ? `<p class="aviso aviso--atencion">⚠︎ Quedan menos de ${s.alertDays} días de agua.</p>`
         : ''}
 
-    <div class="card">
+    <div class="card card--medidor">
       <div class="result-bar agua"><span style="width:${pct.toFixed(1)}%"></span></div>
       <div class="gauge-legend">
         <strong>${nf(s.volume.volumeM3)} m³</strong> de ${nf(capacityM3, 0)} m³
         <small>estimado desde ${s.volume.source}${s.volume.anchorDate ? ' del ' + fmtDate(s.volume.anchorDate) : ''}${s.volume.sinceDays ? ` (hace ${s.volume.sinceDays} d)` : ''}</small>
       </div>
     </div>
-
-    ${renderProyeccion(s)}
-
-    ${renderClimaAgua(s)}
 
     <div class="card datos">
       <div><span>Demanda de hoy</span><strong>${nf(s.dailyM3, 2)} m³/día</strong></div>
@@ -1441,12 +1441,20 @@ function renderWater() {
       <div><span>Desnivel</span><strong>${nf(high - low)} m · ${nf(staticPressureBar(high - low), 2)} bar</strong></div>
     </div>
 
-    <h4>Turno de la junta de agua</h4>
-    <p class="hint">5 horas cada ${state.config.cicloTurnoDias || 15} días.</p>
-    <ul class="mini-list">
-      ${s.turns.map(t => `<li><span class="punto" style="background:#1c7ed6"></span>${fmtDate(t.date)}<b>${t.inDays === 0 ? 'hoy' : 'en ' + t.inDays + ' d'}</b></li>`).join('')}
-    </ul>
+    ${renderProyeccion(s)}
 
+    ${renderClimaAgua(s)}
+
+
+    <section class="bloque">
+      <h4>Turno de la junta de agua</h4>
+      <p class="hint">5 horas cada ${state.config.cicloTurnoDias || 15} días.</p>
+      <ul class="mini-list">
+        ${s.turns.map(t => `<li><span class="punto punto--agua"></span>${fmtDate(t.date)}<b>${t.inDays === 0 ? 'hoy' : 'en ' + t.inDays + ' d'}</b></li>`).join('')}
+      </ul>
+    </section>
+
+    <section class="bloque">
     <h4>Demanda por sector</h4>
     <p class="hint">Calculada sobre las ${state.plants.length} plantas registradas. Al sembrar los arándanos y aguacates nuevos, súbelos a la app para que la autonomía refleje la demanda real.</p>
     <ul class="mini-list">
@@ -1462,11 +1470,13 @@ function renderWater() {
     <ul class="mini-list">
       ${s.demand.bySpecies.map(x => `<li><span class="punto" style="background:${SPECIES[x.species]?.color}"></span>${escapeHtml(x.label)}<b>${Math.round(x.litres)} L/día</b></li>`).join('') || '<li>—</li>'}
     </ul>
+    </section>
 
+    <section class="bloque bloque--ancho">
     <h4>Eventos registrados</h4>
     <div class="card card--filas">${[...state.water].sort(byDateDesc).map(e => `
       <button class="list-row" data-water="${e.id}">
-        <span class="franja" style="background:${e.type === 'tanquero' ? '#e8590c' : '#1c7ed6'}"></span>
+        <span class="franja franja--${e.type === 'tanquero' ? 'tanquero' : 'agua'}"></span>
         <span class="fila-main">
           <strong>${cap2(e.type)}</strong>
           <small>${fmtDate(e.date)}${e.volumeM3 != null ? ` · ${e.volumeM3} m³` : ''}${e.levelM != null ? ` · nivel ${e.levelM} m` : ''}</small>
@@ -1475,6 +1485,7 @@ function renderWater() {
         <span class="fila-go"><svg class="icono icono--s" aria-hidden="true"><use href="#i-chevron-der"/></svg></span>
       </button>`).join('')}</div>
     ${state.water.length ? '' : '<p class="hint">Sin eventos.</p>'}
+    </section>
   `;
   $('#water-body').querySelectorAll('[data-water]').forEach(el =>
     el.addEventListener('click', () => openWaterForm(state.water.find(w => w.id === el.dataset.water))));

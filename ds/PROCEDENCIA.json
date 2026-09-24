@@ -3,7 +3,7 @@
   "version": "1.0.17",
   "origen": "https://github.com/franciscombp/mal",
   "directorio": "ds/",
-  "copiado": "2026-09-21",
+  "copiado": "2026-09-24",
   "fuentes": "sólo las del tema apps (Inter, Inter cursiva, JetBrains Mono)",
   "actualizar": "node scripts/vendor-ds.mjs <ruta-al-clon> && commitear ds/"
 }

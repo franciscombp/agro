@@ -138,6 +138,46 @@ satelitales en caché con tope de 1.200 entradas y precarga del área de la finc
 (Ajustes → «Descargar mapa del terreno», zoom 15–19). Toda escritura entra además en una
 cola local (`outbox`) para sincronizar después.
 
+## Móvil, tablet y escritorio
+
+Tres escalones, y cada uno responde a **cómo se sostiene el aparato**, no a un número
+redondo:
+
+| Ancho | Navegación | Contenido |
+|---|---|---|
+| hasta 699 px | Barra inferior, al alcance del pulgar | Una columna |
+| 700–1099 px | Rail lateral compacto (88 px, icono con rótulo) | Dos columnas |
+| 1100 px y más | Rail con rótulos al lado (232 px) | Dos columnas, ancho de lectura acotado |
+
+Antes había un solo corte, en 900 px, así que una tablet en vertical —768 px, el ancho
+de un iPad— se quedaba con la interfaz de teléfono: navegación de lado a lado y tarjetas
+de 700 px de ancho, renglones que el ojo pierde al volver a la izquierda.
+
+Dos vistas usan la anchura para decir algo, no para estirarse:
+
+- **Agua** pasa a tablero. En una sola columna hay que desplazar tres pantallas para
+  cruzar el estado del reservorio con la demanda por sector, que es justo la comparación
+  que se hace. A partir de 1.400 px son tres columnas y la curva ocupa dos, porque una
+  serie de tiempo necesita ancho y no alto.
+- **Tareas** reparte sus tres grupos en tres columnas a partir de 1.100 px. Son los tres
+  momentos en que se decide algo distinto, y lado a lado se ve de una vez cuánto hay
+  atrasado frente a cuánto viene.
+
+Las listas que no se agrupan se quedan en un ancho de lectura en vez de llegar al borde:
+una fila de tarea estirada a mil píxeles es una casilla, cuatro palabras y novecientos
+píxeles de nada.
+
+Los estados de puntero (`hover`) se declaran por **capacidad del aparato**
+(`@media (hover: hover) and (pointer: fine)`) y no por ancho, para que un portátil táctil
+no herede el hover pegado.
+
+## Claro y oscuro
+
+La app **no escribe ni una regla de tema**: habla roles del sistema y mal-ds resuelve los
+dos. El único sitio donde hizo falta intervenir fue el cielo de la vista 3D, que era un
+hexadecimal suelto y por eso seguía deslumbrando con el resto ya oscurecido — que es la
+prueba de que el sistema funciona: lo que habla en roles se adapta, lo que no, no.
+
 ## Interfaz: consume mal-ds
 
 Esta app **no tiene sistema de diseño propio**. Usa
@@ -170,7 +210,10 @@ npm run verifica:ds  # falla si ds/ se desvió del clon — para CI
 
 De `fonts/` se copian sólo las tres del tema `apps` (Inter, Inter cursiva y JetBrains
 Mono): las otras ocho son de los temas del periódico y la marca, y meterían 180 kB sin uso.
-`ds/PROCEDENCIA.json` deja anotada la versión y la fecha de la copia.
+`ds/PROCEDENCIA.json` deja anotada la versión y la fecha de la copia, y
+[`ds/NOTAS-PARA-EL-SISTEMA.md`](../ds/NOTAS-PARA-EL-SISTEMA.md) recoge lo que esta app
+tuvo que resolver por su cuenta porque el sistema no lo cubre todavía — que es la mitad
+útil de consumir un sistema de diseño.
 
 Dos detalles que resolvió la migración y conviene conocer:
 
