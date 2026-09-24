@@ -25,6 +25,32 @@ import { ET0_REF, RESERVA_SUELO_MM, lluviaEfectiva, contexto } from './clima.js'
    es EXACTAMENTE el de antes: el modelo no reescribe la finca, le añade los
    días que se salen de lo normal. */
 
+/* ── Etapa del cultivo ──────────────────────────────────────────────────────
+   Lo que faltaba del modelo. Un arándano en llenado de fruta pide bastante
+   más que el mismo arándano en reposo, y hasta ahora los dos pedían igual.
+
+   No se adivina de la fecha de siembra: en la sierra ecuatorial no hay una
+   estación que la fije, y un bloque puede ir adelantado respecto al vecino.
+   La declara quien está en la finca, por sector, igual que la fase de El Niño
+   en la app del huerto: inventar una fuente que no existe sería peor que
+   pedir un dato.
+
+   Sin declarar, el multiplicador es 1 y todo queda como estaba. */
+export const ETAPAS = {
+  reposo:      { label: 'Reposo',            kc: 0.35, dice: 'La planta no está creciendo: es cuando menos agua pide, y regar de más pudre raíz.' },
+  brotacion:   { label: 'Brotación',         kc: 0.65, dice: 'Empieza a mover hoja. Sube el consumo, todavía sin el pico.' },
+  floracion:   { label: 'Floración',         kc: 0.90, dice: 'Momento delicado: un susto de sequía aquí se paga en flor caída.' },
+  llenado:     { label: 'Llenado de fruta',  kc: 1.15, dice: 'El pico del año. Es la etapa donde faltar agua cuesta cosecha directamente.' },
+  cosecha:     { label: 'Cosecha',           kc: 1.00, dice: 'Consumo alto todavía, pero ya bajando.' },
+  poscosecha:  { label: 'Poscosecha',        kc: 0.70, dice: 'Se riega para que la planta reponga reservas, no para la fruta.' }
+};
+
+/** Multiplicador de la etapa declarada en el sector de la planta. */
+export function factorEtapa(plant, sectors = []) {
+  const sec = sectors.find(s => s.id === plant.sectorId);
+  return ETAPAS[sec?.etapa]?.kc ?? 1;
+}
+
 /** m² de suelo que cubre una planta adulta, deducidos del catálogo. */
 export function areaPlantaM2(sp) {
   const kc = sp.kc || 0.8;
@@ -50,9 +76,9 @@ export function fraccionEdad(plant, sp, hoy = new Date()) {
  * Milímetros que hay que reponer a una planta en un día dado, después de la
  * lluvia y de lo que el suelo tenga guardado.
  */
-export function mmPlantaDia(plant, { et0 = ET0_REF, lluvia = 0, reservaMm = 0 } = {}) {
+export function mmPlantaDia(plant, { et0 = ET0_REF, lluvia = 0, reservaMm = 0, sectors = [] } = {}) {
   const sp = SPECIES[plant.species] || SPECIES.otro;
-  const etcMm = et0 * (sp.kc || 0.8) * fraccionEdad(plant, sp);
+  const etcMm = et0 * (sp.kc || 0.8) * fraccionEdad(plant, sp) * factorEtapa(plant, sectors);
   const cubierto = lluviaEfectiva(lluvia) + Math.max(0, reservaMm);
   return Math.max(0, etcMm - cubierto);
 }
@@ -77,7 +103,8 @@ export function demand(plants, sectors, clima = contexto(null)) {
   const dia = {
     et0: clima.et0Hoy ?? ET0_REF,
     lluvia: clima.lluviaHoy ?? 0,
-    reservaMm: clima.reservaMm ?? 0
+    reservaMm: clima.reservaMm ?? 0,
+    sectors
   };
   let totalL = 0;
   let totalRef = 0;     // las MISMAS plantas en clima de referencia
@@ -91,7 +118,7 @@ export function demand(plants, sectors, clima = contexto(null)) {
     // referencia fueran las plantas adultas, un huerto joven parecería estar
     // ahorrando agua por el clima cuando lo que pasa es que aún no ha crecido,
     // y la pantalla acabaría dando una explicación falsa.
-    totalRef += litrosPlantaDia(p, { et0: ET0_REF, lluvia: 0, reservaMm: 0 });
+    totalRef += litrosPlantaDia(p, { et0: ET0_REF, lluvia: 0, reservaMm: 0, sectors });
     totalAdulto += SPECIES[p.species]?.lppd ?? SPECIES.otro.lppd;
     bySpecies.set(p.species, (bySpecies.get(p.species) || 0) + litros);
     const key = p.sectorId || 'sin-sector';
@@ -206,13 +233,14 @@ export function autonomy(volumeM3, dailyM3) {
  * Pasado el pronóstico se sigue con el promedio de esos días, que es lo mejor
  * que se puede decir sin inventar.
  */
-export function proyeccion({ volumeM3, plants, clima, dias = 21, manualM3 = null }) {
+export function proyeccion({ volumeM3, plants, sectors = [], clima, dias = 21, manualM3 = null,
+                             reservaMax = clima?.reservaMaxMm ?? RESERVA_SUELO_MM }) {
   const futuro = clima?.futuro || [];
   const vivas = plants.filter(p => p.status !== 'muerto');
 
   const consumoDia = (d, reservaMm) => {
     if (manualM3 != null) return manualM3;
-    return vivas.reduce((sum, p) => sum + litrosPlantaDia(p, { ...d, reservaMm }), 0) / 1000;
+    return vivas.reduce((sum, p) => sum + litrosPlantaDia(p, { ...d, reservaMm, sectors }), 0) / 1000;
   };
 
   // Después del pronóstico: el promedio de lo pronosticado, no el día de hoy,
@@ -231,7 +259,7 @@ export function proyeccion({ volumeM3, plants, clima, dias = 21, manualM3 = null
     const d = futuro[i] || media;
     // La lluvia del día entra primero al suelo; lo que el suelo no cubre es lo
     // que hay que sacar del reservorio.
-    reserva = Math.min(RESERVA_SUELO_MM, reserva + lluviaEfectiva(d.lluvia ?? 0));
+    reserva = Math.min(reservaMax, reserva + lluviaEfectiva(d.lluvia ?? 0));
     const gasto = consumoDia({ ...d, lluvia: 0 }, reserva);
     // Y el suelo se vacía por lo que la planta bebió de él.
     reserva = Math.max(0, reserva - (d.et0 ?? ET0_REF) * 0.85);
@@ -273,7 +301,7 @@ export function upcomingTurns(config, count = 4) {
 
 /** Resumen completo para la pantalla de agua. */
 export function summary({ plants, sectors, water, config, clima }) {
-  const ctx = contexto(clima);
+  const ctx = contexto(clima, { reservaMax: config.reservaSueloMm ?? RESERVA_SUELO_MM });
   const d = demand(plants, sectors, ctx);
   const manualM3 = config.demandaDiariaM3 != null ? config.demandaDiariaM3 : null;
   const dailyM3 = manualM3 != null ? manualM3 : d.totalM3;
@@ -287,7 +315,7 @@ export function summary({ plants, sectors, water, config, clima }) {
   const turns = upcomingTurns(config);
   const alertDays = config.alertaAutonomiaDias ?? 7;
 
-  const proy = proyeccion({ volumeM3: vol.volumeM3, plants, clima: ctx, manualM3 });
+  const proy = proyeccion({ volumeM3: vol.volumeM3, plants, sectors, clima: ctx, manualM3 });
   const days = proy.diasHastaVacio ?? autonomy(vol.volumeM3, dailyM3);
 
   // La pregunta que de verdad se hace quien maneja la finca no es "cuántos
@@ -298,7 +326,7 @@ export function summary({ plants, sectors, water, config, clima }) {
   let deficitM3 = 0;
   let llegaAlTurno = true;
   if (gapDays != null) {
-    const hasta = proyeccion({ volumeM3: vol.volumeM3, plants, clima: ctx, dias: Math.max(1, gapDays), manualM3 });
+    const hasta = proyeccion({ volumeM3: vol.volumeM3, plants, sectors, clima: ctx, dias: Math.max(1, gapDays), manualM3 });
     const ultimo = hasta.curva[hasta.curva.length - 1];
     llegaAlTurno = hasta.diasHastaVacio == null && ultimo.volumeM3 > 0;
     if (!llegaAlTurno) {

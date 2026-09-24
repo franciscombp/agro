@@ -77,8 +77,12 @@ cada 15 días, esa diferencia *es* la decisión. Ahora el cálculo es el de rieg
 vida (FAO-56), en tres pasos:
 
 1. La atmósfera pide **ET0** milímetros al día, y ese dato se mide (Open-Meteo, sin clave).
-2. Cada planta pide `ET0 × Kc`, con el Kc de su especie y **corregido por edad**: un
-   arándano recién sembrado no bebe como uno de cuatro años.
+2. Cada planta pide `ET0 × Kc`, con el Kc de su especie, **corregido por edad** —un
+   arándano recién sembrado no bebe como uno de cuatro años— y por la **etapa del
+   cultivo** declarada en su sector: reposo ×0,35, llenado de fruta ×1,15. Esa etapa no
+   se deduce de la fecha de siembra (en la sierra no hay una estación que la fije, y un
+   bloque puede ir adelantado respecto al vecino): la declara quien está en la finca, y
+   la app avisa cuando lleva más de 90 días sin tocarse, porque una etapa vieja miente.
 3. De ahí se descuenta la **lluvia aprovechable** —los primeros 2 mm se evaporan y del
    resto entra el 75 %— y lo que el **suelo tiene guardado**, hasta 25 mm de reserva en
    la zona de raíces. Sin esa reserva el modelo olvidaría la lluvia al día siguiente de
@@ -88,6 +92,15 @@ Los milímetros se vuelven litros multiplicando por los m² que cubre la planta,
 se deduce del `lppd` que ya estaba en el catálogo (`área = lppd / (ET0_ref × Kc)`). Por
 eso **en clima de referencia y con plantas adultas el resultado es exactamente el de
 antes**: el modelo no reescribe la finca, le añade los días que se salen de lo normal.
+
+**La proyección se ve.** La curva de 21 días que decide todo esto está dibujada en la
+pantalla de agua: una sola serie —el volumen del reservorio—, los 7 días pronosticados en
+línea llena y el resto punteado, porque lo que se sabe y lo que se supone tienen que
+distinguirse. El eje llega hasta la capacidad del reservorio y no hasta el volumen de hoy,
+que dibujaría igual de lleno uno al 20 % que uno al 90 %. La lluvia **no** lleva un segundo
+eje —dos escalas en un gráfico inventan una relación que los datos no tienen—: los días con
+lluvia pronosticada se marcan con un punto sobre el eje. Si la línea toca el fondo antes del
+turno, la franja entre ambos es el déficit dibujado.
 
 **La autonomía mira el pronóstico.** Dividir el volumen por una demanda plana se equivoca
 en los dos sentidos y siempre en el peor momento. La proyección va día por día con los 7
@@ -228,11 +241,12 @@ en el punto, «Fijar con mi GPS» las corrige y el modelo de terreno se recalcul
   autenticación y resolución de conflictos.
 - Las fotos se guardan como data URL dentro de IndexedDB. Sirve para decenas de fotos,
   no para cientos: con sincronización deberían ir a almacenamiento de objetos.
-- La demanda de agua ya se ajusta por clima y por edad, pero **no por etapa fenológica**:
-  un arándano en llenado de fruta pide más que el mismo arándano en reposo, y eso el
-  modelo todavía no lo distingue. Haría falta registrar la etapa de cada bloque.
+- La etapa del cultivo hay que **declararla y mantenerla al día**. La app avisa a los 90
+  días, pero una etapa mal puesta desvía el riego en un ±15 % sin que nada chille. Las
+  etapas que trae sembradas son de ejemplo, como el resto de los datos de arranque.
 - Los 25 mm de reserva del suelo son un valor razonable para el suelo volcánico de la
-  zona, no una medición. Un análisis de suelo o un tensiómetro lo afinarían.
+  zona, no una medición. Se ajustan en Ajustes; un análisis de suelo o un tensiómetro
+  dirían el número de verdad.
 - El saldo histórico del reservorio se simula con la demanda de referencia, no con el
   clima de cada día pasado: guardar la serie diaria permitiría afinarlo, y aplicar el
   clima de esta semana a meses anteriores sería peor que no aplicarlo.

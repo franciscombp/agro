@@ -167,6 +167,9 @@ const SEED_SECTORS = [
     ]
   },
   {
+    // Etapas de ejemplo, como el resto de los datos sembrados: hay que
+    // confirmarlas en el terreno antes de fiarse del riego que calculan.
+    etapa: 'llenado', etapaDesde: isoDaysAgo(20),
     id: 'sec-aguacates', name: 'Aguacates nuevos', color: '#2f9e44', irrigationZone: 'Zona media',
     polygon: [
       [-1.0794900, -78.6249500], [-1.0794900, -78.6245500],
@@ -174,6 +177,7 @@ const SEED_SECTORS = [
     ]
   },
   {
+    etapa: 'poscosecha', etapaDesde: isoDaysAgo(35),
     id: 'sec-perales', name: 'Perales', color: '#f08c00', irrigationZone: 'Zona media',
     polygon: [
       [-1.0794900, -78.6245200], [-1.0794800, -78.6243000],
