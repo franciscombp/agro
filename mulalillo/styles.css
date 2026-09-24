@@ -47,7 +47,14 @@ body { overscroll-behavior: none; }
 .view.active { display: block; animation: mal-subir .28s var(--app-ease) both; }
 #view-map, #view-3d { padding: 0; overflow: hidden; }
 #map, #three { position: absolute; inset: 0; }
-#three { background: #aecfe6; }
+/* El cielo del relieve. Era un azul fijo, así que en modo oscuro la app
+   entera se oscurecía menos esta vista, que seguía deslumbrando. */
+#three { background: var(--cielo-3d); }
+:root { --cielo-3d: #aecfe6; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-tema="claro"]) { --cielo-3d: #16202b; }
+}
+:root[data-tema="oscuro"] { --cielo-3d: #16202b; }
 #three canvas { display: block; width: 100%; height: 100%; }
 
 .list-head {
@@ -234,52 +241,6 @@ button.fila-main {
 }
 .big-action .icono { width: 30px; height: 30px; }
 
-/* ============================================================
-   Escritorio: la navegación pasa a rail lateral
-   ============================================================ */
-@media (min-width: 900px) {
-  .navbar {
-    top: 0; bottom: 0; left: 0; right: auto; width: var(--rail);
-    flex-direction: column; align-items: stretch; justify-content: flex-start;
-    gap: 4px; padding: 18px 12px;
-    border-top: none; border-right: var(--mal-separador);
-  }
-  .navbar::before {
-    content: "Finca Mulalillo";
-    font-size: var(--app-t-title); font-weight: 700; letter-spacing: -.01em;
-    color: var(--app-ink); padding: 10px 14px 26px;
-  }
-  .nav-item {
-    flex: 0 0 auto; flex-direction: row; justify-content: flex-start; gap: 12px;
-    padding: 12px 14px; border-radius: var(--app-r-s);
-    font-size: var(--app-t-body); color: var(--app-ink-2);
-  }
-  .nav-item:hover { background: var(--app-surface-2); }
-  .nav-item[aria-current="page"] {
-    background: color-mix(in oklab, var(--app-brand) 10%, var(--app-surface));
-    font-weight: 600;
-  }
-
-  .topbar { left: var(--rail); }
-  .view { inset: var(--topbar) 0 0 var(--rail); padding: 28px 40px 60px; }
-  #view-map, #view-3d { padding: 0; }
-  .view > .list-head, .view > .list, .view > .seg,
-  .view > .filters-row, .view > #water-body {
-    max-width: 820px; margin-left: auto; margin-right: auto;
-  }
-  .view > .seg { display: inline-flex; }
-  .list { display: grid; grid-template-columns: 1fr 1fr; align-items: start; }
-  /* Una lista de filas es una sola pieza: ocupa el ancho, no media columna. */
-  .list > .card--filas, .list > .card--ancha,
-  .list > p.hint, .list > .aviso { grid-column: 1 / -1; }
-
-  .modal--hoja {
-    margin: auto 28px 28px auto; max-width: 460px;
-    border-radius: var(--app-r-m);
-  }
-  .three-controls { left: auto; right: 20px; width: 360px; }
-}
-
 /* Tres cifras del clima en una fila: la demanda de hoy se lee de un vistazo
    junto a lo que la causa. En pantalla angosta caben las tres. */
 .datos--fila { grid-template-columns: repeat(3, 1fr); gap: 10px; }
@@ -340,3 +301,179 @@ button.fila-main {
 .cuando--atrasada { color: var(--app-warn); }
 .cuando--urgente { color: var(--app-danger); }
 .cuando--pronto { color: var(--app-ink-2); }
+
+/* ============================================================
+   Tablet y escritorio
+   ============================================================
+   Antes había un solo corte, en 900 px: por debajo, la interfaz de móvil.
+   Eso dejaba a la tablet en vertical (768 px es el ancho de un iPad) con
+   navegación inferior de lado a lado y una sola columna de tarjetas de 700 px
+   de ancho — líneas de texto que ningún ojo sigue cómodo, y la mitad de la
+   pantalla desaprovechada.
+
+   Ahora son tres escalones, y cada uno responde a cómo se sostiene el aparato:
+
+     · hasta 699 px — teléfono en la mano, en el terreno. Navegación abajo,
+       al alcance del pulgar. No se toca.
+     · 700–1099 px — tablet. Rail lateral compacto (iconos con rótulo) y dos
+       columnas: la tablet se apoya o se sostiene con las dos manos, así que
+       el pulgar deja de mandar y gana la vista.
+     · 1100 px en adelante — escritorio. Rail con rótulos al lado y tablero.
+   ============================================================ */
+
+/* ---------- Tablet: rail compacto ---------- */
+@media (min-width: 700px) {
+  :root { --rail: 88px; }
+
+  .navbar {
+    top: 0; bottom: 0; left: 0; right: auto; width: var(--rail);
+    flex-direction: column; align-items: stretch; justify-content: flex-start;
+    gap: 2px; padding: 14px 8px;
+    padding-bottom: calc(14px + env(safe-area-inset-bottom));
+    border-top: none; border-right: var(--mal-separador);
+  }
+  .nav-item {
+    flex: 0 0 auto; padding: 10px 4px; border-radius: var(--app-r-s);
+    gap: 4px; color: var(--app-ink-2);
+  }
+  .nav-item:hover { background: var(--app-surface-2); }
+  .nav-item[aria-current="page"] {
+    background: color-mix(in oklab, var(--app-brand) 10%, var(--app-surface));
+    font-weight: 600;
+  }
+
+  .topbar { left: var(--rail); }
+  .view { inset: var(--topbar) 0 0 var(--rail); padding: 24px 28px 48px; }
+  #view-map, #view-3d { padding: 0; }
+
+  /* Dos columnas de tarjetas. Las piezas que son una sola cosa —una lista de
+     filas, un aviso— cruzan entera; partirlas en dos columnas las rompe. */
+  .list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
+  .list > .card--filas, .list > .card--ancha,
+  .list > p.hint, .list > .aviso, .list > h4 { grid-column: 1 / -1; }
+
+  .view > .seg { display: inline-flex; }
+
+  /* Ancho máximo de lectura. Sin esto, en un monitor ancho una tarjeta de
+     texto llega a 1.200 px y la vista pierde el renglón al volver. */
+  .view > .list-head, .view > .list, .view > .seg,
+  .view > .filters-row, .view > #water-body,
+  .view > #tasks-list, .view > #sectors-list { max-width: 1040px; margin-inline: auto; }
+
+  /* La hoja deja de venir de abajo: con el rail a la izquierda, el gesto de
+     móvil no significa nada y el diálogo puede quedarse donde cae la vista. */
+  .modal--hoja { margin: auto 28px 28px auto; max-width: 460px; border-radius: var(--app-r-m); }
+  .three-controls { left: auto; right: 20px; width: 360px; }
+}
+
+/* ---------- Escritorio: rail con rótulos ---------- */
+@media (min-width: 1100px) {
+  :root { --rail: 232px; }
+
+  .navbar { gap: 4px; padding: 18px 12px; }
+  .navbar::before {
+    content: "Finca Mulalillo";
+    font-size: var(--app-t-title); font-weight: 700; letter-spacing: -.01em;
+    color: var(--app-ink); padding: 10px 14px 26px;
+  }
+  .nav-item {
+    flex-direction: row; justify-content: flex-start; gap: 12px;
+    padding: 12px 14px; font-size: var(--app-t-body);
+  }
+  .view { padding: 28px 40px 60px; }
+}
+
+/* ---------- El agua como tablero ----------
+   Es la pantalla con más piezas y la única que se consulta sentado. En una
+   sola columna obliga a desplazar tres pantallas para cruzar el estado del
+   reservorio con la demanda por sector, que es justo la comparación que se
+   hace. En dos columnas las dos cosas se ven a la vez. */
+@media (min-width: 700px) {
+  #water-body {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px 20px; align-items: start;
+  }
+  #water-body > .aviso,
+  #water-body > .bloque--ancho,
+  /* La curva es una serie de tiempo: necesita ancho, no alto. Metida en media
+     columna se aplana hasta no distinguirse de una raya. */
+  #water-body > .proyeccion { grid-column: 1 / -1; }
+  #water-body > .bloque > h4:first-child { margin-top: 0; }
+  #water-body .card, #water-body .bloque { margin-bottom: 0; }
+}
+@media (min-width: 1400px) {
+  #water-body { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  /* Con tres columnas la curva se queda estrecha y plana: ocupa dos. */
+  #water-body > .proyeccion { grid-column: span 2; }
+}
+
+/* Los colores del agua salen de roles del sistema, no de hexadecimales
+   sueltos: así el modo oscuro y cualquier cambio de marca los siguen. */
+.punto--agua { background: var(--app-info); }
+.franja--agua { background: var(--app-info); }
+.franja--tanquero { background: var(--app-warn); }
+
+/* La curva no puede estirarse sin freno: a 700 px de ancho el SVG escalaba
+   también el texto y "turno · 9 d" salía en cuerpo de titular. */
+.proy-svg { max-height: 190px; }
+
+/* ---------- Tareas en pantalla ancha ----------
+   Una fila de tarea estirada a mil píxeles es una casilla, cuatro palabras y
+   novecientos píxeles de nada: la lista de móvil estirada, que es justo lo que
+   hace que una app parezca no pensada para escritorio.
+
+   Los tres grupos pasan a tres columnas. No es decoración: son los tres
+   momentos en que se decide algo distinto, y puestos lado a lado se ve de una
+   vez cuánto hay atrasado frente a cuánto viene — que en una tira vertical
+   hay que reconstruir desplazando. */
+@media (min-width: 1100px) {
+  #tasks-list:has(.col-tareas) {
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 20px; align-items: start; margin-top: 18px;
+  }
+  #tasks-list > .aviso { grid-column: 1 / -1; }
+  .col-tareas .grupo-tareas { margin-top: 0; }
+  /* En columna la tarjeta manda menos que el grupo: basta una línea. */
+  .col-tareas .list-row { padding-block: 12px; }
+}
+
+/* Las listas de filas que NO se agrupan se quedan en un ancho de lectura:
+   estiradas hasta el borde, el ojo pierde el renglón al volver a la izquierda. */
+@media (min-width: 1100px) {
+  #sectors-list, #plants-list, #water-body .bloque--ancho { max-width: 780px; }
+}
+
+/* ---------- Detalles de puntero y de pantalla ancha ---------- */
+@media (min-width: 1100px) {
+  /* El nombre de la finca ya lo lleva el rail: repetirlo en la barra ocupa
+     el sitio sin decir nada nuevo. Queda el lugar y la versión, que cambian. */
+  .topbar-title strong { display: none; }
+  .topbar-title span { font-size: var(--app-t-caption); }
+}
+
+/* Con ratón hay estado intermedio entre "nada" y "pulsado", y sin él una
+   lista de filas no parece pulsable. Se declara por capacidad del aparato,
+   no por ancho: un portátil táctil no debe heredar el hover pegado. */
+@media (hover: hover) and (pointer: fine) {
+  .list-row { transition: background .12s ease; }
+  .list-row:hover { background: var(--app-surface-2); }
+  .card--filas .list-row:hover .fila-go { color: var(--app-ink-2); }
+  .mini-list li { transition: background .12s ease; }
+}
+
+/* Foco visible en todo lo que se puede tabular: en escritorio se navega con
+   teclado y el sistema sólo lo garantiza en sus propios componentes. */
+.list-row:focus-visible, .proy-svg:focus-visible,
+[data-sector]:focus-visible, [data-task]:focus-visible, [data-water]:focus-visible {
+  outline: 2px solid var(--app-brand); outline-offset: -2px; border-radius: var(--app-r-s);
+}
+
+.punto--hecha { background: var(--app-ok); }
+.punto--pendiente { background: var(--app-warn); }
+
+/* Un botón metido dentro de un párrafo parte la frase por donde caiga el
+   ajuste de línea. Va en su propia fila, con lo que lo explica al lado. */
+.pie-accion {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap; margin-top: 10px;
+}

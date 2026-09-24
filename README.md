@@ -27,7 +27,7 @@ App web para **agricultura de subsistencia rural y huertos urbanos** (escala má
 - 🌒 Calendario lunar con consejos de siembra tradicionales
 - 🧮 **Calculadora de ganancia** por m², por planta, por árbol o por animal, con tres modelos: ciclo único, producción anual y producción mensual — precios referenciales de mercados de Ecuador
 - 🪴 Filtro por espacio: macetas/balcón, huerto familiar o parcela
-- 👆 Navegación por **swipe** entre pestañas
+- 👆 Navegación por **swipe** entre pestañas; en tablet (desde 700 px) y escritorio, rail lateral y dos columnas
 - 📲 **PWA instalable**: se agrega a la pantalla de inicio como app nativa y **funciona sin internet** (clave para zonas rurales con mala señal); guarda el último clima y los últimos precios consultados como respaldo offline
 
 ## Estructura
@@ -35,7 +35,7 @@ App web para **agricultura de subsistencia rural y huertos urbanos** (escala má
 Todos los archivos de la app viven en la raíz del proyecto:
 
 - `index.html` — pantallas y barra de pestañas (Hoy · Almanaque · Mercado · Mi huerto · Explorar)
-- `ds/` — [mal-ds](https://github.com/franciscombp/mal/tree/main/ds) vendorizado y fijado a una versión: el sistema de diseño del proyecto. Lo consume la app de la finca (`mulalillo/`). Se actualiza con `npm run vendor:ds`
+- `ds/` — [mal-ds](https://github.com/franciscombp/mal/tree/main/ds) vendorizado y fijado a una versión: el sistema de diseño del proyecto. Lo consume la app de la finca (`mulalillo/`). Se actualiza con `npm run vendor:ds` y se comprueba con `npm run verifica:ds`. `ds/NOTAS-PARA-EL-SISTEMA.md` recoge lo aprendido usándolo
 - `styles/fonts.css` — tipografía del proyecto (Inter y JetBrains Mono) apuntando a los archivos de `ds/fonts/`, no a una segunda copia. Desaparece cuando esta app migre a `ds/`
 - `styles/design-system.css` — tokens heredados que todavía usa esta app; pendiente de migrar a `ds/`
 - `styles.css` — componentes de esta app, mobile-first con rail lateral en desktop
