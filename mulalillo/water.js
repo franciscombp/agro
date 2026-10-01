@@ -173,17 +173,22 @@ export function currentVolumeM3(events, config, dailyM3) {
   let volume = 0;
   let source = 'sin datos';
   let anchorDate = first.date;
+  let medidoA = null;
   let day = new Date(first.date + 'T00:00:00Z');
 
   for (let i = 0; i <= totalDays; i++) {
     const key = day.toISOString().slice(0, 10);
     const dayEvents = byDay.get(key) || [];
 
-    const reading = dayEvents.find(isReading);
+    // Si el mismo día hay medición a mano y de sensor, gana la de mano: quien
+    // va a medir con la regla teniendo un sensor suele ir porque no se fía de él.
+    const reading = dayEvents.find(e => isReading(e) && e.origen !== 'sensor')
+      || dayEvents.find(isReading);
     if (reading) {
       volume = Math.min(capacity, (reading.levelM / alturaUtil) * capacity);
-      source = 'nivel medido';
+      source = reading.origen === 'sensor' ? 'sensor del reservorio' : 'nivel medido';
       anchorDate = key;
+      medidoA = reading.medidoA || null;
     }
 
     for (const e of dayEvents.filter(isInflow)) {
@@ -205,6 +210,7 @@ export function currentVolumeM3(events, config, dailyM3) {
     volumeM3: volume,
     source,
     anchorDate,
+    medidoA,
     sinceDays: daysBetween(anchorDate, today)
   };
 }
@@ -300,8 +306,12 @@ export function upcomingTurns(config, count = 4) {
 }
 
 /** Resumen completo para la pantalla de agua. */
-export function summary({ plants, sectors, water, config, clima }) {
-  const ctx = contexto(clima, { reservaMax: config.reservaSueloMm ?? RESERVA_SUELO_MM });
+export function summary({ plants, sectors, water, config, clima, sensores = null }) {
+  const ctx = contexto(clima, {
+    reservaMax: config.reservaSueloMm ?? RESERVA_SUELO_MM,
+    lluviaLocal: sensores?.lluviaPorDia || null,
+    reservaMedida: sensores?.reserva?.mm ?? null
+  });
   const d = demand(plants, sectors, ctx);
   const manualM3 = config.demandaDiariaM3 != null ? config.demandaDiariaM3 : null;
   const dailyM3 = manualM3 != null ? manualM3 : d.totalM3;

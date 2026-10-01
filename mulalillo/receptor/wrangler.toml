@@ -1,0 +1,17 @@
+# Configuración del receptor para Cloudflare Workers.
+# Pasos completos en ../SENSORES.md.
+#
+#   npx wrangler kv namespace create LECTURAS   → pega el id abajo
+#   npx wrangler secret put TOKEN_ESCRITURA      → el que va en TTN / Home Assistant
+#   npx wrangler secret put TOKEN_LECTURA        → el que va en la app
+#   npx wrangler deploy
+#
+# Los tokens NUNCA van en este archivo: este repositorio es público.
+
+name = "mulalillo-receptor"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+
+[[kv_namespaces]]
+binding = "LECTURAS"
+id = "PEGA_AQUI_EL_ID_DEL_NAMESPACE"
