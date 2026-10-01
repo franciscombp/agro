@@ -9,6 +9,7 @@ import * as water from './water.js';
 import { preview as plantingPreview, LAYOUTS } from './planting.js';
 import * as hyd from './hydraulics.js';
 import * as clima from './clima.js';
+import * as sensores from './sensores.js';
 import {
   areaM2, perimeterM, fmtArea, fmtM, centroid, pointInRing,
   interpolateElevation, staticPressureBar, bbox
@@ -18,12 +19,13 @@ const INFRA_TYPES = ['reservorio', 'casa', 'establo', 'cuyera', 'bomba', 'filtro
 const TASK_TYPES = ['riego', 'poda', 'fertilización', 'fumigación', 'cosecha', 'siembra', 'otro'];
 const WATER_TYPES = ['llenado_acequia', 'tanquero', 'riego', 'medición_nivel'];
 const STATUSES = ['sano', 'atención', 'enfermo', 'muerto'];
-const BUILD = 'v14';
+const BUILD = 'v15';
 
 const state = {
   parcel: { id: 'parcel-mulalillo', name: 'Finca Mulalillo', boundary: BOUNDARY },
   sectors: [], plants: [], infra: [], tasks: [], water: [], elevations: [], config: {},
-  clima: null            // serie de ET0 y lluvia; null = todavía sin bajar
+  clima: null,           // serie de ET0 y lluvia; null = todavía sin bajar
+  lecturas: []           // lo que han mandado los sensores
 };
 
 let farmMap = null;
@@ -48,6 +50,64 @@ async function boot() {
   registerServiceWorker();
   watchConnectivity();
   refrescarClima();     // en segundo plano: la app ya está usable sin esto
+  sincronizarSensores();
+  // Mientras la app está abierta y a la vista, cada 15 minutos. Un sensor
+  // LoRa manda cada 20–60: preguntar más seguido sólo gasta batería del
+  // teléfono y datos móviles.
+  setInterval(() => { if (document.visibilityState === 'visible') sincronizarSensores(); }, 15 * 60000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') sincronizarSensores();
+  });
+}
+
+/** Configuración de sensores, con lo que falte rellenado. */
+function cfgSensores() {
+  return { aparatos: {}, ...(state.config.sensores || {}) };
+}
+
+/**
+ * Trae lecturas nuevas del receptor y rehace lo que se deriva de ellas. En
+ * silencio salvo que se pida: que el receptor no responda no es noticia cada
+ * quince minutos, y el estado de cada aparato ya lo dice en pantalla.
+ */
+let sincronizando = null;
+async function sincronizarSensores({ avisar = false } = {}) {
+  const cfg = cfgSensores();
+  if (!cfg.url) return null;
+  if (sincronizando) return sincronizando;
+  sincronizando = (async () => {
+    const r = await sensores.sincronizar(cfg);
+    if (r.ok) {
+      state.config = await db.saveConfig({ sensores: { ...cfg, ultimaSync: r.hasta, ultimoError: null } });
+      await sensores.aplicar(cfg.aparatos);
+      await reload();
+      renderAll();
+    } else {
+      state.config = await db.saveConfig({ sensores: { ...cfg, ultimoError: r.motivo } });
+    }
+    if (avisar) toast(r.ok ? `${r.nuevas} lecturas nuevas` : `Sensores: ${r.motivo}`);
+    return r;
+  })();
+  try { return await sincronizando; } finally { sincronizando = null; }
+}
+
+/**
+ * Lo que las pantallas necesitan de los sensores, calculado una vez. Lo que
+ * no tiene aparato asignado no entra en el modelo: aparece en la lista para
+ * poder reconocerlo, pero hasta que alguien diga qué mide, no decide nada.
+ */
+function resumenSensores() {
+  const cfg = cfgSensores();
+  if (!state.lecturas.length) return null;
+  return {
+    lluviaPorDia: sensores.lluviaPorDia(state.lecturas, cfg.aparatos),
+    reserva: sensores.reservaMedida(state.lecturas, cfg.aparatos, {
+      reservaMax: state.config.reservaSueloMm ?? clima.RESERVA_SUELO_MM,
+      cc: cfg.sueloCC ?? sensores.SUELO_CC,
+      pmp: cfg.sueloPMP ?? sensores.SUELO_PMP
+    }),
+    aparatos: sensores.estadoAparatos(state.lecturas, cfg.aparatos)
+  };
 }
 
 /**
@@ -177,6 +237,7 @@ async function reload() {
   state.config = config;
   if (parcels[0]) state.parcel = parcels[0];
   state.clima = await clima.leerCache();
+  state.lecturas = await db.all('lecturas');
 }
 
 /** Recalcula todo lo derivado y repinta las vistas activas. */
@@ -1276,7 +1337,7 @@ function buildPlan() {
     escribir(`PRÓXIMAS (${resto.length})`, resto);
   }
 
-  const w = water.summary({ ...state, clima: state.clima });
+  const w = water.summary({ ...state, clima: state.clima, sensores: resumenSensores() });
   lineas.push('AGUA');
   lineas.push(`• Reservorio estimado: ${nf(w.volume.volumeM3)} m³ de ${nf(state.config.reservorioVolumenM3 || 0, 0)} m³`);
   lineas.push(`• Alcanza para: ${w.proyeccion.diasHastaVacio != null
@@ -1354,8 +1415,25 @@ function taskLine(t) {
  */
 /** El día de hoy según el clima bajado. Sin clima, el de referencia. */
 function diaDeHoy() {
-  const c = clima.contexto(state.clima, { reservaMax: state.config.reservaSueloMm ?? clima.RESERVA_SUELO_MM });
+  const sen = resumenSensores();
+  const c = clima.contexto(state.clima, {
+    reservaMax: state.config.reservaSueloMm ?? clima.RESERVA_SUELO_MM,
+    lluviaLocal: sen?.lluviaPorDia || null,
+    reservaMedida: sen?.reserva?.mm ?? null
+  });
   return { et0: c.et0Hoy, lluvia: c.lluviaHoy, reservaMm: c.reservaMm, sectors: state.sectors };
+}
+
+/** La barra de agua en el suelo, con de dónde sale el número. */
+function bloqueReserva(c) {
+  return `<div class="reserva">
+      <span>Agua guardada en el suelo${c.reservaOrigen === 'sonda' ? ' · <b>medida por la sonda</b>' : ' · estimada'}</span>
+      <div class="result-bar agua"><span style="width:${Math.min(100, (c.reservaMm / c.reservaMaxMm) * 100).toFixed(0)}%"></span></div>
+      <small>${nf(c.reservaMm, 0)} de ${c.reservaMaxMm} mm · ${
+        c.reservaMm >= c.reservaMaxMm * 0.8 ? 'el suelo está cargado, hoy no hace falta regar'
+        : c.reservaMm > 3 ? 'todavía hay reserva, se puede estirar un día o dos'
+        : 'el suelo está seco: lo que pidan las plantas sale del reservorio'}</small>
+    </div>`;
 }
 
 function renderClimaAgua(s) {
@@ -1364,6 +1442,7 @@ function renderClimaAgua(s) {
 
   if (!c.conocido) {
     return `<div class="card">
+      ${c.reservaOrigen === 'sonda' ? bloqueReserva(c) : ''}
       <p class="hint">Demanda calculada con el clima de referencia de la zona
       (ET0 ${clima.ET0_REF} mm/día, sin lluvia): todavía no se ha podido bajar el clima
       real de este punto.</p>
@@ -1382,14 +1461,7 @@ function renderClimaAgua(s) {
       <div><span>Lluvia 7 d</span><strong>${nf(c.lluviaFutura, 0)} mm</strong></div>
     </div>
 
-    <div class="reserva">
-      <span>Agua guardada en el suelo</span>
-      <div class="result-bar agua"><span style="width:${Math.min(100, (c.reservaMm / c.reservaMaxMm) * 100).toFixed(0)}%"></span></div>
-      <small>${nf(c.reservaMm, 0)} de ${c.reservaMaxMm} mm · ${
-        c.reservaMm >= c.reservaMaxMm * 0.8 ? 'el suelo está cargado, hoy no hace falta regar'
-        : c.reservaMm > 3 ? 'todavía hay reserva, se puede estirar un día o dos'
-        : 'el suelo está seco: lo que pidan las plantas sale del reservorio'}</small>
-    </div>
+    ${bloqueReserva(c)}
 
     <p class="hint">${
       d.totalL === 0
@@ -1410,7 +1482,7 @@ function renderClimaAgua(s) {
 }
 
 function renderWater() {
-  const s = water.summary({ ...state, clima: state.clima });
+  const s = water.summary({ ...state, clima: state.clima, sensores: resumenSensores() });
   const days = Number.isFinite(s.autonomyDays) ? s.autonomyDays : null;
   const capacityM3 = state.config.reservorioVolumenM3 || 0;
   const pct = capacityM3 ? Math.min(100, (s.volume.volumeM3 / capacityM3) * 100) : 0;
@@ -1428,7 +1500,13 @@ function renderWater() {
       <div class="result-bar agua"><span style="width:${pct.toFixed(1)}%"></span></div>
       <div class="gauge-legend">
         <strong>${nf(s.volume.volumeM3)} m³</strong> de ${nf(capacityM3, 0)} m³
-        <small>estimado desde ${s.volume.source}${s.volume.anchorDate ? ' del ' + fmtDate(s.volume.anchorDate) : ''}${s.volume.sinceDays ? ` (hace ${s.volume.sinceDays} d)` : ''}</small>
+        <small>${s.volume.source === 'sensor del reservorio' && s.volume.medidoA
+          // Del sensor sale una hora exacta: decir "estimado desde el 1 oct"
+          // de una lectura de hace cinco minutos esconde lo único que importa,
+          // que el dato es fresco.
+          ? `medido por el sensor ${haceTexto((Date.now() - new Date(s.volume.medidoA)) / 3600000)}${
+              s.volume.sinceDays ? `, descontando ${s.volume.sinceDays} d de consumo` : ''}`
+          : `estimado desde ${s.volume.source}${s.volume.anchorDate ? ' del ' + fmtDate(s.volume.anchorDate) : ''}${s.volume.sinceDays ? ` (hace ${s.volume.sinceDays} d)` : ''}`}</small>
       </div>
     </div>
 
@@ -1444,6 +1522,8 @@ function renderWater() {
     ${renderProyeccion(s)}
 
     ${renderClimaAgua(s)}
+
+    ${renderSensoresAgua()}
 
 
     <section class="bloque">
@@ -1474,7 +1554,15 @@ function renderWater() {
 
     <section class="bloque bloque--ancho">
     <h4>Eventos registrados</h4>
-    <div class="card card--filas">${[...state.water].sort(byDateDesc).map(e => `
+    ${(() => {
+      const delSensor = state.water.filter(w => w.origen === 'sensor');
+      if (!delSensor.length) return '';
+      const ult = [...delSensor].sort(byDateDesc)[0];
+      return `<p class="hint">Además, <b>${delSensor.length} mediciones del sensor</b>, una por día;
+        la última, ${fmtDate(ult.date)} (${nf(ult.levelM, 2)} m). No se listan: son una por día y
+        taparían lo anotado a mano.</p>`;
+    })()}
+    <div class="card card--filas">${[...state.water].filter(w => w.origen !== 'sensor').sort(byDateDesc).map(e => `
       <button class="list-row" data-water="${e.id}">
         <span class="franja franja--${e.type === 'tanquero' ? 'tanquero' : 'agua'}"></span>
         <span class="fila-main">
@@ -1484,11 +1572,13 @@ function renderWater() {
         </span>
         <span class="fila-go"><svg class="icono icono--s" aria-hidden="true"><use href="#i-chevron-der"/></svg></span>
       </button>`).join('')}</div>
-    ${state.water.length ? '' : '<p class="hint">Sin eventos.</p>'}
+    ${state.water.some(w => w.origen !== 'sensor') ? '' : '<p class="hint">Sin eventos anotados a mano.</p>'}
     </section>
   `;
   $('#water-body').querySelectorAll('[data-water]').forEach(el =>
     el.addEventListener('click', () => openWaterForm(state.water.find(w => w.id === el.dataset.water))));
+  $('#water-body').querySelectorAll('[data-act="sensores"]').forEach(el =>
+    el.addEventListener('click', openSensores));
   $('#water-body').querySelectorAll('[data-act="clima"]').forEach(el =>
     el.addEventListener('click', async () => {
       el.disabled = true; el.textContent = 'Bajando…';
@@ -1622,6 +1712,9 @@ function openSettings() {
         <label>Próximo turno <input type="date" name="proximoTurno" value="${attr(c.proximoTurno)}" /></label>
         <label>Ciclo (días) <input type="number" name="cicloTurnoDias" value="${attr(c.cicloTurnoDias)}" /></label>
       </div>
+      <h4>Sensores</h4>
+      <p class="hint">${(state.config.sensores?.url) ? 'Conectados a un receptor.' : 'Sin conectar.'}
+        <button class="btn btn--fantasma btn--sm" type="button" data-act="sensores">Abrir sensores</button></p>
       <h4>Sincronización</h4>
       <label>Endpoint de sincronización <input name="syncEndpoint" value="${attr(c.syncEndpoint)}" placeholder="https://…/sync" /></label>
       <p class="hint">Sin endpoint, los cambios quedan en la cola local y se pueden trasladar con el respaldo JSON.</p>
@@ -1692,6 +1785,7 @@ function openSettings() {
     };
 
     body.querySelector('[data-act="tiles"]').onclick = () => prefetchTiles();
+    body.querySelector('[data-act="sensores"]').onclick = () => openSensores();
     body.querySelector('[data-act="diag"]').onclick = () => { location.href = './diagnostico.html'; };
 
     body.querySelector('[data-act="reinstall"]').onclick = async () => {
@@ -1973,4 +2067,264 @@ function renderProyeccion(s) {
         ${pts.some(p => p.lluvia > 2) ? '<span><i class="proy-k proy-k--gota"></i>días con lluvia</span>' : ''}
       </div>
     </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Sensores
+// ---------------------------------------------------------------------------
+
+function haceTexto(h) {
+  if (h < 1 / 60) return 'ahora';
+  if (h < 1) return `hace ${Math.round(h * 60)} min`;
+  if (h < 48) return `hace ${Math.round(h)} h`;
+  return `hace ${Math.round(h / 24)} días`;
+}
+
+/**
+ * La pantalla de sensores. Está pensada para el día que llegue el primer
+ * aparato: se pega la dirección del receptor, se prueba, y el sensor aparece
+ * solo en la lista en cuanto manda su primer mensaje. Ahí se le dice para qué
+ * está —reservorio, suelo, lluvia— y, si es un ultrasónico, a qué altura del
+ * fondo se montó. Nada más: lo demás lo resuelve el modelo.
+ */
+function openSensores() {
+  const cfg = cfgSensores();
+  const sen = resumenSensores();
+  const aparatos = sen?.aparatos || [];
+  const hayPrueba = state.lecturas.some(l => l.fuente === 'prueba');
+
+  openSheet('Sensores', `
+    <form id="f-sen">
+      <p class="hint">Los sensores no hablan con la app: mandan sus lecturas a un
+      <b>receptor</b> (un servidor pequeño), y la app las lee de ahí. Cómo montarlo, qué
+      comprar y cómo registrar cada aparato está en <code>mulalillo/SENSORES.md</code>.</p>
+
+      <label>Dirección del receptor
+        <input name="url" type="url" value="${attr(cfg.url)}" placeholder="https://mulalillo-receptor.tu-cuenta.workers.dev" />
+      </label>
+      <label>Token de lectura
+        <input name="token" type="password" value="${attr(cfg.token)}" autocomplete="off" placeholder="el TOKEN_LECTURA del receptor" />
+      </label>
+      <p class="hint">Es el de <b>lectura</b>, no el de escritura: si este teléfono se pierde,
+      quien lo tenga podrá ver el nivel del reservorio, pero no inventar lecturas.</p>
+
+      <div class="pie-accion">
+        <span class="hint muted">${cfg.ultimoError
+          ? `Último intento: ${escapeHtml(cfg.ultimoError)}`
+          : cfg.ultimaSync ? `Al día ${haceTexto((Date.now() - new Date(cfg.ultimaSync)) / 3600000)}` : 'Sin conectar todavía'}</span>
+        <span>
+          <button class="btn btn--fantasma btn--sm" type="button" data-act="probar">Probar</button>
+          <button class="btn btn--rojo btn--sm" type="submit">Guardar</button>
+        </span>
+      </div>
+    </form>
+
+    <h4>Aparatos</h4>
+    ${aparatos.length ? `<div class="card card--filas">${aparatos.map(a => filaAparato(a, cfg)).join('')}</div>`
+      : `<p class="hint">Todavía no ha llegado nada. Un sensor aparece aquí en cuanto manda su
+         primer mensaje al receptor, aunque no esté configurado.</p>`}
+
+    <h4>Suelo</h4>
+    <div class="field-grid-2">
+      <label>Capacidad de campo (%) <input form="f-sen" name="sueloCC" type="number" step="0.5" value="${attr(cfg.sueloCC ?? sensores.SUELO_CC)}" /></label>
+      <label>Punto de marchitez (%) <input form="f-sen" name="sueloPMP" type="number" step="0.5" value="${attr(cfg.sueloPMP ?? sensores.SUELO_PMP)}" /></label>
+    </div>
+    <p class="hint">Convierten la humedad que mide la sonda en agua aprovechable. Los de partida
+    son típicos de un suelo volcánico de la sierra, no una medición de esta finca: un análisis
+    de suelo da los de verdad.</p>
+
+    <h4>Probar sin hardware</h4>
+    <p class="hint">Carga una semana de lecturas como las que mandarían un ultrasónico en el
+    reservorio, una sonda en los arándanos y un pluviómetro, generadas con el mismo traductor
+    que usa el receptor. Se borran con un toque y no tocan nada anotado a mano.</p>
+    <div class="sheet-actions">
+      <button class="btn" data-act="prueba">${hayPrueba ? 'Volver a generar' : 'Cargar datos de prueba'}</button>
+      ${hayPrueba ? '<button class="btn btn-danger" data-act="borrar-prueba">Borrar datos de prueba</button>' : ''}
+      ${cfg.url ? '<button class="btn" data-act="sync">Leer ahora</button>' : ''}
+    </div>
+  `, body => {
+    const form = body.querySelector('#f-sen');
+    const leerForm = () => {
+      const f = new FormData(form);
+      const num = k => (f.get(k) === '' || f.get(k) == null ? null : Number(f.get(k)));
+      return { url: (f.get('url') || '').trim(), token: (f.get('token') || '').trim(),
+        sueloCC: num('sueloCC'), sueloPMP: num('sueloPMP') };
+    };
+
+    form.onsubmit = async ev => {
+      ev.preventDefault();
+      const nuevo = { ...cfgSensores(), ...leerForm() };
+      // Cambiar de receptor obliga a releer desde el principio.
+      if (nuevo.url !== cfg.url) nuevo.ultimaSync = null;
+      state.config = await db.saveConfig({ sensores: nuevo });
+      toast('Sensores guardados');
+      if (nuevo.url) await sincronizarSensores({ avisar: true });
+      openSensores();
+    };
+
+    body.querySelector('[data-act="probar"]').onclick = async ev => {
+      ev.target.disabled = true; ev.target.textContent = 'Probando…';
+      const r = await sensores.probar(leerForm());
+      toast(r.ok
+        ? `Conectado. ${r.aparatos ? r.aparatos + ' aparato' + (r.aparatos > 1 ? 's' : '') + ' en el receptor' : 'El receptor todavía no tiene lecturas'}.`
+        : `No conecta: ${r.motivo}`, 4500);
+      ev.target.disabled = false; ev.target.textContent = 'Probar';
+    };
+
+    body.querySelectorAll('[data-aparato]').forEach(el => el.addEventListener('click', () =>
+      openAparato(el.dataset.aparato)));
+
+    body.querySelector('[data-act="prueba"]').onclick = async () => {
+      await sensores.borrarPrueba();
+      await db.saveLocal('lecturas', sensores.lecturasDePrueba());
+      const c = cfgSensores();
+      state.config = await db.saveConfig({ sensores: { ...c, aparatos: { ...sensores.APARATOS_DE_PRUEBA, ...c.aparatos } } });
+      await sensores.aplicar(cfgSensores().aparatos);
+      await reload(); renderAll();
+      toast('Datos de prueba cargados');
+      openSensores();
+    };
+    body.querySelector('[data-act="borrar-prueba"]')?.addEventListener('click', async () => {
+      await sensores.borrarPrueba();
+      const c = cfgSensores();
+      const aparatos = Object.fromEntries(Object.entries(c.aparatos).filter(([id]) => !(id in sensores.APARATOS_DE_PRUEBA)));
+      state.config = await db.saveConfig({ sensores: { ...c, aparatos } });
+      await sensores.aplicar(aparatos);
+      await reload(); renderAll();
+      toast('Datos de prueba borrados');
+      openSensores();
+    });
+    body.querySelector('[data-act="sync"]')?.addEventListener('click', async () => {
+      await sincronizarSensores({ avisar: true });
+      openSensores();
+    });
+  });
+}
+
+function filaAparato(a, cfg) {
+  const p = a.principal;
+  const sinUso = !a.uso;
+  return `
+    <button class="list-row" data-aparato="${attr(a.dispositivo)}">
+      <span class="franja franja--${a.callado ? 'mal' : sinUso ? 'nuevo' : 'ok'}"></span>
+      <span class="fila-main">
+        <strong>${escapeHtml(a.nombre)}</strong>
+        <small>${sinUso ? '<b class="cuando cuando--atrasada">sin asignar</b> · '
+          : a.nombre === sensores.USOS[a.uso]?.label ? '' : `${sensores.USOS[a.uso]?.label} · `}${p ? escapeHtml(p.texto) : '—'}</small>
+        <small class="muted">${a.callado ? `<b class="cuando cuando--atrasada">callado</b> · ` : ''}${haceTexto(a.horas)}${
+          a.bateriaTexto ? ` · batería ${a.bateriaTexto}${a.bateriaBaja ? ' ⚠︎' : ''}` : ''}${
+          p?.falta ? ` · falta la ${p.falta}` : ''}</small>
+      </span>
+      <span class="fila-go"><svg class="icono icono--s" aria-hidden="true"><use href="#i-chevron-der"/></svg></span>
+    </button>`;
+}
+
+/** Ficha de un aparato: para qué está y, si hace falta, cómo calibrarlo. */
+function openAparato(id) {
+  const cfg = cfgSensores();
+  const ap = cfg.aparatos[id] || {};
+  const estado = sensores.estadoAparatos(state.lecturas, cfg.aparatos).find(a => a.dispositivo === id);
+  const tipos = Object.keys(estado?.tipos || {});
+
+  openSheet(ap.nombre || id, `
+    <form id="f-ap">
+      <p class="hint">Identificador en el receptor: <code>${escapeHtml(id)}</code><br>
+      Manda: ${tipos.map(t => escapeHtml(TIPO_TEXTO(t))).join(', ') || '—'}</p>
+      <label>Nombre <input name="nombre" value="${attr(ap.nombre || '')}" placeholder="Reservorio" /></label>
+      <label>Para qué está
+        <select name="uso">
+          <option value="">Sin asignar</option>
+          ${Object.entries(sensores.USOS).map(([k, u]) =>
+            `<option value="${k}" ${ap.uso === k ? 'selected' : ''}>${u.label}</option>`).join('')}
+        </select>
+      </label>
+      <div class="solo-reservorio">
+        <label>Altura del sensor sobre el fondo (m)
+          <input name="montajeM" type="number" step="0.01" min="0" value="${attr(ap.montajeM)}" placeholder="2,30" />
+        </label>
+        <p class="hint">Un ultrasónico mide la distancia hasta el agua, no el agua: para saber
+        cuánta hay hay que restarla de la altura a la que está montado. Mídela con cinta del
+        sensor al fondo, con el reservorio vacío o con una vara. Un error de 5 cm aquí es un
+        error de ${nf((0.05 / (state.config.reservorioAlturaUtilM || 2)) * (state.config.reservorioVolumenM3 || 80), 1)} m³ en todas las lecturas.</p>
+      </div>
+      <label class="solo-suelo">Sector donde está la sonda
+        <select name="sectorId">
+          <option value="">—</option>
+          ${state.sectors.map(s => `<option value="${s.id}" ${ap.sectorId === s.id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
+        </select>
+      </label>
+      <button class="btn btn--rojo btn-block" type="submit">Guardar</button>
+    </form>
+  `, body => {
+    const form = body.querySelector('#f-ap');
+    const mostrar = () => {
+      const uso = form.uso.value;
+      form.querySelector('.solo-reservorio').hidden = uso !== 'reservorio' || !tipos.includes('distancia');
+      form.querySelector('.solo-suelo').hidden = uso !== 'suelo';
+    };
+    form.uso.addEventListener('change', mostrar);
+    mostrar();
+
+    form.onsubmit = async ev => {
+      ev.preventDefault();
+      const f = new FormData(form);
+      const c = cfgSensores();
+      const nuevo = {
+        nombre: (f.get('nombre') || '').trim() || undefined,
+        uso: f.get('uso') || undefined,
+        montajeM: f.get('montajeM') ? Number(f.get('montajeM')) : undefined,
+        sectorId: f.get('sectorId') || undefined
+      };
+      state.config = await db.saveConfig({ sensores: { ...c, aparatos: { ...c.aparatos, [id]: nuevo } } });
+      // Cambiar el uso o la altura cambia TODOS los niveles pasados de este
+      // aparato, así que se rehace lo derivado entero.
+      await sensores.aplicar(cfgSensores().aparatos);
+      await reload(); renderAll();
+      toast('Aparato guardado');
+      openSensores();
+    };
+  });
+}
+
+const TIPO_TEXTO = t => ({
+  distancia: 'distancia al agua', nivel: 'nivel', lluvia: 'lluvia', humedad_suelo: 'humedad de suelo',
+  caudal: 'caudal', bateria: 'batería', temperatura: 'temperatura'
+}[t] || t);
+
+/**
+ * La tarjeta de sensores en la pantalla de agua. Si no hay ninguno, una sola
+ * línea que invita a conectarlos; si hay, su estado, con lo callado arriba:
+ * un sensor caído es lo único de esta lista que exige hacer algo.
+ */
+function renderSensoresAgua() {
+  const sen = resumenSensores();
+  const enUso = (sen?.aparatos || []).filter(a => a.uso && a.uso !== 'ignorar');
+  const nuevos = (sen?.aparatos || []).filter(a => !a.uso);
+
+  if (!enUso.length && !nuevos.length) {
+    return `<div class="card sensores-vacio">
+      <p class="hint">Sin sensores conectados: el nivel del reservorio sale de las mediciones a mano
+      y la lluvia, del modelo de Open-Meteo.</p>
+      <p class="pie-accion"><span></span><button class="btn btn--fantasma btn--sm" data-act="sensores">Conectar sensores</button></p>
+    </div>`;
+  }
+
+  const orden = [...enUso].sort((a, b) => (b.callado - a.callado));
+  return `<div class="card card--filas sensores">
+    <div class="sensores-cab">
+      <strong>Sensores</strong>
+      <button class="btn btn--fantasma btn--sm" data-act="sensores">Configurar</button>
+    </div>
+    ${nuevos.length ? `<p class="aviso aviso--atencion">${nuevos.length === 1 ? 'Hay un aparato nuevo' : `Hay ${nuevos.length} aparatos nuevos`} mandando datos sin asignar.</p>` : ''}
+    ${orden.map(a => `
+      <div class="list-row">
+        <span class="franja franja--${a.callado ? 'mal' : 'ok'}"></span>
+        <span class="fila-main">
+          <strong>${escapeHtml(a.nombre)}</strong>
+          <small>${a.principal ? escapeHtml(a.principal.texto) : '—'} · ${a.callado
+            ? `<b class="cuando cuando--atrasada">callado, ${haceTexto(a.horas)}</b>`
+            : haceTexto(a.horas)}${a.bateriaBaja ? ' · <b class="cuando cuando--atrasada">batería baja</b>' : ''}</small>
+        </span>
+      </div>`).join('')}
+  </div>`;
 }

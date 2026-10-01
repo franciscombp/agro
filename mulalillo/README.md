@@ -138,6 +138,28 @@ satelitales en caché con tope de 1.200 entradas y precarga del área de la finc
 (Ajustes → «Descargar mapa del terreno», zoom 15–19). Toda escritura entra además en una
 cola local (`outbox`) para sincronizar después.
 
+## Sensores
+
+La app está preparada para leer sensores de campo —nivel del reservorio, humedad de
+suelo, pluviómetro— a través de LoRaWAN y The Things Network, o de Home Assistant. Qué
+comprar, cómo montarlo y cómo conectarlo está en **[SENSORES.md](SENSORES.md)**.
+
+Lo esencial del diseño:
+
+- **Las lecturas se traducen a lo que el modelo de agua ya entiende**, y el modelo no
+  sabe nada de sensores. El ultrasónico produce los mismos eventos `medición_nivel` que
+  hoy se anotan a mano, uno por día; el pluviómetro sustituye la lluvia de Open-Meteo los
+  días que reportó; la sonda sustituye la reserva estimada del suelo.
+- **Un solo traductor** (`normaliza.js`) para el receptor y para la app. Si cada uno
+  tuviera el suyo, el día que discreparan un nivel se leería distinto en el servidor y
+  en el teléfono.
+- **Lo que viene de un sensor va marcado** (`origen: 'sensor'`), no viaja por la cola de
+  sincronización —el servidor ya lo tiene— y se puede rehacer entero, cosa necesaria
+  porque cambiar la altura de montaje cambia todos los niveles pasados.
+- **Se prueba sin hardware.** El botón de datos de prueba genera lecturas con el mismo
+  traductor que usa el receptor, y `receptor/local.mjs` + `receptor/simular.mjs` corren
+  el receptor real con sensores simulados.
+
 ## Móvil, tablet y escritorio
 
 Tres escalones, y cada uno responde a **cómo se sostiene el aparato**, no a un número
@@ -313,6 +335,10 @@ en el punto, «Fijar con mi GPS» las corrige y el modelo de terreno se recalcul
 | `map2d.js` | MapLibre: capas, dibujo, arrastre de vértices y puntos |
 | `water.js` | Demanda por clima y edad, volumen estimado, proyección con pronóstico, turnos |
 | `clima.js` | ET0 y lluvia del punto de la finca, reserva del suelo, caché offline |
+| `sensores.js` | Lecturas del receptor → eventos de nivel, lluvia por día, reserva medida; estado de cada aparato |
+| `normaliza.js` | Traduce TTN, Home Assistant y JSON propio a una sola forma; lo comparten app y receptor |
+| `receptor/` | El receptor (Cloudflare Worker), su versión local y el simulador de sensores |
+| `SENSORES.md` | Hardware, montaje y conexión, paso a paso |
 | `planting.js` | Marco de siembra: rejilla girada, recorte al sector y margen |
 | `hydraulics.js` | Pérdidas por fricción, presión neta y diámetro sugerido |
 | `view3d.js` | Three.js: terreno, sectores, plantas, flechas de escurrimiento |

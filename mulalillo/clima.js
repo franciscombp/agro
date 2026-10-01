@@ -124,20 +124,29 @@ export async function leerCache() {
  * hoy, la media reciente y el pronóstico, más de dónde salió cada cosa para
  * poder decirlo en pantalla en vez de mostrar un número sin origen.
  */
-export function contexto(serie, { reservaMax = RESERVA_SUELO_MM } = {}) {
+export function contexto(serie, { reservaMax = RESERVA_SUELO_MM, lluviaLocal = null, reservaMedida = null } = {}) {
   const hoy = new Date().toISOString().slice(0, 10);
   if (!serie?.dias?.length) {
     return {
       conocido: false,
       et0Hoy: ET0_REF, lluviaHoy: 0,
       et0Medio: ET0_REF,
-      reservaMm: 0, reservaMaxMm: reservaMax,
+      reservaMm: reservaMedida != null ? Math.min(reservaMax, reservaMedida) : 0,
+      reservaOrigen: reservaMedida != null ? 'sonda' : 'estimada',
+      reservaMaxMm: reservaMax,
       futuro: [],
       origen: 'clima de referencia de la zona'
     };
   }
 
-  const dias = serie.dias;
+  /* Lo medido en la finca manda sobre el modelo. Open-Meteo calcula la lluvia
+     en una malla de kilómetros; un pluviómetro en la loma mide la que cayó
+     ahí. Sólo se sustituyen los días que el pluviómetro reportó (sensores.js
+     ya descarta los días en que estuvo caído). */
+  const dias = lluviaLocal
+    ? serie.dias.map(d => lluviaLocal[d.date] != null
+        ? { ...d, lluvia: lluviaLocal[d.date], lluviaMedida: true } : d)
+    : serie.dias;
   const hoyD = dias.find(d => d.date === hoy);
   const pasados = dias.filter(d => d.date < hoy).slice(-PASADO);
   const futuro = dias.filter(d => d.date >= hoy);
@@ -151,8 +160,12 @@ export function contexto(serie, { reservaMax = RESERVA_SUELO_MM } = {}) {
     et0Medio: media(pasados.map(d => d.et0)),
     lluviaPasada: pasados.reduce((s, d) => s + d.lluvia, 0),
     lluviaEfectivaPasada: pasados.reduce((s, d) => s + lluviaEfectiva(d.lluvia), 0),
-    reservaMm: reservaSuelo(pasados, { max: reservaMax }),
+    // Con sonda, la reserva es la medida; sin ella, la estimada con el
+    // balance de los últimos días. La pantalla dice cuál de las dos es.
+    reservaMm: reservaMedida != null ? Math.min(reservaMax, reservaMedida) : reservaSuelo(pasados, { max: reservaMax }),
+    reservaOrigen: reservaMedida != null ? 'sonda' : 'estimada',
     reservaMaxMm: reservaMax,
+    diasPluviometro: dias.filter(d => d.lluviaMedida && d.date < hoy).length,
     diasPasados: pasados.length,
     futuro,
     lluviaFutura: futuro.reduce((s, d) => s + d.lluvia, 0),

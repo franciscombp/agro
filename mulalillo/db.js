@@ -3,8 +3,10 @@
 "use strict";
 
 const DB_NAME = 'mulalillo';
-const DB_VERSION = 1;
-const STORES = ['parcels', 'sectors', 'plants', 'infra', 'tasks', 'water', 'elevations', 'outbox', 'meta'];
+// v2 añade `lecturas`: lo que mandan los sensores. Subir la versión es lo que
+// hace que el navegador cree el almacén nuevo sin tocar los que ya existen.
+const DB_VERSION = 2;
+const STORES = ['parcels', 'sectors', 'plants', 'infra', 'tasks', 'water', 'elevations', 'outbox', 'meta', 'lecturas'];
 
 let dbPromise = null;
 
@@ -74,12 +76,30 @@ export async function putMany(store, records) {
   return stamped;
 }
 
+/**
+ * Escritura local en lote, SIN pasar por la cola de sincronización. Para lo
+ * que viene del servidor —las lecturas de sensores y los eventos que se
+ * derivan de ellas—: devolverlo al servidor sería mandarle su propio dato.
+ */
+export async function saveLocal(store, records) {
+  if (!records.length) return [];
+  const stamped = records.map(r => ({ ...r, updatedAt: new Date().toISOString() }));
+  await tx(store, 'readwrite', s => { for (const r of stamped) s.put(r); });
+  return stamped;
+}
+
+/** Borra en lote, también sin cola. */
+export async function removeLocal(store, ids) {
+  if (!ids.length) return;
+  await tx(store, 'readwrite', s => { for (const id of ids) s.delete(id); });
+}
+
 export function clearStore(store) {
   return tx(store, 'readwrite', s => s.clear());
 }
 
 async function enqueue(op, store, record) {
-  if (store === 'outbox' || store === 'meta') return;
+  if (store === 'outbox' || store === 'meta' || store === 'lecturas') return;
   await tx('outbox', 'readwrite', s => s.put({
     id: uid(), op, store, recordId: record.id, payload: record, at: new Date().toISOString()
   }));

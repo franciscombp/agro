@@ -477,3 +477,12 @@ button.fila-main {
   display: flex; align-items: center; justify-content: space-between;
   gap: 10px; flex-wrap: wrap; margin-top: 10px;
 }
+
+/* ---------- Sensores ---------- */
+.sensores-cab { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px 4px; }
+.sensores .aviso { margin: 6px 12px; }
+.franja--ok { background: var(--app-ok); }
+.franja--mal { background: var(--app-danger); }
+.franja--nuevo { background: var(--app-warn); }
+.sensores-vacio .hint { margin: 0; }
+code { font-family: var(--app-mono); font-size: .92em; }

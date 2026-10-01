@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "type": "module",
+  "description": "Módulos ES: la app los sirve tal cual al navegador, y el receptor (receptor/) los importa desde Node y desde Cloudflare Workers."
+}
