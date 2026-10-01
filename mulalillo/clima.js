@@ -162,6 +162,7 @@ export function contexto(serie, { reservaMax = RESERVA_SUELO_MM, lluviaLocal = n
     lluviaEfectivaPasada: pasados.reduce((s, d) => s + lluviaEfectiva(d.lluvia), 0),
     // Con sonda, la reserva es la medida; sin ella, la estimada con el
     // balance de los últimos días. La pantalla dice cuál de las dos es.
+    pasados,
     reservaMm: reservaMedida != null ? Math.min(reservaMax, reservaMedida) : reservaSuelo(pasados, { max: reservaMax }),
     reservaOrigen: reservaMedida != null ? 'sonda' : 'estimada',
     reservaMaxMm: reservaMax,

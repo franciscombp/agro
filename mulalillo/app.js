@@ -19,7 +19,7 @@ const INFRA_TYPES = ['reservorio', 'casa', 'establo', 'cuyera', 'bomba', 'filtro
 const TASK_TYPES = ['riego', 'poda', 'fertilización', 'fumigación', 'cosecha', 'siembra', 'otro'];
 const WATER_TYPES = ['llenado_acequia', 'tanquero', 'riego', 'medición_nivel'];
 const STATUSES = ['sano', 'atención', 'enfermo', 'muerto'];
-const BUILD = 'v15';
+const BUILD = 'v16';
 
 const state = {
   parcel: { id: 'parcel-mulalillo', name: 'Finca Mulalillo', boundary: BOUNDARY },
@@ -1525,6 +1525,8 @@ function renderWater() {
 
     ${renderSensoresAgua()}
 
+    ${renderComparacion(s)}
+
 
     <section class="bloque">
       <h4>Turno de la junta de agua</h4>
@@ -1555,11 +1557,14 @@ function renderWater() {
     <section class="bloque bloque--ancho">
     <h4>Eventos registrados</h4>
     ${(() => {
-      const delSensor = state.water.filter(w => w.origen === 'sensor');
-      if (!delSensor.length) return '';
-      const ult = [...delSensor].sort(byDateDesc)[0];
-      return `<p class="hint">Además, <b>${delSensor.length} mediciones del sensor</b>, una por día;
-        la última, ${fmtDate(ult.date)} (${nf(ult.levelM, 2)} m). No se listan: son una por día y
+      const niveles = state.water.filter(w => w.origen === 'sensor' && w.type === 'medición_nivel');
+      const riegos = state.water.filter(w => w.origen === 'sensor' && w.type === 'riego');
+      if (!niveles.length && !riegos.length) return '';
+      const ult = [...niveles].sort(byDateDesc)[0];
+      const partes = [];
+      if (niveles.length) partes.push(`<b>${niveles.length} niveles del sensor</b> (el último, ${fmtDate(ult.date)}: ${nf(ult.levelM, 2)} m)`);
+      if (riegos.length) partes.push(`<b>${riegos.length} riegos del caudalímetro</b> (${nf(riegos.reduce((s, r) => s + r.volumeM3, 0), 2)} m³)`);
+      return `<p class="hint">Además, ${partes.join(' y ')}. No se listan: son uno por día y
         taparían lo anotado a mano.</p>`;
     })()}
     <div class="card card--filas">${[...state.water].filter(w => w.origen !== 'sensor').sort(byDateDesc).map(e => `
@@ -2176,7 +2181,13 @@ function openSensores() {
 
     body.querySelector('[data-act="prueba"]').onclick = async () => {
       await sensores.borrarPrueba();
-      await db.saveLocal('lecturas', sensores.lecturasDePrueba());
+      // El consumo de prueba sale del modelo, para que todo cuadre.
+      const w = water.summary({ ...state, clima: state.clima });
+      await db.saveLocal('lecturas', sensores.lecturasDePrueba({
+        consumoDiaM3: Math.max(0.05, w.demand.totalRefL / 1000),
+        capacidadM3: state.config.reservorioVolumenM3 || 80,
+        alturaUtilM: state.config.reservorioAlturaUtilM || 2
+      }));
       const c = cfgSensores();
       state.config = await db.saveConfig({ sensores: { ...c, aparatos: { ...sensores.APARATOS_DE_PRUEBA, ...c.aparatos } } });
       await sensores.aplicar(cfgSensores().aparatos);
@@ -2247,6 +2258,31 @@ function openAparato(id) {
         sensor al fondo, con el reservorio vacío o con una vara. Un error de 5 cm aquí es un
         error de ${nf((0.05 / (state.config.reservorioAlturaUtilM || 2)) * (state.config.reservorioVolumenM3 || 80), 1)} m³ en todas las lecturas.</p>
       </div>
+      <div class="solo-caudal">
+        <label>Qué manda el medidor
+          <select name="acumulado">
+            <option value="si" ${ap.acumulado !== false ? 'selected' : ''}>Un total que sólo crece (lo más común)</option>
+            <option value="no" ${ap.acumulado === false ? 'selected' : ''}>Lo que pasó desde la lectura anterior</option>
+          </select>
+        </label>
+        <p class="hint">Si no lo sabes, mira dos lecturas seguidas con el riego cerrado: si
+        repiten el mismo número, es un total; si mandan cero, es lo del rato. Confundirlos
+        cuenta mil veces el mismo litro.</p>
+        ${tipos.includes('pulsos') ? `
+        <label>Litros por pulso
+          <input name="litrosPorPulso" type="number" step="0.001" min="0" value="${attr(ap.litrosPorPulso)}" placeholder="1" />
+        </label>
+        <p class="hint">Viene en la placa o el manual del medidor (1, 10 o 100 L por pulso
+        son lo habitual). Sin este dato los pulsos no se pueden convertir en agua.</p>` : ''}
+        <fieldset class="sectores-linea">
+          <legend>Sectores que alimenta esta línea</legend>
+          ${state.sectors.map(sc => `<label class="row"><input type="checkbox" name="sectorIds" value="${sc.id}"
+            ${(ap.sectorIds || []).includes(sc.id) ? 'checked' : ''} /> ${escapeHtml(sc.name)}</label>`).join('')}
+        </fieldset>
+        <p class="hint">Sólo para saber de dónde sale el agua. El volumen no se reparte entre
+        ellos: un medidor en una línea compartida mide el total, y cualquier reparto sería un
+        supuesto disfrazado de medición.</p>
+      </div>
       <label class="solo-suelo">Sector donde está la sonda
         <select name="sectorId">
           <option value="">—</option>
@@ -2261,6 +2297,7 @@ function openAparato(id) {
       const uso = form.uso.value;
       form.querySelector('.solo-reservorio').hidden = uso !== 'reservorio' || !tipos.includes('distancia');
       form.querySelector('.solo-suelo').hidden = uso !== 'suelo';
+      form.querySelector('.solo-caudal').hidden = uso !== 'caudal';
     };
     form.uso.addEventListener('change', mostrar);
     mostrar();
@@ -2273,7 +2310,10 @@ function openAparato(id) {
         nombre: (f.get('nombre') || '').trim() || undefined,
         uso: f.get('uso') || undefined,
         montajeM: f.get('montajeM') ? Number(f.get('montajeM')) : undefined,
-        sectorId: f.get('sectorId') || undefined
+        sectorId: f.get('sectorId') || undefined,
+        acumulado: f.get('uso') === 'caudal' ? f.get('acumulado') !== 'no' : undefined,
+        litrosPorPulso: f.get('litrosPorPulso') ? Number(f.get('litrosPorPulso')) : undefined,
+        sectorIds: f.get('uso') === 'caudal' ? f.getAll('sectorIds') : undefined
       };
       state.config = await db.saveConfig({ sensores: { ...c, aparatos: { ...c.aparatos, [id]: nuevo } } });
       // Cambiar el uso o la altura cambia TODOS los niveles pasados de este
@@ -2288,7 +2328,7 @@ function openAparato(id) {
 
 const TIPO_TEXTO = t => ({
   distancia: 'distancia al agua', nivel: 'nivel', lluvia: 'lluvia', humedad_suelo: 'humedad de suelo',
-  caudal: 'caudal', bateria: 'batería', temperatura: 'temperatura'
+  caudal: 'caudal', pulsos: 'pulsos', bateria: 'batería', temperatura: 'temperatura'
 }[t] || t);
 
 /**
@@ -2326,5 +2366,53 @@ function renderSensoresAgua() {
             : haceTexto(a.horas)}${a.bateriaBaja ? ' · <b class="cuando cuando--atrasada">batería baja</b>' : ''}</small>
         </span>
       </div>`).join('')}
+  </div>`;
+}
+
+/**
+ * Regado frente a pedido. Sólo aparece con caudalímetro: es la única forma de
+ * saber cuánto se regó de verdad. Lo primero es una frase con el veredicto de
+ * la semana, que es lo que se decide —abrir menos la llave, o más—; los días
+ * van debajo, para quien quiera ver si fue uno solo o todos.
+ *
+ * Dos barras por día en la MISMA escala (no dos ejes): lo regado, lleno; lo
+ * pedido, en contorno. Se distinguen por forma además de por color, y cada
+ * una lleva su número.
+ */
+function renderComparacion(s) {
+  const c = s.comparacion;
+  if (!c) return '';
+  const max = Math.max(...c.filas.flatMap(f => [f.regadoM3, f.pedidoM3]), 0.001);
+  const pct = v => Math.max(1.5, (v / max) * 100).toFixed(1);
+  const dif = c.regadoM3 - c.pedidoM3;
+
+  const veredicto = c.desvio == null
+    ? `Las plantas casi no pedían agua (lluvia o reserva en el suelo) y se regaron ${nf(c.regadoM3, 2)} m³.`
+    : Math.abs(c.desvio) < 15
+      ? `El riego va acorde con lo que piden las plantas (${c.desvio > 0 ? '+' : ''}${c.desvio} %).`
+      : c.desvio > 0
+        ? `Se regó <b>${c.desvio} % más</b> de lo que pedían las plantas: ${nf(dif, 2)} m³ de más en ${c.filas.length} días.${
+            c.sinNecesidad
+              ? ` <b>${c.sinNecesidad === 1 ? 'Un día' : c.sinNecesidad + ' días'} se regó sin que hiciera falta</b> —llovió o el suelo estaba cargado—, ${nf(c.sinNecesidadM3, 2)} m³ en total: si el riego va con temporizador, conviene cortarlo después de una lluvia.`
+              : ' Con el agua contada por turnos, es agua que falta al final del ciclo.'}`
+        : `Se regó <b>${Math.abs(c.desvio)} % menos</b> de lo que pedían las plantas: faltaron ${nf(-dif, 2)} m³ en ${c.filas.length} días.`;
+
+  return `<div class="card bloque--ancho comparacion">
+    <div class="proy-head"><strong>Regado y pedido</strong><small>últimos ${c.filas.length} días con caudalímetro</small></div>
+    <p class="hint">${veredicto}</p>
+    <div class="cmp-filas">${c.filas.map(f => `
+      <div class="cmp-fila">
+        <span class="cmp-dia">${fmtDate(f.date).replace(/ \d{4}$/, '')}</span>
+        <span class="cmp-barras" aria-label="Regado ${nf(f.regadoM3, 2)} m³, pedido ${nf(f.pedidoM3, 2)} m³">
+          <i class="cmp-reg" style="width:${pct(f.regadoM3)}%"></i>
+          <i class="cmp-ped" style="width:${pct(f.pedidoM3)}%"></i>
+        </span>
+        <span class="cmp-val">${nf(f.regadoM3, 2)} <small>/ ${nf(f.pedidoM3, 2)} m³</small></span>
+      </div>`).join('')}
+    </div>
+    <div class="proy-pie">
+      <span><i class="proy-k"></i>regado (caudalímetro)</span>
+      <span><i class="proy-k proy-k--pedido"></i>pedido (modelo)</span>
+    </div>
   </div>`;
 }

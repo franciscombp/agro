@@ -486,3 +486,19 @@ button.fila-main {
 .franja--nuevo { background: var(--app-warn); }
 .sensores-vacio .hint { margin: 0; }
 code { font-family: var(--app-mono); font-size: .92em; }
+.sectores-linea { border: 0; padding: 0; margin: 4px 0 0; display: grid; gap: 6px; }
+.sectores-linea legend { font-weight: 600; margin-bottom: 4px; }
+
+/* ---------- Regado y pedido ---------- */
+#water-body > .comparacion { grid-column: 1 / -1; }
+.cmp-filas { display: grid; gap: 8px; margin-top: 10px; }
+.cmp-fila { display: grid; grid-template-columns: 52px 1fr auto; align-items: center; gap: 10px; }
+.cmp-dia { color: var(--app-ink-3); font-size: var(--app-t-caption); }
+.cmp-barras { display: grid; gap: 3px; }
+.cmp-barras i { display: block; height: 7px; border-radius: 4px; }
+.cmp-reg { background: var(--app-info); }
+/* Lo pedido es el patrón, no un dato que compita: va en contorno. */
+.cmp-ped { box-shadow: inset 0 0 0 1.5px var(--app-ink-3); background: transparent; }
+.cmp-val { font-variant-numeric: tabular-nums; font-weight: 700; font-size: var(--app-t-caption); white-space: nowrap; }
+.cmp-val small { color: var(--app-ink-3); font-weight: 500; }
+.proy-k--pedido { height: 6px; background: transparent; box-shadow: inset 0 0 0 1.5px var(--app-ink-3); }

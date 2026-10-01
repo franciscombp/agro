@@ -4,6 +4,7 @@
 #   npx wrangler kv namespace create LECTURAS   → pega el id abajo
 #   npx wrangler secret put TOKEN_ESCRITURA      → el que va en TTN / Home Assistant
 #   npx wrangler secret put TOKEN_LECTURA        → el que va en la app
+#   npx wrangler secret put TELEGRAM_TOKEN       → el que da @BotFather (opcional)
 #   npx wrangler deploy
 #
 # Los tokens NUNCA van en este archivo: este repositorio es público.
@@ -15,3 +16,21 @@ compatibility_date = "2026-09-01"
 [[kv_namespaces]]
 binding = "LECTURAS"
 id = "PEGA_AQUI_EL_ID_DEL_NAMESPACE"
+
+# Revisión de alertas cada 30 minutos.
+[triggers]
+crons = ["*/30 * * * *"]
+
+# Lo que no es secreto. Los ids de dispositivo son los de The Things Network.
+# Sin RESERVORIO_* no hay alertas de nivel ni de pérdida; sin TELEGRAM_* no se
+# manda nada, pero la revisión corre igual y se puede consultar.
+[vars]
+TELEGRAM_CHAT = ""
+RESERVORIO_DISPOSITIVO = ""
+RESERVORIO_MONTAJE_M = ""
+RESERVORIO_ALTURA_UTIL_M = "2"
+RESERVORIO_CAPACIDAD_M3 = "80"
+CAUDAL_DISPOSITIVO = ""
+ALERTA_NIVEL_PCT = "25"
+ALERTA_PERDIDA_M3 = "1.5"
+HORARIO_RIEGO = "06-09"

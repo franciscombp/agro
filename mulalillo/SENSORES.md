@@ -35,7 +35,7 @@ otras marcas, y el receptor acepta cualquiera que mande los mismos campos.
 | 2 | **Ultrasónico de nivel** en el reservorio | Dragino LDDS75, Milesight EM500-UDL | El volumen deja de ser una estimación: la curva, la autonomía y «¿llega al turno?» parten de un dato de hoy. |
 | 3 | **Sonda de humedad** en el bloque de arándanos | Dragino LSE01 | La reserva del suelo pasa de *estimada* a *medida*. |
 | 4 | **Pluviómetro** de balancín con nodo de pulsos | Un balancín conectado a un Dragino SN50v3 o similar | La lluvia de tu loma sustituye a la del modelo de Open-Meteo. |
-| 5 | Caudalímetro de pulsos en la línea de riego | Cualquier medidor con salida de pulsos y un nodo como el anterior | Preparado en el receptor; la app todavía no lo usa para registrar riegos. |
+| 5 | **Caudalímetro** en la línea de riego, a la salida del reservorio | Un medidor con salida de pulsos y un nodo como el anterior | El reservorio deja de restar lo que el modelo *cree* que se regó y resta lo que pasó por la tubería. Y la app compara lo regado con lo que pedían las plantas. Con él, el receptor detecta fugas. |
 
 ## 2. Montaje
 
@@ -65,6 +65,19 @@ otras marcas, y el receptor acepta cualquiera que mande los mismos campos.
   ejemplo). Un día sin ningún mensaje no se puede distinguir de un pluviómetro caído, y
   la app no lo cuenta como seco: lo ignora y usa la lluvia del modelo. Esto es a
   propósito, para no inventar una sequía.
+
+### Caudalímetro
+
+- **A la salida del reservorio**, antes de que la línea se reparta: así mide todo lo
+  que sale para riego y nada más.
+- En la app dile **qué manda**: casi todos los contadores de pulsos mandan un *total
+  que sólo crece*, y lo regado es la diferencia entre lecturas. Si no lo sabes, mira
+  dos lecturas seguidas con el riego cerrado: si repiten el número, es un total.
+  Confundirlo cuenta mil veces el mismo litro.
+- Si manda **pulsos**, hacen falta los **litros por pulso** (en la placa: 1, 10 o 100
+  son lo habitual). Sin ese dato la app no convierte nada, en vez de inventar.
+- Marca qué sectores alimenta la línea. El volumen **no** se reparte entre ellos: el
+  medidor mide el total, y cualquier reparto sería un supuesto.
 
 ### Gateway
 
@@ -159,7 +172,52 @@ Para un pluviómetro en Home Assistant hace falta que la entidad sea **la lluvia
 intervalo**, no el acumulado del día: si manda el acumulado cada hora, la app lo suma
 veinticuatro veces. Una plantilla que reste la lectura anterior lo resuelve.
 
-## 6. En la app
+## 6. Avisos por Telegram
+
+La app avisa de todo, pero sólo con la app abierta. El receptor revisa las lecturas
+cada 30 minutos y, si algo está mal, manda un mensaje. Telegram y no WhatsApp porque su
+API de bots es gratis y se configura en cinco minutos; la de WhatsApp Business exige
+verificar una empresa con Meta, plantillas aprobadas y pago por conversación.
+
+1. En Telegram, habla con **@BotFather**, `/newbot`, y guarda el token que te da.
+2. Escríbele cualquier cosa a tu bot (o mételo en un grupo con quien esté en la finca).
+3. Para saber el id del chat, abre `https://api.telegram.org/bot<TOKEN>/getUpdates`:
+   es el número en `"chat":{"id": …}`.
+4. Configura el receptor:
+   ```bash
+   npx wrangler secret put TELEGRAM_TOKEN
+   ```
+   y en `wrangler.toml`, en `[vars]`: `TELEGRAM_CHAT`, `RESERVORIO_DISPOSITIVO` y
+   `RESERVORIO_MONTAJE_M` (los mismos que pusiste en la app) y, si hay caudalímetro,
+   `CAUDAL_DISPOSITIVO`. Luego `npx wrangler deploy`.
+5. Prueba que llega:
+   ```bash
+   curl -X POST -H "Authorization: Bearer TU_TOKEN_ESCRITURA" https://…workers.dev/alertas/probar
+   ```
+
+Qué avisa:
+
+| Aviso | Cuándo |
+|---|---|
+| 🔕 Callado | Un aparato lleva más de 6 h sin mandar nada |
+| 🪫 Batería baja | Menos de 3,3 V, o del 20 % |
+| 💧 Nivel bajo | El reservorio por debajo del 25 % (`ALERTA_NIVEL_PCT`) |
+| 🚨 Pérdida sin explicar | El reservorio baja más de 1,5 m³ en unas horas (`ALERTA_PERDIDA_M3`) y no es riego |
+
+La **pérdida sin explicar** es la que más vale. Con caudalímetro, es lo que bajó el
+reservorio *menos* lo que pasó por la línea de riego: si sobra, se va agua por otro
+lado —una fuga, una llave abierta o alguien sacándola—. Sin caudalímetro no hay forma de
+separar riego de pérdida, así que no se avisa si la bajada toca el horario de riego
+(`HORARIO_RIEGO`, por defecto de 6 a 9).
+
+Cada aviso se manda **una vez** al empezar y otra al resolverse. Uno que se repitiera
+cada media hora dejaría de leerse a la tercera, y entonces el importante tampoco.
+
+Lo que el receptor **no** puede avisar es «no llegas al turno»: eso depende de las
+plantas, los sectores y el clima, que viven en el teléfono. Para eso sigue la app y el
+plan que se comparte por WhatsApp.
+
+## 7. En la app
 
 *Agua → Conectar sensores* (o *Ajustes → Sensores*):
 
@@ -184,12 +242,12 @@ A partir de ahí:
 
 ## Qué no está hecho todavía
 
-- **El caudalímetro** llega al receptor y se ve en la app, pero no se convierte en
-  eventos de riego. Hace falta decidir cómo se reparte un caudal entre sectores cuando
-  una sola línea alimenta varios.
-- **Sin alertas fuera de la app.** El aviso de «callado» o de «no llegas al turno» sólo
-  se ve con la app abierta. Mandarlo por WhatsApp o Telegram es un paso natural del
-  receptor, que ya tiene los datos.
+- **«No llegas al turno» por Telegram.** Necesitaría que el teléfono mande su cálculo
+  al receptor, y eso exige darle el token de *escritura*, que es justo lo que el diseño
+  evita. Una salida es un tercer token sólo para estados calculados.
 - **Calibración de la sonda.** Las sondas capacitivas baratas leen distinto según el
-  suelo. Los valores de capacidad de campo y marchitez se pueden cambiar en la app, pero
-  lo bueno es calibrarlos una vez contra una muestra de suelo pesada en seco y en húmedo.
+  suelo. Los valores de capacidad de campo y marchitez se cambian en la app, pero lo
+  bueno es calibrarlos una vez contra una muestra de suelo pesada en seco y en húmedo.
+- **Riego por sector con varios caudalímetros.** Hoy un caudalímetro mide una línea
+  entera. Con uno por sector se podría comparar regado y pedido sector a sector; el
+  modelo ya calcula lo pedido por sector, falta atarlo.

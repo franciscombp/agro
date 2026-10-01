@@ -197,11 +197,20 @@ export function currentVolumeM3(events, config, dailyM3) {
       anchorDate = key;
     }
 
-    const riegos = dayEvents.filter(e => e.type === 'riego' && typeof e.volumeM3 === 'number');
-    const consumo = riegos.length
-      ? riegos.reduce((sum, e) => sum + e.volumeM3, 0)
-      : dailyM3;
-    volume = Math.max(0, volume - consumo);
+    /* Un nivel del sensor es la ÚLTIMA lectura del día (o la de hace un
+       momento, si el día es hoy): el consumo de ese día ya está dentro de él.
+       Descontarlo otra vez restaba un día de riego a un dato recién medido.
+       Una medición a mano no dice a qué hora se hizo, así que sigue tratándose
+       como de la mañana, que es lo prudente: equivocarse hacia "hay menos
+       agua" es pedir el tanquero un día antes, no quedarse sin agua. */
+    const medidoAlFinal = reading?.origen === 'sensor';
+    if (!medidoAlFinal) {
+      const riegos = dayEvents.filter(e => e.type === 'riego' && typeof e.volumeM3 === 'number');
+      const consumo = riegos.length
+        ? riegos.reduce((sum, e) => sum + e.volumeM3, 0)
+        : dailyM3;
+      volume = Math.max(0, volume - consumo);
+    }
 
     day = new Date(day.getTime() + 86400000);
   }
@@ -218,6 +227,66 @@ export function currentVolumeM3(events, config, dailyM3) {
 export function daysBetween(a, b) {
   const ms = new Date(b + 'T00:00:00Z') - new Date(a + 'T00:00:00Z');
   return Math.max(0, Math.round(ms / 86400000));
+}
+
+/**
+ * Lo que el modelo pedía cada uno de los días pasados, con el clima de ese
+ * día y la reserva del suelo como iba quedando. Es el otro lado de la
+ * comparación con el caudalímetro: sin esto, "regaste 1,4 m³" no dice si fue
+ * mucho o poco.
+ *
+ * La reserva se reconstruye hacia delante desde cero, igual que en clima.js,
+ * así que los primeros días de la serie salen algo altos. Por eso la
+ * comparación usa sólo la última semana de una serie de dos.
+ */
+export function demandaPasada({ plants, sectors = [], clima, reservaMax = RESERVA_SUELO_MM }) {
+  const dias = clima?.pasados || [];
+  const vivas = plants.filter(p => p.status !== 'muerto');
+  const out = {};
+  let reserva = 0;
+  for (const d of dias) {
+    reserva = Math.min(reservaMax, reserva + lluviaEfectiva(d.lluvia ?? 0));
+    const litros = vivas.reduce((s, p) => s + litrosPlantaDia(p, { et0: d.et0, lluvia: 0, reservaMm: reserva, sectors }), 0);
+    reserva = Math.max(0, reserva - (d.et0 ?? ET0_REF) * 0.85);
+    out[d.date] = litros / 1000;
+  }
+  return out;
+}
+
+/**
+ * Regado frente a pedido, en los días que tienen riego MEDIDO. Sólo esos: un
+ * día sin caudalímetro no se puede comparar, y rellenarlo con la demanda
+ * estimada daría una coincidencia perfecta y falsa.
+ */
+export function regadoVsPedido({ water, plants, sectors, clima, reservaMax, dias = 7 }) {
+  const pedido = demandaPasada({ plants, sectors, clima, reservaMax });
+  const hoy = new Date().toISOString().slice(0, 10);
+  const desde = new Date(Date.now() - dias * 86400000).toISOString().slice(0, 10);
+  const regado = {};
+  for (const e of water) {
+    if (e.type !== 'riego' || e.origen !== 'sensor' || typeof e.volumeM3 !== 'number') continue;
+    if (e.date < desde || e.date >= hoy) continue;      // hoy todavía no terminó
+    regado[e.date] = (regado[e.date] || 0) + e.volumeM3;
+  }
+  const filas = Object.keys(regado).filter(d => pedido[d] != null).sort()
+    .map(d => ({ date: d, regadoM3: regado[d], pedidoM3: pedido[d] }));
+  if (!filas.length) return null;
+  const totReg = filas.reduce((s, f) => s + f.regadoM3, 0);
+  const totPed = filas.reduce((s, f) => s + f.pedidoM3, 0);
+  // Días en que se regó sin que las plantas pidieran casi nada: el caso del
+  // temporizador que no sabe que llovió. Es la causa más común de regar de
+  // más, y la más fácil de corregir, así que se cuenta aparte.
+  const sinNecesidad = filas.filter(f => f.pedidoM3 < f.regadoM3 * 0.1 && f.regadoM3 > 0.01);
+  return {
+    filas,
+    sinNecesidad: sinNecesidad.length,
+    sinNecesidadM3: sinNecesidad.reduce((s, f) => s + f.regadoM3, 0),
+    regadoM3: totReg,
+    pedidoM3: totPed,
+    // Con lo pedido casi en cero (semana de lluvias) un porcentaje no dice
+    // nada y se dispara: entonces se da sólo la diferencia en m³.
+    desvio: totPed > 0.05 ? Math.round((totReg / totPed - 1) * 100) : null
+  };
 }
 
 /** Autonomía en días con el volumen estimado y la demanda diaria. */
@@ -346,9 +415,13 @@ export function summary({ plants, sectors, water, config, clima, sensores = null
     }
   }
 
+  const comparacion = regadoVsPedido({ water, plants, sectors, clima: ctx,
+    reservaMax: config.reservaSueloMm ?? RESERVA_SUELO_MM });
+
   return {
     demand: d,
     clima: ctx,
+    comparacion,
     dailyM3,
     dailyManual: manualM3 != null,
     volume: vol,
