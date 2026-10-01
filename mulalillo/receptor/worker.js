@@ -10,6 +10,9 @@
 //                        lo que llegó desde esa fecha, para la app
 //   GET  /estado         última lectura de cada aparato, para saber si alguno
 //                        se calló
+//   POST /alertas/probar manda un mensaje de prueba a Telegram
+//   POST /alertas/revisar corre la revisión de alertas ahora (la misma que el
+//                        cron cada 30 minutos)
 //
 // Dos tokens, no uno: el de escritura va en TTN y en Home Assistant, que son
 // servidores; el de lectura va en el teléfono, que se pierde, se presta y se
@@ -22,11 +25,17 @@
 "use strict";
 
 import { normaliza } from '../normaliza.js';
+import { revisar, enviarTelegram } from './alertas.js';
 
 const DIAS_RETENCION = 120;
 const MAX_DIAS_CONSULTA = 45;
 
 export default {
+  // Cloudflare llama a esto según el cron de wrangler.toml (cada 30 min).
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(revisar(env, { leerDesde }));
+  },
+
   async fetch(request, env) {
     const url = new URL(request.url);
 
@@ -40,6 +49,15 @@ export default {
       if (url.pathname === '/lecturas' && request.method === 'GET') {
         if (!autorizado(request, env.TOKEN_LECTURA)) return cors(error(401, 'token de lectura inválido'));
         return cors(await lecturas(url, env));
+      }
+      if (url.pathname === '/alertas/probar' && request.method === 'POST') {
+        if (!autorizado(request, env.TOKEN_ESCRITURA)) return error(401, 'token de escritura inválido');
+        const r = await enviarTelegram(env, '✅ <b>Finca Mulalillo</b>\nEl receptor puede mandar avisos a este chat.');
+        return json(r, r.ok ? 200 : 502);
+      }
+      if (url.pathname === '/alertas/revisar' && request.method === 'POST') {
+        if (!autorizado(request, env.TOKEN_ESCRITURA)) return error(401, 'token de escritura inválido');
+        return json(await revisar(env, { leerDesde }));
       }
       if (url.pathname === '/estado' && request.method === 'GET') {
         if (!autorizado(request, env.TOKEN_LECTURA)) return cors(error(401, 'token de lectura inválido'));
@@ -84,8 +102,12 @@ async function lecturas(url, env) {
   if (Number.isNaN(desde.getTime())) return error(400, 'desde no es una fecha');
   const tope = new Date(ahora.getTime() - MAX_DIAS_CONSULTA * 86400000);
   if (desde < tope) desde = tope;
-  const desdeIso = desde.toISOString();
+  return json({ lecturas: await leerDesde(env, desde.toISOString()), hasta: ahora.toISOString() });
+}
 
+/** Todas las lecturas posteriores a una fecha, ordenadas. */
+async function leerDesde(env, desdeIso) {
+  const ahora = new Date();
   const out = [];
   // Un prefijo por día: KV lista por prefijo, no por rango.
   for (let d = new Date(desdeIso.slice(0, 10) + 'T00:00:00Z'); d <= ahora; d = new Date(d.getTime() + 86400000)) {
@@ -96,8 +118,7 @@ async function lecturas(url, env) {
       cursor = r.list_complete ? null : r.cursor;
     } while (cursor);
   }
-  out.sort((a, b) => a.fecha.localeCompare(b.fecha));
-  return json({ lecturas: out, hasta: ahora.toISOString() });
+  return out.sort((a, b) => a.fecha.localeCompare(b.fecha));
 }
 
 async function estado(env) {

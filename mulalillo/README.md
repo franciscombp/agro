@@ -156,6 +156,13 @@ Lo esencial del diseño:
 - **Lo que viene de un sensor va marcado** (`origen: 'sensor'`), no viaja por la cola de
   sincronización —el servidor ya lo tiene— y se puede rehacer entero, cosa necesaria
   porque cambiar la altura de montaje cambia todos los niveles pasados.
+- **El caudalímetro cierra el balance.** Sus litros se vuelven eventos `riego`, que el
+  modelo ya usa *en lugar* de la demanda estimada, y la pantalla de agua compara lo
+  regado con lo que pedían las plantas — con los días en que se regó sin hacer falta
+  contados aparte, que es el error más común y el más fácil de corregir.
+- **Avisos por Telegram** desde el receptor, cada 30 minutos: aparato callado, batería
+  baja, nivel bajo y pérdida sin explicar (lo que bajó el reservorio menos lo que pasó
+  por la línea de riego). Cada uno se manda una vez al empezar y otra al resolverse.
 - **Se prueba sin hardware.** El botón de datos de prueba genera lecturas con el mismo
   traductor que usa el receptor, y `receptor/local.mjs` + `receptor/simular.mjs` corren
   el receptor real con sensores simulados.
@@ -337,7 +344,7 @@ en el punto, «Fijar con mi GPS» las corrige y el modelo de terreno se recalcul
 | `clima.js` | ET0 y lluvia del punto de la finca, reserva del suelo, caché offline |
 | `sensores.js` | Lecturas del receptor → eventos de nivel, lluvia por día, reserva medida; estado de cada aparato |
 | `normaliza.js` | Traduce TTN, Home Assistant y JSON propio a una sola forma; lo comparten app y receptor |
-| `receptor/` | El receptor (Cloudflare Worker), su versión local y el simulador de sensores |
+| `receptor/` | El receptor (Cloudflare Worker), sus alertas por Telegram, su versión local y el simulador de sensores |
 | `SENSORES.md` | Hardware, montaje y conexión, paso a paso |
 | `planting.js` | Marco de siembra: rejilla girada, recorte al sector y margen |
 | `hydraulics.js` | Pérdidas por fricción, presión neta y diámetro sugerido |

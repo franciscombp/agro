@@ -7,6 +7,7 @@
 //     con el agua bajando de día (riego) y subiendo el día del turno
 //   · suelo      — una sonda tipo Dragino LSE01 por TTN, cada 2 h
 //   · lluvia     — un pluviómetro por Home Assistant, un aguacero el día 3
+//   · riego      — un caudalímetro por TTN que cuenta un total acumulado
 //
 // Los mensajes tienen la forma exacta de cada plataforma, así que lo que
 // funcione aquí funcionará con el aparato real: lo único que cambia es quién
@@ -48,7 +49,8 @@ const ahora = Date.now();
 const inicio = ahora - DIAS * 86400000;
 let nivel = 1.35;               // m de agua al empezar
 let humedad = 31;               // % VWC
-let fcntR = 100, fcntS = 500;
+let fcntR = 100, fcntS = 500, fcntC = 900;
+let totalLitros = 52300;        // el caudalímetro cuenta un total acumulado
 let enviados = 0;
 
 for (let t = inicio; t <= ahora; t += 3600000) {
@@ -57,7 +59,10 @@ for (let t = inicio; t <= ahora; t += 3600000) {
   const dia = Math.floor((t - inicio) / 86400000);
 
   // Riego de 6 a 8 de la mañana: baja el reservorio y sube el suelo.
-  if (hora === 6 || hora === 7) { nivel -= 0.045; humedad += 1.6; }
+  if (hora === 6 || hora === 7) {
+    nivel -= 0.045; humedad += 1.6;
+    totalLitros += 0.045 / 2 * 80 * 1000;   // lo que bajó el reservorio pasó por la línea
+  }
   // El turno de la junta, el día 4: 5 horas llenando.
   if (dia === 4 && hora >= 8 && hora < 13) nivel = Math.min(2.0, nivel + 0.14);
   // El suelo se seca con el sol.
@@ -72,6 +77,9 @@ for (let t = inicio; t <= ahora; t += 3600000) {
   const distanciaMm = Math.round((MONTAJE_M - nivel + ruido) * 1000);
   await enviar(ttn('reservorio-ultrasonico', fcntR++, f,
     { distance: distanciaMm, BatV: +(3.62 - dia * 0.002).toFixed(3) }));
+  enviados++;
+
+  await enviar(ttn('linea-riego', fcntC++, f, { water_liters: Math.round(totalLitros), BatV: 3.58 }));
   enviados++;
 
   if (hora % 2 === 0) {

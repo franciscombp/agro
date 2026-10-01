@@ -27,7 +27,7 @@ export const USOS = {
   reservorio: { label: 'Nivel del reservorio', tipos: ['distancia', 'nivel'] },
   suelo: { label: 'Humedad del suelo', tipos: ['humedad_suelo'] },
   pluviometro: { label: 'Pluviómetro', tipos: ['lluvia'] },
-  caudal: { label: 'Caudalímetro de riego', tipos: ['caudal'] },
+  caudal: { label: 'Caudalímetro de riego', tipos: ['caudal', 'pulsos'] },
   ignorar: { label: 'No usar', tipos: [] }
 };
 
@@ -150,6 +150,92 @@ export function lluviaPorDia(lecturas, aparatos) {
 }
 
 /**
+ * Litros por día que pasaron por cada caudalímetro.
+ *
+ * Los medidores mandan una de dos cosas, y confundirlas es catastrófico:
+ *   · lo que pasó desde la lectura anterior (`acumulado: false`), que se suma;
+ *   · un TOTAL que sólo crece (`acumulado: true`), del que lo regado es la
+ *     diferencia entre una lectura y la siguiente. Sumar el total como si
+ *     fuera lo del rato cuenta mil veces el mismo litro.
+ * Casi todos los contadores de pulsos son del segundo tipo, y por eso es lo
+ * que se asume si nadie dijo otra cosa.
+ *
+ * Un total que BAJA es un contador que volvió a cero —cambio de pila, reinicio
+ * del nodo—: lo de ese tramo es el valor nuevo entero, no una resta negativa.
+ *
+ * El primer total de la serie no tiene con qué compararse, así que no aporta
+ * nada: mejor perder la primera hora que inventar un riego del tamaño de todo
+ * lo que el medidor contó en su vida.
+ */
+export function riegoPorDia(lecturas, aparatos) {
+  const porAparato = new Map();
+  for (const l of lecturas) {
+    const ap = aparatos[l.dispositivo];
+    if (ap?.uso !== 'caudal') continue;
+    if (l.tipo !== 'caudal' && l.tipo !== 'pulsos') continue;
+    if (!porAparato.has(l.dispositivo)) porAparato.set(l.dispositivo, []);
+    porAparato.get(l.dispositivo).push(l);
+  }
+
+  const out = {};   // { dispositivo: { dia: litros } }
+  for (const [disp, serie] of porAparato) {
+    const ap = aparatos[disp];
+    const litros = l => l.tipo === 'pulsos'
+      ? (ap.litrosPorPulso > 0 ? l.valor * ap.litrosPorPulso : null)
+      : l.valor;
+    const acumulado = ap.acumulado !== false;
+    serie.sort((a, b) => a.fecha.localeCompare(b.fecha));
+
+    const dias = {};
+    let prev = null;
+    for (const l of serie) {
+      const v = litros(l);
+      if (v == null) continue;
+      let tramo;
+      if (!acumulado) tramo = v;
+      else if (prev == null) tramo = 0;
+      else tramo = v >= prev ? v - prev : v;
+      prev = v;
+      const d = l.fecha.slice(0, 10);
+      dias[d] = (dias[d] || 0) + Math.max(0, tramo);
+    }
+    out[disp] = dias;
+  }
+  return out;
+}
+
+/**
+ * Eventos `riego` a partir de los caudalímetros: uno por aparato y día. El
+ * modelo de agua ya usa un riego registrado EN LUGAR de la demanda estimada
+ * de ese día, así que con un caudalímetro el reservorio deja de restar lo que
+ * el modelo cree que se regó y resta lo que de verdad pasó por la tubería.
+ *
+ * Los sectores que alimenta la línea se guardan con el evento, pero el
+ * volumen no se reparte: un medidor en una línea compartida mide el total, y
+ * cualquier reparto sería un supuesto vestido de medición.
+ */
+export function eventosRiego(lecturas, aparatos) {
+  const out = [];
+  for (const [disp, dias] of Object.entries(riegoPorDia(lecturas, aparatos))) {
+    const ap = aparatos[disp];
+    for (const [dia, litros] of Object.entries(dias)) {
+      if (litros <= 0) continue;
+      out.push({
+        id: `sensor-riego-${disp}-${dia}`,
+        type: 'riego',
+        date: dia,
+        volumeM3: Math.round(litros) / 1000,
+        origen: 'sensor',
+        dispositivo: disp,
+        sectorIds: ap.sectorIds || [],
+        notes: `Caudalímetro ${ap.nombre || disp}`
+      });
+    }
+  }
+  return out;
+}
+
+/**
  * La reserva del suelo MEDIDA, en mm, a partir de la humedad volumétrica.
  * Es la fracción de agua aprovechable que queda —entre el punto de marchitez
  * y la capacidad de campo— aplicada a la reserva máxima configurada.
@@ -193,8 +279,11 @@ export function estadoAparatos(lecturas, aparatos = {}) {
     if (!a.ultima || l.fecha > a.ultima) a.ultima = l.fecha;
   }
   const ahora = Date.now();
+  const hoy = new Date().toISOString().slice(0, 10);
+  const riegos = riegoPorDia(lecturas, aparatos);
   return [...por.values()].map(a => {
     const cfg = aparatos[a.dispositivo] || {};
+    const litrosHoy = riegos[a.dispositivo]?.[hoy] ?? null;
     const horas = (ahora - new Date(a.ultima).getTime()) / 3600000;
     return {
       ...a,
@@ -207,13 +296,13 @@ export function estadoAparatos(lecturas, aparatos = {}) {
       bateriaTexto: a.tipos.bateria ? (a.tipos.bateria.valor <= 5
         ? `${fmt(a.tipos.bateria.valor, 2)} V` : `${fmt(a.tipos.bateria.valor, 0)} %`) : null,
       bateriaBaja: bateriaBaja(a.tipos.bateria?.valor),
-      principal: principal(a.tipos, cfg)
+      principal: principal(a.tipos, cfg, litrosHoy)
     };
   }).sort((x, y) => (x.uso ? 0 : 1) - (y.uso ? 0 : 1) || x.nombre.localeCompare(y.nombre));
 }
 
 /** La lectura que importa de un aparato según su uso, ya en palabras. */
-function principal(tipos, cfg) {
+function principal(tipos, cfg, litrosHoy = null) {
   if (cfg.uso === 'reservorio') {
     const l = tipos.nivel || tipos.distancia;
     if (!l) return null;
@@ -224,7 +313,12 @@ function principal(tipos, cfg) {
   }
   if (cfg.uso === 'suelo' && tipos.humedad_suelo) return { texto: `${fmt(tipos.humedad_suelo.valor, 1)} % de humedad` };
   if (cfg.uso === 'pluviometro' && tipos.lluvia) return { texto: `${fmt(tipos.lluvia.valor, 1)} mm en la última lectura` };
-  if (cfg.uso === 'caudal' && tipos.caudal) return { texto: `${fmt(tipos.caudal.valor, 0)} L en la última lectura` };
+  if (cfg.uso === 'caudal' && (tipos.caudal || tipos.pulsos)) {
+    if (tipos.pulsos && !tipos.caudal && !(cfg.litrosPorPulso > 0)) {
+      return { texto: `${fmt(tipos.pulsos.valor, 0)} pulsos`, falta: 'cantidad de litros por pulso' };
+    }
+    return { texto: `${fmt(litrosHoy ?? 0, 0)} L regados hoy` };
+  }
   // Sin uso asignado: se enseña lo que mande, para que se pueda reconocer.
   const t = Object.values(tipos).find(x => x.tipo !== 'bateria');
   return t ? { texto: `${TIPOS[t.tipo]?.etiqueta || t.tipo}: ${fmt(t.valor, 2)} ${t.unidad}` } : null;
@@ -251,7 +345,7 @@ function fmt(v, d) {
  */
 export async function aplicar(aparatos) {
   const lecturas = await db.all('lecturas');
-  const eventos = eventosNivel(lecturas, aparatos);
+  const eventos = [...eventosNivel(lecturas, aparatos), ...eventosRiego(lecturas, aparatos)];
   // Los eventos de sensor que ya no corresponden (aparato reasignado o
   // borrado) se quitan; los anotados a mano no se tocan nunca.
   const actuales = (await db.all('water')).filter(w => w.origen === 'sensor');
@@ -268,18 +362,33 @@ export async function aplicar(aparatos) {
  * generadas con el MISMO traductor que usa el receptor. Así el modo de prueba
  * ejercita el camino de verdad y no uno paralelo.
  */
-export function lecturasDePrueba({ dias = 7, montajeM = 2.3 } = {}) {
+export function lecturasDePrueba({ dias = 7, montajeM = 2.3, consumoDiaM3 = 0.2,
+                                  capacidadM3 = 80, alturaUtilM = 2, exceso = 1.3 } = {}) {
+  /* El riego de prueba sale del consumo que da el propio modelo para las
+     plantas registradas, con un exceso: así el reservorio baja lo que debe
+     bajar y la comparación regado/pedido tiene algo que decir. Si se
+     inventara aparte, un reservorio que pierde 3 m³ al día al lado de unas
+     plantas que piden 0,15 diría "regaste 2.000 % de más", y la prueba
+     enseñaría una incoherencia en vez del circuito. */
+  const riegoDiaL = consumoDiaM3 * exceso * 1000;
+  const bajaPorLitro = alturaUtilM / (capacidadM3 * 1000);
   const out = [];
   const ahora = Date.now();
   const inicio = ahora - dias * 86400000;
-  let nivel = 1.2, humedad = 30, fR = 1, fS = 1;
+  let nivel = 1.2, humedad = 30, total = 18250, fR = 1, fS = 1, fC = 1;
 
   for (let t = inicio; t <= ahora; t += 3600000) {
     const f = new Date(t);
     const hora = (f.getUTCHours() + 19) % 24;      // hora de Ecuador
     const dia = Math.floor((t - inicio) / 86400000);
-    if (hora === 6 || hora === 7) { nivel -= 0.045; humedad += 1.6; }
-    if (dia === Math.floor(dias / 2) && hora >= 8 && hora < 13) nivel = Math.min(2, nivel + 0.14);
+    let litros = 0;
+    if (hora === 6 || hora === 7) {
+      litros = riegoDiaL / 2 * (0.9 + Math.random() * 0.2);
+      nivel -= litros * bajaPorLitro;
+      humedad += 1.6;
+      total += litros;
+    }
+    if (dia === Math.floor(dias / 2) && hora >= 8 && hora < 13) nivel = Math.min(alturaUtilM, nivel + 0.14);
     if (hora >= 10 && hora <= 16) humedad -= 0.35;
     const lluvia = dia === 2 && hora >= 15 && hora < 18 ? 6.5 : 0;
     if (lluvia) humedad += 2.2;
@@ -290,7 +399,7 @@ export function lecturasDePrueba({ dias = 7, montajeM = 2.3 } = {}) {
       end_device_ids: { device_id: 'prueba-reservorio' },
       received_at: iso,
       uplink_message: { f_cnt: fR++, decoded_payload: {
-        distance: Math.round((montajeM - nivel + (Math.random() - 0.5) * 0.008) * 1000), BatV: 3.61 } }
+        distance: Math.round((montajeM - nivel + (Math.random() - 0.5) * 0.004) * 1000), BatV: 3.61 } }
     }));
     if (hora % 2 === 0) {
       out.push(...normaliza({
@@ -299,6 +408,12 @@ export function lecturasDePrueba({ dias = 7, montajeM = 2.3 } = {}) {
         uplink_message: { f_cnt: fS++, decoded_payload: { water_SOIL: +humedad.toFixed(1), BatV: 3.55 } }
       }));
     }
+    // Caudalímetro: total acumulado, como casi todos los reales.
+    out.push(...normaliza({
+      end_device_ids: { device_id: 'prueba-caudal' },
+      received_at: iso,
+      uplink_message: { f_cnt: fC++, decoded_payload: { water_liters: Math.round(total), BatV: 3.58 } }
+    }));
     out.push(...normaliza({
       entity_id: 'sensor.prueba_pluviometro', state: String(lluvia),
       attributes: { device_class: 'precipitation', unit_of_measurement: 'mm' }, last_updated: iso
@@ -311,7 +426,8 @@ export function lecturasDePrueba({ dias = 7, montajeM = 2.3 } = {}) {
 export const APARATOS_DE_PRUEBA = {
   'prueba-reservorio': { uso: 'reservorio', nombre: 'Reservorio (prueba)', montajeM: 2.3 },
   'prueba-suelo': { uso: 'suelo', nombre: 'Suelo arándanos (prueba)' },
-  'sensor.prueba_pluviometro': { uso: 'pluviometro', nombre: 'Pluviómetro (prueba)' }
+  'sensor.prueba_pluviometro': { uso: 'pluviometro', nombre: 'Pluviómetro (prueba)' },
+  'prueba-caudal': { uso: 'caudal', nombre: 'Línea de riego (prueba)', acumulado: true, sectorIds: [] }
 };
 
 export async function borrarPrueba() {

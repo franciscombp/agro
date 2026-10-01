@@ -16,7 +16,11 @@
 //                              la entrega calculada
 //         'lluvia'         mm — acumulada en el intervalo de la lectura
 //         'humedad_suelo'  %  — contenido volumétrico de agua (VWC)
-//         'caudal'         L  — volumen pasado desde la lectura anterior
+//         'caudal'         L  — volumen; según el aparato, lo pasado desde la
+//                              lectura anterior o un total acumulado (lo dice
+//                              la configuración del aparato en la app)
+//         'pulsos'            — cuenta de un contador de pulsos; los litros
+//                              por pulso los pone quien instaló el medidor
 //         'bateria'        V o % según el aparato
 //         'temperatura'    °C
 "use strict";
@@ -27,6 +31,7 @@ export const TIPOS = {
   lluvia: { unidad: 'mm', etiqueta: 'Lluvia' },
   humedad_suelo: { unidad: '%', etiqueta: 'Humedad del suelo' },
   caudal: { unidad: 'L', etiqueta: 'Caudal' },
+  pulsos: { unidad: '', etiqueta: 'Pulsos' },
   bateria: { unidad: '', etiqueta: 'Batería' },
   temperatura: { unidad: '°C', etiqueta: 'Temperatura' }
 };
@@ -65,6 +70,12 @@ const CAMPOS = [
   ['water_liters', 'caudal', 1],
   ['volume_l', 'caudal', 1],
   ['flow_l', 'caudal', 1],
+  ['total_l', 'caudal', 1],
+  ['water_m3', 'caudal', 1000],
+  // contadores de pulsos (nodos genéricos con entrada de pulsos)
+  ['pulse_count', 'pulsos', 1],
+  ['count', 'pulsos', 1],
+  ['Count', 'pulsos', 1],
   // temperatura
   ['temperature', 'temperatura', 1],
   ['TempC_SHT', 'temperatura', 1],
