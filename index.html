@@ -1,255 +1,229 @@
 <!DOCTYPE html>
-<html lang="es">
+<!-- Mi Huerto: el huerto y la gestión de la Finca Mulalillo en una sola app.
+     El tema `apps` de mal-ds teñido con el verde de agro; la piel del huerto
+     va encima, en styles.css. -->
+<html lang="es" data-marca="apps" data-app="agro">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#1f7a3d" />
-  <meta name="description" content="Qué sembrar y criar en tu zona, cuándo hacerlo y cuánto puedes ganar. Para huertos urbanos y agricultura familiar." />
-  <title>Mi Huerto — guía de siembra y crianza</title>
+  <meta name="theme-color" content="#fafaf8" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#121412" media="(prefers-color-scheme: dark)" />
+  <meta name="description" content="Qué hacer hoy en la finca, cuánta agua queda, qué sembrar y a cuánto se vende. Funciona sin señal." />
+  <title>Mi Huerto · Finca Mulalillo</title>
+
   <link rel="manifest" href="/agro/manifest.webmanifest" />
   <link rel="icon" href="/agro/icons/icon-192.png" type="image/png" />
   <link rel="apple-touch-icon" href="/agro/icons/apple-touch-icon.png" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="Mi Huerto" />
-  <link rel="stylesheet" href="/agro/styles/fonts.css" />
-  <link rel="stylesheet" href="/agro/styles/design-system.css" />
+
+  <link rel="stylesheet" href="/agro/lib/maplibre-gl.css" />
+  <link rel="stylesheet" href="/agro/ds/mal/mal.css" />
   <link rel="stylesheet" href="/agro/styles.css" />
+
+  <!-- Librerías servidas por la propia app: sin CDN, funciona sin señal desde la primera visita. -->
+  <script>
+    // Distingue "no se pudo descargar" de "el navegador no pudo ejecutarlo".
+    window.__mapLib = {};
+    addEventListener('error', e => {
+      if (e.filename && e.filename.indexOf('maplibre-gl') !== -1) {
+        window.__mapLib.exec = e.message || 'error al ejecutar la librería';
+      }
+    }, true);
+  </script>
+  <script src="/agro/lib/maplibre-gl.js" onerror="window.__mapLib.network = true"></script>
 </head>
 <body>
 
-  <!-- Onboarding 1: Bienvenida -->
-  <section class="screen active" id="screen-welcome">
-    <div class="hero">
-      <div class="hero-emoji">🌱</div>
-      <h1>Mi Huerto</h1>
-      <p class="lead">Qué sembrar y criar en tu zona, cuándo hacerlo y cuánto puedes ganar.</p>
-      <p class="sub">Para huertos urbanos y agricultura familiar de hasta 2 hectáreas.</p>
+<span class="badge badge-warn estado-red" id="chip-offline" hidden>Sin conexión</span>
+
+<!-- Hoy: la entrada. Qué hacer, si hay agua, y anotar lo del día. -->
+<main class="view active" id="view-hoy">
+  <div class="contenido" id="hoy-body"></div>
+</main>
+
+<!-- Finca: el mapa y el inventario -->
+<main class="view" id="view-finca">
+  <div class="cabecera cabecera--compacta">
+    <h2>Finca</h2>
+    <div class="seg seg--ancho" id="finca-seg" role="tablist" aria-label="Ver la finca">
+      <button role="tab" aria-selected="true" data-pane="mapa">Mapa</button>
+      <button role="tab" aria-selected="false" data-pane="sectores">Sectores</button>
+      <button role="tab" aria-selected="false" data-pane="plantas">Plantas</button>
     </div>
-    <div class="bottom-bar">
-      <button class="btn-primary" id="btn-start">Empezar</button>
+  </div>
+
+  <section class="pane pane--mapa" id="finca-mapa">
+    <div id="map"></div>
+    <div class="mapa-herramientas" role="toolbar" aria-label="Herramientas del mapa">
+      <button class="chip-mapa" id="btn-fit"><svg class="icono icono--s" aria-hidden="true"><use href="#i-cuadricula"/></svg>Toda la finca</button>
+      <button class="chip-mapa" id="btn-gps"><svg class="icono icono--s" aria-hidden="true"><use href="#i-pin"/></svg>Dónde estoy</button>
+      <button class="chip-mapa" id="btn-layers"><svg class="icono icono--s" aria-hidden="true"><use href="#i-filtro"/></svg>Colores</button>
+      <button class="chip-mapa" id="btn-3d"><svg class="icono icono--s" aria-hidden="true"><use href="#i-grafica"/></svg>Relieve 3D</button>
+      <button class="chip-mapa" id="btn-move" aria-pressed="false"><svg class="icono icono--s" aria-hidden="true"><use href="#i-editar"/></svg>Mover puntos</button>
     </div>
-  </section>
-
-  <!-- Onboarding 2: Ubicación -->
-  <section class="screen" id="screen-location">
-    <header class="screen-header">
-      <button class="btn-back" data-back="screen-welcome">←</button>
-      <div class="progress"><span style="width:50%"></span></div>
-    </header>
-    <div class="content">
-      <h2>¿Dónde está tu huerto?</h2>
-      <p class="sub">Con tu ubicación sabemos la altitud y el clima para recomendarte cultivos y animales adecuados.</p>
-      <button class="option-card accent" id="btn-geolocate">
-        <span class="option-emoji">📍</span>
-        <span class="option-text">
-          <strong>Usar mi ubicación</strong>
-          <small>Detectar tu poblado, altitud y clima</small>
-        </span>
-      </button>
-      <p class="divider-text">o elige tu zona</p>
-      <div id="manual-zones"></div>
-      <p class="hint" id="location-status"></p>
-    </div>
-  </section>
-
-  <!-- Onboarding 3: Espacio -->
-  <section class="screen" id="screen-space">
-    <header class="screen-header">
-      <button class="btn-back" data-back="screen-location">←</button>
-      <div class="progress"><span style="width:100%"></span></div>
-    </header>
-    <div class="content">
-      <h2>¿Qué espacio tienes?</h2>
-      <p class="sub">Así te mostramos solo lo que cabe en tu espacio.</p>
-      <div id="space-options"></div>
-    </div>
-  </section>
-
-  <!-- Tab: Hoy -->
-  <section class="screen with-tabs" id="screen-home">
-    <div class="content">
-      <div class="home-top">
-        <button class="location-chip" id="btn-settings">
-          <span id="home-place">📍 …</span>
-        </button>
-      </div>
-      <h2 class="page-title" id="home-title">Hoy en tu huerto</h2>
-      <div id="install-banner"></div>
-      <div id="alert-box"></div>
-      <div class="weather-card" id="weather-card"><div class="weather-loading">Cargando clima…</div></div>
-      <div class="moon-strip" id="moon-strip"></div>
-      <div id="market-strip"></div>
-      <div id="garden-summary"></div>
-      <div class="section-head">
-        <h3 class="list-title">Para sembrar este mes</h3>
-        <button class="link-btn" data-goto="screen-explore">Ver todo</button>
-      </div>
-      <div id="plant-list"></div>
-    </div>
-  </section>
-
-  <!-- Tab: Almanaque -->
-  <section class="screen with-tabs" id="screen-almanac">
-    <div class="content">
-      <h2 class="page-title">Almanaque</h2>
-      <p class="sub">Pronóstico y mejores fechas para sembrar en tu zona.</p>
-      <h3 class="list-title">Cómo viene el agua</h3>
-      <div id="clima-card"></div>
-      <h3 class="list-title">Próximos días</h3>
-      <div id="best-days"></div>
-      <h3 class="list-title">Calendario de siembra</h3>
-      <div class="month-chips" id="month-chips"></div>
-      <div id="almanac-list"></div>
-    </div>
-  </section>
-
-  <!-- Tab: Mercado -->
-  <section class="screen with-tabs" id="screen-market">
-    <div class="content">
-      <h2 class="page-title">Mercado</h2>
-      <p class="sub">Apunta los precios de tu feria, mira tendencias y decide cuándo vender.</p>
-
-      <div class="section-head">
-        <h3 class="list-title">Mis precios</h3>
-        <button class="link-btn" id="btn-price-add">＋ Anotar precio</button>
-      </div>
-      <div class="price-form" id="price-form" hidden>
-        <label class="field-label">Producto</label>
-        <select class="field-input" id="pf-prod"></select>
-        <input type="text" class="field-input" id="pf-prod-otro" placeholder="Escribe el nombre del producto" maxlength="30" hidden />
-        <label class="field-label" id="pf-precio-label">Precio que viste ($)</label>
-        <input type="number" class="field-input" id="pf-precio" min="0" step="0.05" inputmode="decimal" placeholder="Ej.: 0.60" />
-        <label class="field-label">Lugar (opcional)</label>
-        <input type="text" class="field-input" id="pf-lugar" placeholder="Ej.: feria del pueblo" maxlength="40" />
-        <div class="pf-actions">
-          <button class="pf-cancel" id="pf-cancel">Cancelar</button>
-          <button class="pf-save" id="pf-save">Guardar</button>
-        </div>
-      </div>
-      <div id="price-list"></div>
-
-      <h3 class="list-title">¿Cuándo vender mejor?</h3>
-      <p class="sub">Meses en que cada producto suele escasear y pagarse mejor.</p>
-      <div id="sell-window"></div>
-
-      <h3 class="list-title">Mercado internacional</h3>
-      <p class="sub" id="intl-note">Referencia mundial (Banco Mundial). Tu precio local depende de la feria, pero sigue la misma corriente.</p>
-      <div id="intl-prices"></div>
-
-      <div id="sell-tip"></div>
-    </div>
-  </section>
-
-  <!-- Tab: Mi huerto (seguimiento) -->
-  <section class="screen with-tabs" id="screen-garden">
-    <div class="content">
-      <h2 class="page-title">Mi huerto</h2>
-      <p class="sub">Sigue tus siembras y animales: cuánto llevan y cuándo cosechar.</p>
-      <div id="garden-list"></div>
-    </div>
-    <div class="bottom-bar above-tabs">
-      <button class="btn-primary" id="btn-add-open">＋ Agregar cultivo o animal</button>
-    </div>
-  </section>
-
-  <!-- Tab: Explorar -->
-  <section class="screen with-tabs" id="screen-explore">
-    <div class="content">
-      <h2 class="page-title">Explorar</h2>
-      <div class="sticky-filters">
-        <input type="search" class="search-input" id="search-input" placeholder="Buscar cultivo o animal…" />
-        <div class="cat-chips" id="cat-chips"></div>
-      </div>
-      <label class="zone-toggle"><input type="checkbox" id="zone-only" checked /> Solo aptos para mi zona</label>
-      <div id="explore-list"></div>
-    </div>
-  </section>
-
-  <!-- Detalle -->
-  <section class="screen" id="screen-plant">
-    <header class="screen-header">
-      <button class="btn-back" data-back="__last">←</button>
-    </header>
-    <div class="content" id="plant-detail"></div>
-    <div class="bottom-bar dual">
-      <button class="btn-secondary" id="btn-track">＋ A mi huerto</button>
-      <button class="btn-primary" id="btn-calc">Calcular ganancia</button>
-    </div>
-  </section>
-
-  <!-- Calculadora -->
-  <section class="screen" id="screen-calc">
-    <header class="screen-header">
-      <button class="btn-back" data-back="screen-plant">←</button>
-    </header>
-    <div class="content">
-      <h2 id="calc-title">Calculadora</h2>
-      <p class="sub" id="calc-question"></p>
-      <div class="area-input">
-        <input type="range" id="area-slider" min="1" max="100" value="10" />
-        <div class="area-value"><span id="area-num">10</span> <span id="area-unit">m²</span></div>
-        <div class="area-presets" id="area-presets"></div>
-      </div>
-      <div id="calc-sistemas"></div>
-      <div id="calc-siembra"></div>
-      <div id="calc-results"></div>
-    </div>
-  </section>
-
-  <!-- Agregar siembra a mi huerto -->
-  <section class="screen" id="screen-add">
-    <header class="screen-header">
-      <button class="btn-back" data-back="screen-garden">←</button>
-    </header>
-    <div class="content">
-      <h2>Agregar a mi huerto</h2>
-      <div id="add-step-pick">
-        <p class="sub">¿Qué cultivo o animal quieres seguir?</p>
-        <input type="search" class="search-input" id="add-search" placeholder="Buscar…" />
-        <div id="add-list"></div>
-      </div>
-      <div id="add-step-form" hidden>
-        <div class="add-selected" id="add-selected"></div>
-        <label class="field-label">¿Cuándo lo sembraste o empezaste?</label>
-        <input type="date" class="field-input" id="add-date" />
-        <label class="field-label" id="add-qty-label">Cantidad</label>
-        <input type="number" class="field-input" id="add-qty" min="1" value="10" inputmode="numeric" />
-        <label class="field-label">Nota (opcional)</label>
-        <input type="text" class="field-input" id="add-note" placeholder="Ej.: junto a la casa, semilla propia…" maxlength="60" />
-        <button class="btn-primary mt" id="btn-add-save">Guardar</button>
-      </div>
-    </div>
-  </section>
-
-  <!-- Barra de pestañas -->
-  <nav class="tabbar" id="tabbar" hidden>
-    <button class="tab on" data-tab="screen-home">
-      <svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>
-      <span>Hoy</span>
+    <button class="btn btn--rojo fab" id="fab-add" aria-label="Agregar al mapa">
+      <svg class="icono" aria-hidden="true"><use href="#i-mas"/></svg><span>Agregar</span>
     </button>
-    <button class="tab" data-tab="screen-almanac">
-      <svg viewBox="0 0 24 24"><path d="M7 2v3M17 2v3M4 8h16M5 4h14a1 1 0 0 1 1 1v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/></svg>
-      <span>Almanaque</span>
-    </button>
-    <button class="tab" data-tab="screen-market">
-      <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="m7 15 4-6 3 3 4-7"/></svg>
-      <span>Mercado</span>
-    </button>
-    <button class="tab" data-tab="screen-garden">
-      <svg viewBox="0 0 24 24"><path d="M12 22v-8m0 0c0-4 3-7 8-7 0 4-3 7-8 7zm0 0c0-4-3-7-8-7 0 4 3 7 8 7z"/></svg>
-      <span>Mi huerto</span>
-    </button>
-    <button class="tab" data-tab="screen-explore">
-      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-      <span>Explorar</span>
-    </button>
-  </nav>
+    <div class="banner" id="map-banner" hidden></div>
 
-  <script src="/agro/data.js"></script>
-  <script src="/agro/clima.js"></script>
-  <script src="/agro/notify.js"></script>
-  <script src="/agro/app.js"></script>
+    <section class="panel card" id="panel-layers" hidden>
+      <h3>Ver en el mapa</h3>
+      <div class="field">
+        <label for="sel-colorby">Pintar las plantas por</label>
+        <select id="sel-colorby">
+          <option value="species">Especie</option>
+          <option value="status">Cómo están (sanas, con problema)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="sel-filter-species">Especie</label>
+        <select id="sel-filter-species"><option value="all">Todas</option></select>
+      </div>
+      <div class="field">
+        <label for="sel-filter-status">Estado</label>
+        <select id="sel-filter-status">
+          <option value="all">Todos</option>
+          <option value="sano">Sanas</option>
+          <option value="atención">Con algo raro</option>
+          <option value="enfermo">Enfermas</option>
+          <option value="muerto">Muertas</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="sel-filter-sector">Sector</label>
+        <select id="sel-filter-sector"><option value="all">Todos</option></select>
+      </div>
+      <button class="btn btn-block" data-close-panel>Listo</button>
+    </section>
+  </section>
+
+  <section class="pane" id="finca-sectores" hidden>
+    <div class="contenido">
+      <div class="seccion-cab seccion-cab--accion">
+        <p class="sub">Toca un sector para ver sus plantas, su riego y sus tareas.</p>
+        <button class="btn btn--sm btn--rojo" id="btn-new-sector">Dibujar sector</button>
+      </div>
+      <div id="sectors-list" class="list"></div>
+    </div>
+  </section>
+
+  <section class="pane" id="finca-plantas" hidden>
+    <div class="contenido">
+      <div class="seccion-cab seccion-cab--accion">
+        <input type="search" class="buscar" id="plant-search" placeholder="Buscar planta…" aria-label="Buscar plantas" />
+        <button class="btn btn--sm btn--rojo" id="btn-new-plant">Nueva planta</button>
+      </div>
+      <div id="plants-list" class="list"></div>
+    </div>
+  </section>
+</main>
+
+<!-- Relieve 3D: se entra desde el mapa -->
+<main class="view" id="view-3d">
+  <div id="three"></div>
+  <button class="chip-mapa chip-mapa--volver" id="btn-3d-volver">
+    <svg class="icono icono--s" aria-hidden="true"><use href="#i-flecha-izq"/></svg>Volver al mapa</button>
+  <div class="three-controls card abierto" id="three-controls">
+    <button class="three-head" id="three-toggle" aria-expanded="true">
+      Relieve y por dónde corre el agua
+      <svg class="icono caret" aria-hidden="true"><use href="#i-chevron-abajo"/></svg>
+    </button>
+    <div class="three-body">
+      <div class="field">
+        <label for="range-exag">Exagerar la altura <output id="out-exag">3×</output></label>
+        <input type="range" id="range-exag" min="1" max="12" step="0.5" value="3" />
+      </div>
+      <label class="row"><input type="checkbox" id="chk-arrows" checked /> Flechas: hacia dónde corre el agua</label>
+      <button class="btn btn-block" id="btn-recenter">Volver a centrar</button>
+      <p class="hint" id="three-hint"></p>
+    </div>
+  </div>
+</main>
+
+<!-- Tareas -->
+<main class="view" id="view-tasks">
+  <div class="contenido">
+    <div class="cabecera">
+      <h1>Tareas</h1>
+      <div class="cabecera__acciones">
+        <button class="btn btn--sm" id="btn-share-plan">
+          <svg class="icono icono--s" aria-hidden="true"><use href="#i-compartir"/></svg>Mandar el plan</button>
+        <button class="btn btn--sm btn--rojo" id="btn-new-task">Nueva tarea</button>
+      </div>
+    </div>
+    <div class="seg" id="task-seg" role="tablist">
+      <button role="tab" aria-selected="true" data-filter="pendientes">Por hacer</button>
+      <button role="tab" aria-selected="false" data-filter="hechas">Hechas</button>
+      <button role="tab" aria-selected="false" data-filter="todas">Todas</button>
+    </div>
+    <div id="tasks-list" class="list"></div>
+  </div>
+</main>
+
+<!-- Agua -->
+<main class="view" id="view-water">
+  <div class="contenido">
+    <div class="cabecera">
+      <h1>Agua</h1>
+      <div class="cabecera__acciones">
+        <button class="btn btn--sm btn--rojo" id="btn-new-water">Anotar</button>
+      </div>
+    </div>
+    <div id="water-body"></div>
+  </div>
+</main>
+
+<!-- Huerto: lo que era Mi Huerto -->
+<main class="view" id="view-huerto">
+  <div class="contenido">
+    <div class="cabecera">
+      <h1>Huerto</h1>
+    </div>
+    <div class="seg seg--ancho" id="huerto-seg" role="tablist" aria-label="Huerto">
+      <button role="tab" aria-selected="true" data-pane="sembrar">Qué sembrar</button>
+      <button role="tab" aria-selected="false" data-pane="siembras">Mis siembras</button>
+      <button role="tab" aria-selected="false" data-pane="mercado">Mercado</button>
+    </div>
+    <section class="pane" id="huerto-sembrar"></section>
+    <section class="pane" id="huerto-siembras" hidden></section>
+    <section class="pane" id="huerto-mercado" hidden></section>
+  </div>
+</main>
+
+<nav class="navbar" aria-label="Secciones">
+  <button class="nav-item" data-view="view-hoy" aria-current="page">
+    <svg class="icono" aria-hidden="true"><use href="#i-casa"/></svg><span>Hoy</span>
+  </button>
+  <button class="nav-item" data-view="view-finca">
+    <svg class="icono" aria-hidden="true"><use href="#i-pin"/></svg><span>Finca</span>
+  </button>
+  <button class="nav-item" data-view="view-tasks">
+    <svg class="icono" aria-hidden="true"><use href="#i-check"/></svg><span>Tareas</span>
+  </button>
+  <button class="nav-item" data-view="view-water">
+    <svg class="icono" aria-hidden="true"><use href="#i-gota"/></svg><span>Agua</span>
+  </button>
+  <button class="nav-item" data-view="view-huerto">
+    <svg class="icono" aria-hidden="true"><use href="#i-semilla"/></svg><span>Huerto</span>
+  </button>
+</nav>
+
+<!-- Hoja inferior del sistema sobre <dialog>: el navegador se encarga del
+     foco y de cerrar con Escape. -->
+<dialog class="modal modal--hoja" id="sheet">
+  <div class="modal__cab">
+    <h3 id="sheet-title"></h3>
+    <button class="btn btn--icono" id="sheet-close" aria-label="Cerrar">
+      <svg class="icono" aria-hidden="true"><use href="#i-cerrar"/></svg>
+    </button>
+  </div>
+  <div class="modal__cuerpo" id="sheet-body"></div>
+</dialog>
+
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script type="module" src="/agro/app.js"></script>
 </body>
 </html>

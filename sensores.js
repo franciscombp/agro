@@ -19,6 +19,7 @@
 
 import * as db from './db.js';
 import { normaliza, TIPOS } from './normaliza.js';
+import { diaLocal } from './fechas.js';
 
 /* Para qué sirve cada aparato en la finca. Un mismo modelo de sensor puede
    estar en el reservorio o en un tanque de 200 L: lo que decide cómo se usa
@@ -116,7 +117,7 @@ export function eventosNivel(lecturas, aparatos) {
     if (ap?.uso !== 'reservorio') continue;
     const nivel = nivelDesde(l, ap);
     if (nivel == null) continue;
-    const dia = l.fecha.slice(0, 10);
+    const dia = diaLocal(l.fecha);
     const clave = `${l.dispositivo}|${dia}`;
     const prev = porDia.get(clave);
     if (!prev || l.fecha > prev.fecha) porDia.set(clave, { ...l, nivel, dia });
@@ -143,7 +144,7 @@ export function lluviaPorDia(lecturas, aparatos) {
   const dias = new Map();
   for (const l of lecturas) {
     if (aparatos[l.dispositivo]?.uso !== 'pluviometro' || l.tipo !== 'lluvia') continue;
-    const d = l.fecha.slice(0, 10);
+    const d = diaLocal(l.fecha);
     dias.set(d, (dias.get(d) || 0) + Math.max(0, l.valor));
   }
   return Object.fromEntries(dias);
@@ -196,7 +197,7 @@ export function riegoPorDia(lecturas, aparatos) {
       else if (prev == null) tramo = 0;
       else tramo = v >= prev ? v - prev : v;
       prev = v;
-      const d = l.fecha.slice(0, 10);
+      const d = diaLocal(l.fecha);
       dias[d] = (dias[d] || 0) + Math.max(0, tramo);
     }
     out[disp] = dias;
@@ -279,7 +280,7 @@ export function estadoAparatos(lecturas, aparatos = {}) {
     if (!a.ultima || l.fecha > a.ultima) a.ultima = l.fecha;
   }
   const ahora = Date.now();
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = diaLocal();
   const riegos = riegoPorDia(lecturas, aparatos);
   return [...por.values()].map(a => {
     const cfg = aparatos[a.dispositivo] || {};

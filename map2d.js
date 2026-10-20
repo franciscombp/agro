@@ -47,8 +47,20 @@ export class FarmMap {
     this.map.addControl(new maplibregl.NavigationControl({ showCompass: true }), 'top-right');
     this.map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: 'metric' }), 'bottom-left');
 
+    // Sectores y plantas se dibujan apenas el estilo está listo, sin esperar
+    // a las fotos satelitales: 'load' espera a que bajen las teselas, y con
+    // poca señal (o una teselas rota) la finca no aparecía nunca.
     this.ready = new Promise(resolve => {
-      this.map.on('load', () => { this._addLayers(); resolve(this); });
+      let hecho = false;
+      const listo = () => {
+        if (hecho) return;
+        hecho = true;
+        this._addLayers();
+        resolve(this);
+      };
+      this.map.once('style.load', listo);
+      this.map.once('load', listo);   // respaldo, por si 'style.load' ya pasó
+      if (this.map.isStyleLoaded()) listo();
     });
 
     this.map.on('click', e => this._onClick(e));
@@ -281,9 +293,11 @@ export class FarmMap {
     if (this.editTarget) this.setEditTarget(this.editTarget);
   }
 
-  fitToParcel() {
+  /** Encuadra la finca dejando libre la fila de herramientas y el botón Agregar. */
+  fitToParcel(duration = 600) {
     const b = bbox(this.state.parcel.boundary);
-    this.map.fitBounds([[b.minLng, b.minLat], [b.maxLng, b.maxLat]], { padding: 40, duration: 600 });
+    this.map.fitBounds([[b.minLng, b.minLat], [b.maxLng, b.maxLat]],
+      { padding: { top: 70, bottom: 100, left: 24, right: 24 }, duration });
   }
 
   flyTo([lat, lng], zoom = 20) {

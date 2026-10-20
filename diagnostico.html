@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-<title>Diagnóstico — Finca Mulalillo</title>
+<title>Diagnóstico — Mi Huerto</title>
 <!--
   Página deliberadamente tonta: sin módulos ES, sin imports, sin depender de nada
   de la app. Tiene que funcionar incluso cuando la app no arranca, porque su
@@ -123,8 +123,8 @@ function correr() {
   // ¿Qué rama sirve el sitio? package.json existe en main pero no en gh-pages,
   // y assets/ es al revés. Saberlo evita volver a deducirlo a ciegas.
   Promise.all([
-    fetch('../package.json', { cache: 'no-store' }).then(function (r) { return r.status; }).catch(function () { return 0; }),
-    fetch('../vite.config.js', { cache: 'no-store' }).then(function (r) { return r.status; }).catch(function () { return 0; })
+    fetch('./package.json', { cache: 'no-store' }).then(function (r) { return r.status; }).catch(function () { return 0; }),
+    fetch('./vite.config.js', { cache: 'no-store' }).then(function (r) { return r.status; }).catch(function () { return 0; })
   ]).then(function (c) {
     var enMain = c[0] === 200 || c[1] === 200;
     fila('Origen del sitio', enMain
@@ -133,7 +133,8 @@ function correr() {
   });
 
   // ¿Llegan los archivos?
-  var archivos = ['./app.js', './view3d.js', './lib/maplibre-gl.js', './lib/three.module.min.js',
+  var archivos = ['./app.js', './vistas/hoy.js', './huerto/huerto.js', './huerto/catalogo.js',
+                  './view3d.js', './ds/mal/mal.css', './lib/maplibre-gl.js', './lib/three.module.min.js',
                   './lib/maplibre-gl.css', './lib/OrbitControls.js'];
   var cadena = Promise.resolve();
   archivos.forEach(function (f) {
@@ -192,7 +193,7 @@ function correr() {
 }
 
 document.getElementById('btn-copy').onclick = function () {
-  var texto = 'DIAGNÓSTICO FINCA MULALILLO\n' + new Date().toISOString() + '\n\n' + resultados.join('\n');
+  var texto = 'DIAGNÓSTICO MI HUERTO\n' + new Date().toISOString() + '\n\n' + resultados.join('\n');
   var ta = document.getElementById('dump');
   ta.hidden = false;
   ta.value = texto;

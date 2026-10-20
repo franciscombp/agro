@@ -1,241 +1,225 @@
-// Mi Huerto — estado hídrico y fase de El Niño.
+// Clima de la finca: lo que evapora el sol y lo que cae del cielo.
 //
-// El almanaque recomendaba por fecha y altitud nada más: en un año seco decía
-// "siembra maíz en octubre" igual que en un año normal. Este archivo aporta lo
-// que faltaba, y lo hace con MEDICIONES antes que con supuestos:
+// Hasta ahora la demanda de agua eran litros/planta/día fijos por especie. Eso
+// da el mismo número el día que llueve 20 mm y el día que hace sol de páramo a
+// 2.800 m, y en una finca que depende de un turno de 5 horas cada 15 días esa
+// diferencia ES la decisión: si el reservorio aguanta hasta el próximo turno o
+// hay que llamar al tanquero.
 //
-//   1. Cuánto ha llovido de verdad en los últimos 90 días en ESE punto.
-//   2. Cuánto llueve normalmente en esas mismas fechas (mediana de 10 años).
-//   3. El balance entre la lluvia y lo que la atmósfera evapora (ET0).
+// Dos números por día, los dos de Open-Meteo (sin clave):
+//   · ET0 — evapotranspiración de referencia FAO-56, mm/día: cuánta agua pide
+//     la atmósfera. Es la que convierte "hace calor" en un número regable.
+//   · Lluvia, mm/día, que se descuenta de lo que hay que reponer.
 //
-// La fase de El Niño no se adivina ni se inventa una fuente: la declara quien
-// usa la app, y sirve para anticipar los meses que vienen. Lo medido manda
-// sobre el pronóstico climático.
+// Se pide en una sola llamada el pasado reciente y el pronóstico, porque las
+// dos preguntas de la finca son distintas: "¿cuánto gasté?" mira atrás y
+// "¿me alcanza hasta el turno?" mira adelante.
+//
+// Todo se guarda en IndexedDB. Sin señal la app sigue calculando con lo último
+// que bajó, y si nunca bajó nada, con el clima de referencia: ahí los números
+// son exactamente los de antes de existir este archivo.
 "use strict";
 
-/* ── Demanda de agua de cada cultivo ────────────────────────────────────────
-   El catálogo trae `riego` en texto libre ("Frecuente, suelo húmedo",
-   "Resiste sequía"). En vez de añadir un campo nuevo a 52 cultivos y que las
-   dos fuentes se desvíen, se clasifica el texto que ya existe. */
-const NIVELES_AGUA = [
-  { nivel: 0, etiqueta: 'resiste sequía', patrones: [/resiste sequ/i, /prefiere seco/i, /^poco/i] },
-  { nivel: 1, etiqueta: 'poca agua', patrones: [/ligero/i, /aprovecha lluvias/i, /moderado/i] },
-  { nivel: 2, etiqueta: 'agua regular', patrones: [/regular/i, /constante/i] },
-  { nivel: 3, etiqueta: 'mucha agua', patrones: [/frecuente/i, /abundante/i, /h[úu]meda/i, /goteo/i] }
-];
+import * as db from './db.js';
+import { diaLocal } from './fechas.js';
 
-/* En qué orden se prueban, que no es el orden de los niveles. Las frases del
-   catálogo mezclan pistas ("Frecuente y ligero", "Aprovecha lluvias; necesita
-   humedad constante") y la que manda es la exigente: un rábano de riego
-   frecuente no aguanta un año seco porque el riego sea ligero. Después va la
-   resistencia declarada ("Poco: resiste sequía"), y sólo al final los
-   matices. */
-const PRECEDENCIA = [3, 0, 1, 2];
+/* Clima de referencia de la zona: sierra centro, ~2.800 m. Es el valor con el
+   que se calibraron los litros/planta/día del catálogo, así que sirve de
+   respaldo sin cambiar ningún número histórico. */
+export const ET0_REF = 3.5;      // mm/día
+export const PASADO = 14;
+export const FUTURO = 7;
 
-/** Nivel de 0 (aguanta seco) a 3 (no perdona un día sin agua). */
-function demandaAgua(cultivo) {
-  const t = String(cultivo.riego || '');
-  // Los animales no entran en este análisis: su "riego" describe la comida.
-  if (cultivo.cat === 'animal') return null;
-  for (const nivel of PRECEDENCIA) {
-    const n = NIVELES_AGUA[nivel];
-    if (n.patrones.some(p => p.test(t))) return n;
-  }
-  return NIVELES_AGUA[2];   // sin pista clara, se asume agua regular
-}
+/* Agua que el suelo retiene en la zona de raíces y la planta puede ir sacando,
+   en mm. Sin esto el modelo olvida la lluvia al día siguiente de caer: diría
+   "no llegas al turno" el día después de un aguacero, que es justo cuando no
+   hay que regar. 25 mm es prudente para el suelo volcánico de la zona, que
+   retiene bastante; se queda corto antes que largo, que es el lado por el que
+   conviene equivocarse cuando el error se paga quedándose sin agua. */
+export const RESERVA_SUELO_MM = 25;
 
-/* ── Región climática ───────────────────────────────────────────────────────
-   El mismo fenómeno hace cosas opuestas según dónde estés, y esto es lo que la
-   app no puede simplificar: en la costa El Niño trae lluvias e inundaciones;
-   en la sierra tiende a lo contrario, temporada de lluvias irregular y más
-   calor. Recomendar igual en Guayaquil y en Salcedo sería el mismo error que
-   recomendar sólo por fecha. */
-function region(altitud) {
-  if (altitud == null) return 'desconocida';
-  if (altitud >= 1800) return 'sierra';
-  if (altitud >= 800) return 'subtropical';
-  return 'costa';
-}
+/* Kc medio de la finca, sólo para estimar cuánto se vacía el suelo en los días
+   pasados. El Kc de cada planta se aplica planta por planta en water.js. */
+const KC_MEDIO = 0.85;
 
-/** Qué suele traer cada fase en cada región. Patrón general, no pronóstico. */
-const FASES = {
-  neutral: {
-    nombre: 'Neutral',
-    sierra: null, costa: null, subtropical: null, desconocida: null
-  },
-  nino: {
-    nombre: 'El Niño',
-    sierra: {
-      señal: 'seco',
-      dice: 'En la sierra El Niño suele traer una temporada de lluvias tardía e irregular y temperaturas más altas. Llueve menos y más concentrado: chubascos fuertes entre semanas secas.',
-      ojo: 'Menos heladas por las noches más cubiertas, pero más granizadas y más estrés de calor al mediodía.'
-    },
-    costa: {
-      señal: 'húmedo',
-      dice: 'En la costa El Niño trae lo contrario: lluvias muy por encima de lo normal, con riesgo de inundación y de anegamiento de raíces.',
-      ojo: 'El problema no será el agua sino el drenaje y los hongos.'
-    },
-    subtropical: {
-      señal: 'mixto',
-      dice: 'En el subtrópico El Niño se siente de forma intermedia y desigual según la vertiente.',
-      ojo: 'Conviene fiarse más de lo que midan tus últimos 90 días que del patrón general.'
-    }
-  },
-  nina: {
-    nombre: 'La Niña',
-    sierra: {
-      señal: 'húmedo',
-      dice: 'En la sierra La Niña suele adelantar y reforzar las lluvias, con más días nublados y noches más frías.',
-      ojo: 'Sube el riesgo de heladas en las madrugadas despejadas y de hongos por humedad sostenida.'
-    },
-    costa: {
-      señal: 'seco',
-      dice: 'En la costa La Niña tiende a dejar la temporada de lluvias corta y débil.',
-      ojo: 'El agua de riego será el cuello de botella.'
-    },
-    subtropical: {
-      señal: 'mixto',
-      dice: 'En el subtrópico el efecto es intermedio y poco previsible.',
-      ojo: 'Manda lo medido.'
-    }
-  }
-};
+const CACHE_ID = 'clima';
+const FRESCO_H = 6;              // el pronóstico no cambia más rápido que esto
 
-/* ── Estado hídrico medido ──────────────────────────────────────────────────
-   Dos números distintos, y los dos importan:
-
-   · El déficit frente a lo normal dice si este año viene seco PARA AQUÍ. Sin
-     esa comparación, "llovió 40 mm" no significa nada: es abundante en un
-     páramo seco y una catástrofe en el subtrópico.
-
-   · El balance lluvia − ET0 dice si el suelo está perdiendo agua ahora mismo,
-     que es lo que decide si una siembra prende. Un sitio puede estar en su
-     lluvia normal y aun así en balance negativo porque hace mucho calor. */
-function estadoHidrico({ lluvia90, normal90, et090 }) {
-  if (lluvia90 == null) return { conocido: false };
-
-  const balance = et090 != null ? lluvia90 - et090 : null;
-  const razon = normal90 > 0 ? lluvia90 / normal90 : null;
-
-  let nivel, etiqueta, color;
-  if (razon == null) {
-    nivel = 'sin-referencia'; etiqueta = 'sin referencia histórica'; color = 'neutro';
-  } else if (razon < 0.5) {
-    nivel = 'sequia'; etiqueta = 'sequía'; color = 'rojo';
-  } else if (razon < 0.75) {
-    nivel = 'deficit'; etiqueta = 'déficit de lluvia'; color = 'ambar';
-  } else if (razon > 1.4) {
-    nivel = 'exceso'; etiqueta = 'exceso de lluvia'; color = 'azul';
-  } else {
-    nivel = 'normal'; etiqueta = 'lluvia dentro de lo normal'; color = 'verde';
-  }
-
-  return {
-    conocido: true,
-    lluvia90: Math.round(lluvia90),
-    normal90: normal90 != null ? Math.round(normal90) : null,
-    et090: et090 != null ? Math.round(et090) : null,
-    balance: balance != null ? Math.round(balance) : null,
-    razon,
-    desvio: razon != null ? Math.round((razon - 1) * 100) : null,
-    nivel, etiqueta, color
-  };
-}
-
-/* ── El consejo, que es lo único que le sirve a quien siembra ──────────────
-   Devuelve para un cultivo: si conviene sembrarlo ahora, y por qué.
-
-   Estas frases se repiten una vez por tarjeta, así que dicen SÓLO lo propio
-   del cultivo. Lo general —cuánto llovió, qué trae la fase en esta región— va
-   una sola vez en la tarjeta de estado del agua; repetirlo en cada cultivo
-   convertía la lista en catorce párrafos idénticos que nadie lee. */
-function consejoCultivo(cultivo, { estado, fase, altitud, tieneRiego }) {
-  const agua = demandaAgua(cultivo);
-  if (!agua) return null;
-
-  const seco = estado.conocido && (estado.nivel === 'sequia' || estado.nivel === 'deficit');
-  const exceso = estado.conocido && estado.nivel === 'exceso';
-  const patron = FASES[fase]?.[region(altitud)] || null;
-
-  // Con riego, un déficit de lluvia deja de decidir la siembra: pasa a ser un
-  // problema de cuánta agua vas a gastar, no de si la planta sobrevive.
-  if (seco && tieneRiego && agua.nivel >= 2) {
-    return {
-      tono: 'atencion',
-      titulo: 'Se puede, pero vas a regar más',
-      texto: `Pide ${agua.etiqueta}: con riego sale, pero cuenta con gastar más de lo habitual ` +
-             `durante los ${cultivo.diasProduccion} días del ciclo.`
-    };
-  }
-
-  if (seco && !tieneRiego && agua.nivel >= 2) {
-    return {
-      tono: estado.nivel === 'sequia' ? 'malo' : 'atencion',
-      titulo: estado.nivel === 'sequia' ? 'Riesgoso sin riego' : 'Arriesgado sin riego',
-      texto: `Pide ${agua.etiqueta} y no tienes riego: con ${estado.lluvia90} mm en 90 días ` +
-             `es probable perder la siembra. Espera las lluvias o siembra algo que aguante seco.`
-    };
-  }
-
-  if (seco && agua.nivel <= 1) {
-    return {
-      tono: 'bueno',
-      titulo: 'Buena opción para año seco',
-      texto: `Aguanta con ${agua.etiqueta}: el déficit de estas fechas lo afecta poco.`
-    };
-  }
-
-  if (exceso && agua.nivel <= 1) {
-    return {
-      tono: 'atencion',
-      titulo: 'Ojo con el encharcamiento',
-      texto: `Prefiere seco y viene lloviendo de más: siémbralo en camellón o en la parte ` +
-             `con mejor drenaje.`
-    };
-  }
-
-  if (patron && patron.señal === 'seco' && agua.nivel >= 2 && !seco) {
-    return {
-      tono: 'atencion',
-      titulo: `Lo que viene con ${FASES[fase].nombre}`,
-      texto: `Pide ${agua.etiqueta} y tarda ${cultivo.diasProduccion} días: el ciclo termina ` +
-             `ya metido en lo que ${FASES[fase].nombre} suele traer aquí. Asegura el agua del ` +
-             `final, no sólo la de la siembra.`
-    };
-  }
-
-  return null;
+/**
+ * Lluvia aprovechable de un día, en mm.
+ *
+ * No toda la que cae llega a la raíz: la llovizna se evapora de la hoja y del
+ * polvo sin mojar el suelo, y el aguacero fuerte se va en escorrentía por una
+ * loma con 16 m de desnivel. La regla es la simplificación habitual (FAO-56
+ * para cálculo diario): los primeros 2 mm no cuentan y del resto se aprovecha
+ * el 75 %.
+ */
+export function lluviaEfectiva(mm) {
+  if (!(mm > 2)) return 0;
+  return (mm - 2) * 0.75;
 }
 
 /**
- * Ordena el almanaque por lo que conviene ahora: primero lo que va bien con el
- * estado del agua. Sin sequía ni exceso, no toca el orden.
+ * Cuánta agua le queda al suelo hoy, siguiendo día a día los últimos datos.
+ *
+ * Arranca en cero a propósito: suponer el suelo lleno sería regalarle a la
+ * finca agua que quizá no tiene. Dos semanas de serie bastan para que el
+ * arranque deje de pesar — si llovió, la reserva sube sola.
  */
-function ordenaPorAgua(lista, contexto) {
-  const { estado } = contexto;
-  if (!estado.conocido || estado.nivel === 'normal' || estado.nivel === 'sin-referencia') return lista;
-  const seco = estado.nivel === 'sequia' || estado.nivel === 'deficit';
-
-  return [...lista].sort((a, b) => {
-    const na = demandaAgua(a)?.nivel ?? 2;
-    const nb = demandaAgua(b)?.nivel ?? 2;
-    return seco ? na - nb : nb - na;
-  });
+export function reservaSuelo(dias, { max = RESERVA_SUELO_MM, kc = KC_MEDIO } = {}) {
+  let r = 0;
+  for (const d of dias) {
+    r = Math.min(max, r + lluviaEfectiva(d.lluvia));
+    r = Math.max(0, r - (d.et0 ?? ET0_REF) * kc);
+  }
+  return r;
 }
 
-/** Mediana, que resiste el año excepcional mejor que el promedio. */
-function mediana(xs) {
-  const v = xs.filter(x => typeof x === 'number' && !Number.isNaN(x)).sort((a, b) => a - b);
-  if (!v.length) return null;
-  const m = Math.floor(v.length / 2);
-  return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
+/* Cuánto se pide de una vez. La misma llamada sirve a tres preguntas, así
+   que trae lo que necesita la más exigente de cada lado:
+     · 92 días atrás: la lluvia de 90 días contra lo normal (El Niño) y las
+       dos semanas que usa la reserva del suelo;
+     · 10 días adelante: los 7 de la proyección del reservorio y los 10 del
+       calendario de siembra;
+     · el tiempo de ahora, para la pantalla Hoy.
+   Antes la finca y el huerto pedían cada uno lo suyo por separado. */
+const PEDIR_PASADO = 92;
+const PEDIR_FUTURO = 10;
+
+/** Los datos que se guardan, listos para calcular sin volver a pedir nada. */
+export function normaliza(json) {
+  const d = json?.daily || {};
+  const t = d.time || [];
+  if (!t.length) return null;
+  const val = (arr, i) => (Array.isArray(arr) && typeof arr[i] === 'number' ? arr[i] : null);
+
+  const dias = t.map((date, i) => ({
+    date,
+    et0: val(d.et0_fao_evapotranspiration, i),
+    lluvia: val(d.precipitation_sum, i) ?? 0,
+    tmax: val(d.temperature_2m_max, i),
+    tmin: val(d.temperature_2m_min, i),
+    code: val(d.weather_code, i)
+  })).filter(x => x.et0 != null);
+
+  const c = json?.current;
+  const actual = c && typeof c.temperature_2m === 'number'
+    ? { temp: c.temperature_2m, humedad: c.relative_humidity_2m ?? null, code: c.weather_code ?? null }
+    : null;
+
+  return dias.length ? { dias, actual, bajado: new Date().toISOString() } : null;
 }
 
-/** Suma tolerante a huecos en la serie. */
-function suma(xs) {
-  return (xs || []).reduce((t, x) => t + (typeof x === 'number' ? x : 0), 0);
+/**
+ * Baja el clima del punto de la finca y lo guarda. Devuelve la serie, o la
+ * guardada si la red falla. Nunca lanza: quedarse sin clima degrada el cálculo,
+ * no rompe la pantalla.
+ */
+export async function refrescar([lat, lng], { forzar = false } = {}) {
+  const guardado = await leerCache();
+  // Una caché de antes de juntar las llamadas no trae los 90 días: se renueva.
+  const completa = guardado && guardado.dias.length > PASADO + FUTURO + 5;
+  if (!forzar && completa && horasDesde(guardado.bajado) < FRESCO_H) return guardado;
+
+  try {
+    const url = 'https://api.open-meteo.com/v1/forecast' +
+      `?latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}&timezone=auto` +
+      `&past_days=${PEDIR_PASADO}&forecast_days=${PEDIR_FUTURO}` +
+      '&daily=et0_fao_evapotranspiration,precipitation_sum,temperature_2m_max,temperature_2m_min,weather_code' +
+      '&current=temperature_2m,relative_humidity_2m,weather_code';
+    const json = await fetch(url).then(r => r.ok ? r.json() : Promise.reject(r.status));
+    const serie = normaliza(json);
+    if (!serie) return guardado;
+    await db.saveMeta({ id: CACHE_ID, ...serie });
+    return serie;
+  } catch {
+    return guardado;   // sin señal: lo último que bajó sigue sirviendo
+  }
 }
 
-window.CLIMA = {
-  FASES, demandaAgua, region, estadoHidrico, consejoCultivo, ordenaPorAgua, mediana, suma
-};
+export async function leerCache() {
+  const c = await db.get('meta', CACHE_ID);
+  return c?.dias?.length ? c : null;
+}
+
+/**
+ * Convierte la serie guardada en lo que el módulo de agua necesita: el día de
+ * hoy, la media reciente y el pronóstico, más de dónde salió cada cosa para
+ * poder decirlo en pantalla en vez de mostrar un número sin origen.
+ */
+export function contexto(serie, { reservaMax = RESERVA_SUELO_MM, lluviaLocal = null, reservaMedida = null } = {}) {
+  const hoy = diaLocal();
+  if (!serie?.dias?.length) {
+    return {
+      conocido: false,
+      et0Hoy: ET0_REF, lluviaHoy: 0,
+      et0Medio: ET0_REF,
+      reservaMm: reservaMedida != null ? Math.min(reservaMax, reservaMedida) : 0,
+      reservaOrigen: reservaMedida != null ? 'sonda' : 'estimada',
+      reservaMaxMm: reservaMax,
+      futuro: [], pronostico: [], hoyD: null, actual: null,
+      origen: 'clima de referencia de la zona'
+    };
+  }
+
+  /* Lo medido en la finca manda sobre el modelo. Open-Meteo calcula la lluvia
+     en una malla de kilómetros; un pluviómetro en la loma mide la que cayó
+     ahí. Sólo se sustituyen los días que el pluviómetro reportó (sensores.js
+     ya descarta los días en que estuvo caído). */
+  const dias = lluviaLocal
+    ? serie.dias.map(d => lluviaLocal[d.date] != null
+        ? { ...d, lluvia: lluviaLocal[d.date], lluviaMedida: true } : d)
+    : serie.dias;
+  const hoyD = dias.find(d => d.date === hoy);
+  const pasados = dias.filter(d => d.date < hoy).slice(-PASADO);
+  // La proyección del reservorio usa 7 días; el calendario de siembra, todos.
+  const pronostico = dias.filter(d => d.date >= hoy);
+  const futuro = pronostico.slice(0, FUTURO);
+
+  const media = xs => xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : ET0_REF;
+
+  return {
+    conocido: true,
+    et0Hoy: hoyD?.et0 ?? media(pasados.map(d => d.et0)),
+    lluviaHoy: hoyD?.lluvia ?? 0,
+    et0Medio: media(pasados.map(d => d.et0)),
+    lluviaPasada: pasados.reduce((s, d) => s + d.lluvia, 0),
+    lluviaEfectivaPasada: pasados.reduce((s, d) => s + lluviaEfectiva(d.lluvia), 0),
+    // Con sonda, la reserva es la medida; sin ella, la estimada con el
+    // balance de los últimos días. La pantalla dice cuál de las dos es.
+    pasados,
+    reservaMm: reservaMedida != null ? Math.min(reservaMax, reservaMedida) : reservaSuelo(pasados, { max: reservaMax }),
+    reservaOrigen: reservaMedida != null ? 'sonda' : 'estimada',
+    reservaMaxMm: reservaMax,
+    diasPluviometro: dias.filter(d => d.lluviaMedida && d.date < hoy).length,
+    diasPasados: pasados.length,
+    futuro,
+    lluviaFutura: futuro.reduce((s, d) => s + d.lluvia, 0),
+    pronostico,
+    hoyD: hoyD || null,
+    actual: serie.actual || null,
+    bajado: serie.bajado,
+    horas: horasDesde(serie.bajado),
+    origen: 'Open-Meteo'
+  };
+}
+
+function horasDesde(iso) {
+  if (!iso) return Infinity;
+  return (Date.now() - new Date(iso).getTime()) / 3600000;
+}
+
+/**
+ * Lluvia y evaporación de los últimos 90 días, para comparar con lo normal
+ * (El Niño). Sale de la misma serie que lo demás: no hace otra llamada.
+ */
+export function ultimos90(serie) {
+  const hoy = diaLocal();
+  const pasados = (serie?.dias || []).filter(d => d.date < hoy).slice(-90);
+  if (pasados.length < 80) return null;
+  return {
+    lluvia90: pasados.reduce((s, d) => s + (d.lluvia || 0), 0),
+    et090: pasados.reduce((s, d) => s + (d.et0 || 0), 0),
+    dias: pasados.length
+  };
+}
