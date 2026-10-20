@@ -1,23 +1,16 @@
-# PoC — App de gestión, Finca Mulalillo
+# La finca por dentro
 
-Prueba de concepto **independiente** de la app principal (*Mi Huerto*). Vive en este
-subdirectorio y se publica en `/agro/mulalillo/`. No comparte código, estado ni
-service worker con la app de la raíz: se puede borrar esta carpeta y la app principal
-sigue funcionando igual.
+Detalle técnico de la parte de gestión de la Finca Mulalillo dentro de Mi Huerto: el
+mapa, el modelo de agua, el relieve, los sensores y las decisiones que hay detrás. Lo
+general de la app (qué pantallas tiene y por qué) está en el [README](../README.md).
 
-Gestión de una finca de ~9.000 m² en Mulalillo, Salcedo, Cotopaxi. Móvil primero
-(uso parado en el terreno) y usable en escritorio para planificar.
+Empezó como prueba de concepto aparte en `/agro/mulalillo/`; desde la v17 es la misma app
+que el huerto, en la raíz del sitio. La dirección vieja redirige.
 
-## Cómo correrla
+## Las librerías van commiteadas
 
-```bash
-npm install
-npm run dev     # http://localhost:5173/agro/mulalillo/
-npm run build   # emite dist/mulalillo/
-```
-
-`npm run dev` y `npm run build` ejecutan antes `scripts/vendor-mulalillo.mjs`, que copia
-MapLibre y Three.js desde `node_modules` a `mulalillo/lib/`. **Esos archivos están
+`npm run dev` y `npm run build` ejecutan antes `scripts/vendor-lib.mjs`, que copia
+MapLibre y Three.js desde `node_modules` a `lib/`. **Esos archivos están
 versionados en el repositorio a propósito**: GitHub Pages sirve la rama `main` tal cual, así
 que una librería que no esté commiteada devuelve 404 en el sitio publicado aunque el build
 la genere. Si actualizas las versiones en `package.json`, vuelve a correr el script y
@@ -34,12 +27,13 @@ commitea el resultado.
 | 5. Vista 3D | ✅ |
 | 6. Offline/PWA | ✅ caché y cola local; sincronización con servidor pendiente (ver *Límites*) |
 
-**Mapa (vista principal).** Imagen satelital de Esri World Imagery, zoom hasta nivel de
+**Mapa (Finca → Mapa).** Imagen satelital de Esri World Imagery, zoom hasta nivel de
 árbol. Límite del terreno con vértices arrastrables; sectores dibujables toque a toque
 con área geodésica en m² recalculada en vivo; plantas, infraestructura y puntos de
-elevación como puntos arrastrables (botón ✥); botón GPS para colocar un punto donde
-estás parado; filtros por especie, estado y sector; coloreado por especie o por estado
-sanitario.
+elevación como puntos arrastrables («Mover puntos»); «Dónde estoy» para colocar un punto
+donde estás parado; filtros por especie, estado y sector («Colores»); coloreado por
+especie o por estado sanitario. El mapa se carga la primera vez que se abre, no al abrir
+la app, y sectores y plantas se dibujan sin esperar a las fotos satelitales.
 
 **Ficha de planta.** Especie, variedad, fecha de siembra con edad calculada, estado,
 elevación interpolada, fotos (reescaladas a 1024 px antes de guardarse) e historial de
@@ -48,7 +42,7 @@ tareas — incluidas las del sector al que pertenece.
 **Sectores.** Área y perímetro geodésicos, conteo de plantas por especie, rango de
 elevación, riego estimado y tareas a nivel de sector.
 
-**Plan de trabajo compartible.** Desde Tareas, «Compartir plan» arma un texto con las
+**Plan de trabajo compartible.** Desde Tareas, «Mandar el plan» arma un texto con las
 tareas atrasadas y próximas, el estado del agua y las plantas a revisar, listo para
 mandar por WhatsApp a quien está en la finca. El manejo es remoto: la app tiene que
 servir para dar instrucciones, no sólo para registrar.
@@ -131,9 +125,10 @@ cuestan fotogramas. Las construcciones tienen techo a dos aguas y el reservorio 
 lámina de agua. El sol proyecta sombras, que es lo que permite leer la pendiente. El
 encuadre inicial se calcula con la esfera que envuelve el terreno contra el campo de
 visión, para que entre completo también en pantalla angosta; «Recentrar vista» vuelve a
-él. El panel de controles se pliega para dejar la vista entera.
+él. El panel de controles se pliega para dejar la vista entera, y en el teléfono empieza
+plegado.
 
-**Offline.** Service worker con alcance `./`: shell y librerías precacheadas, tiles
+**Offline.** Service worker en la raíz del sitio: shell y librerías precacheadas, tiles
 satelitales en caché con tope de 1.200 entradas y precarga del área de la finca
 (Ajustes → «Descargar mapa del terreno», zoom 15–19). Toda escritura entra además en una
 cola local (`outbox`) para sincronizar después.
@@ -142,7 +137,7 @@ cola local (`outbox`) para sincronizar después.
 
 La app está preparada para leer sensores de campo —nivel del reservorio, humedad de
 suelo, pluviómetro— a través de LoRaWAN y The Things Network, o de Home Assistant. Qué
-comprar, cómo montarlo y cómo conectarlo está en **[SENSORES.md](SENSORES.md)**.
+comprar, cómo montarlo y cómo conectarlo está en **[SENSORES.md](../SENSORES.md)**.
 
 Lo esencial del diseño:
 
@@ -175,8 +170,8 @@ redondo:
 | Ancho | Navegación | Contenido |
 |---|---|---|
 | hasta 699 px | Barra inferior, al alcance del pulgar | Una columna |
-| 700–1099 px | Rail lateral compacto (88 px, icono con rótulo) | Dos columnas |
-| 1100 px y más | Rail con rótulos al lado (232 px) | Dos columnas, ancho de lectura acotado |
+| 700–1099 px | Rail lateral compacto (92 px, icono con rótulo) | Dos columnas en listas; Hoy en una |
+| 1100 px y más | Rail con rótulos al lado (236 px) | Hoy en dos columnas, ancho de lectura acotado |
 
 Antes había un solo corte, en 900 px, así que una tablet en vertical —768 px, el ancho
 de un iPad— se quedaba con la interfaz de teléfono: navegación de lado a lado y tarjetas
@@ -202,8 +197,8 @@ no herede el hover pegado.
 
 ## Claro y oscuro
 
-La app **no escribe ni una regla de tema**: habla roles del sistema y mal-ds resuelve los
-dos. El único sitio donde hizo falta intervenir fue el cielo de la vista 3D, que era un
+El oscuro lo resuelve mal-ds entero: la app habla roles del sistema. La piel del huerto
+(ver el README) sólo pone valores en claro. El único sitio donde hizo falta intervenir fue el cielo de la vista 3D, que era un
 hexadecimal suelto y por eso seguía deslumbrando con el resto ya oscurecido — que es la
 prueba de que el sistema funciona: lo que habla en roles se adapta, lo que no, no.
 
@@ -215,15 +210,15 @@ el tema de producto y el tinte de agro declarados en la raíz:
 
 ```html
 <html lang="es" data-marca="apps" data-app="agro">
-<link rel="stylesheet" href="../ds/mal/mal.css">
+<link rel="stylesheet" href="./ds/mal/mal.css">
 <link rel="stylesheet" href="./styles.css">
 ```
 
 Del sistema salen los tokens, los botones, los campos, las tarjetas, las insignias, el
-segmentado, la navegación inferior, la hoja modal, el toast y los 81 iconos del sprite.
-`mulalillo/styles.css` sólo añade lo que el sistema no cubre —el cromo de pantalla
-completa, el mapa, el medidor del reservorio y el relieve— y habla siempre sus roles
-(`--app-*`, `--mal-*`), nunca colores sueltos.
+segmentado, la navegación, la hoja modal, el toast y los iconos del sprite. `styles.css`
+pone encima la piel del huerto y lo que el sistema no cubre —el mapa, el reservorio, el
+relieve— y habla siempre sus roles (`--app-*`, `--mal-*`), con la única excepción de los
+tintes de categoría de cultivo.
 
 ### La copia vendorizada
 
@@ -293,18 +288,18 @@ en el punto, «Fijar con mi GPS» las corrige y el modelo de terreno se recalcul
 ## Decisiones que se apartan del brief
 
 - **Sin Next.js.** El repositorio se publica como sitio estático en GitHub Pages con Vite.
-  Meter Next.js habría cambiado el despliegue de la app principal, que debe seguir igual.
-  La PoC son módulos ES servidos tal cual; la funcionalidad del brief no lo necesitaba.
+  Meter Next.js habría cambiado el despliegue. La app son módulos ES servidos tal cual; la
+  funcionalidad del brief no lo necesitaba.
 - **IndexedDB en lugar de Turso/Supabase.** No hay backend en GitHub Pages. IndexedDB
   cumple el requisito real (nada de `localStorage`, los datos sobreviven), y el traspaso
   celular↔escritorio se hace hoy con exportar/importar JSON.
-- **Sin CDN.** MapLibre y Three.js se sirven desde la propia app (`mulalillo/lib/`) para que
+- **Sin CDN.** MapLibre y Three.js se sirven desde la propia app (`lib/`) para que
   la primera carga también funcione sin señal. Los archivos van commiteados porque el sitio
   publicado sale de la rama `main`, no del artefacto de build.
 - **Dibujo propio en vez de mapbox-gl-draw.** Unas 120 líneas sobre fuentes GeoJSON, sin
   el desfase de versiones entre `mapbox-gl-draw` y MapLibre 4.
 
-## Límites de la PoC
+## Límites
 
 - **La sincronización real falta.** La cola local está lista y `db.flushOutbox(endpoint)`
   hace el POST por lote, pero no hay servidor al otro lado: en Ajustes se configura el
@@ -333,20 +328,4 @@ en el punto, «Fijar con mi GPS» las corrige y el modelo de terreno se recalcul
 
 ## Archivos
 
-| Archivo | Qué hace |
-|---|---|
-| `index.html` | Shell: barra, seis vistas, hoja modal |
-| `app.js` | Estado, navegación, fichas, formularios, GPS, ajustes, respaldo |
-| `db.js` | IndexedDB, cola de sincronización, datos medidos, catálogo de especies |
-| `geo.js` | Área y perímetro geodésicos, IDW de elevación, presión estática |
-| `map2d.js` | MapLibre: capas, dibujo, arrastre de vértices y puntos |
-| `water.js` | Demanda por clima y edad, volumen estimado, proyección con pronóstico, turnos |
-| `clima.js` | ET0 y lluvia del punto de la finca, reserva del suelo, caché offline |
-| `sensores.js` | Lecturas del receptor → eventos de nivel, lluvia por día, reserva medida; estado de cada aparato |
-| `normaliza.js` | Traduce TTN, Home Assistant y JSON propio a una sola forma; lo comparten app y receptor |
-| `receptor/` | El receptor (Cloudflare Worker), sus alertas por Telegram, su versión local y el simulador de sensores |
-| `SENSORES.md` | Hardware, montaje y conexión, paso a paso |
-| `planting.js` | Marco de siembra: rejilla girada, recorte al sector y margen |
-| `hydraulics.js` | Pérdidas por fricción, presión neta y diámetro sugerido |
-| `view3d.js` | Three.js: terreno, sectores, plantas, flechas de escurrimiento |
-| `sw.js` | Caché offline y precarga de tiles |
+La lista completa, incluida la parte del huerto, está en el [README](../README.md#archivos).

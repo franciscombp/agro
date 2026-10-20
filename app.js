@@ -1,1557 +1,2674 @@
-// Mi Huerto — app estática para pequeños agricultores. Estado en localStorage.
-// Clima y altitud: Open-Meteo. Nombre del lugar: BigDataCloud (ambas gratuitas, sin key).
+// Mi Huerto · Finca Mulalillo — controlador de la aplicación.
+// Un solo estado (estado.js) respaldado en IndexedDB, compartido por la
+// pantalla Hoy, el mapa 2D, la vista 3D, el agua y el huerto.
 "use strict";
 
-const STORE_KEY = "mihuerto.v2";
+import * as db from './db.js';
+import { SPECIES, BOUNDARY } from './db.js';
+import { FarmMap } from './map2d.js';
+import * as water from './water.js';
+import { preview as plantingPreview, LAYOUTS } from './planting.js';
+import * as hyd from './hydraulics.js';
+import * as clima from './clima.js';
+import * as sensores from './sensores.js';
+import {
+  areaM2, perimeterM, fmtArea, fmtM, centroid, pointInRing,
+  interpolateElevation, staticPressureBar, bbox
+} from './geo.js';
+import { state, alCambiar } from './estado.js';
+import {
+  $, $$, toast, openSheet, closeSheet, today, byDateDesc, round, nf, cap, attr, escapeHtml,
+  fmtDate, fechaCorta, haceTexto
+} from './ui.js';
+import { enDias } from './fechas.js';
+import * as huerto from './huerto/huerto.js';
+import { renderHoy, tareasDeHoy, notificacionesDisponibles, NOTIF_DIA } from './vistas/hoy.js';
 
-const state = {
-  lat: null, lon: null,
-  altitud: null,
-  lugar: null,          // "Poblado, Provincia"
-  espacio: null,
-  siembras: [],         // [{id, cropId, fecha, cantidad, nota}]
-  precios: [],          // [{id, prod, precio, lugar, fecha}] — libreta de precios de feria
-  plantaActual: null,
-  backTo: "screen-home",
-  forecast: null,       // cache del pronóstico diario
-  fase: "neutral",      // fase declarada de El Niño / La Niña
-  riegoPropio: null,    // true si tiene riego; null = no ha contestado
-  hidrico: null         // cache del estado hídrico medido
+const INFRA_TYPES = ['reservorio', 'casa', 'establo', 'cuyera', 'bomba', 'filtro', 'válvula'];
+const TASK_TYPES = ['riego', 'poda', 'fertilización', 'fumigación', 'cosecha', 'siembra', 'otro'];
+const WATER_TYPES = ['llenado_acequia', 'tanquero', 'riego', 'medición_nivel'];
+/* Lo que se lee en pantalla. Los nombres internos se quedan como están porque
+   viven en los datos guardados y en los respaldos; quien usa la app ve esto. */
+const WATER_LABELS = {
+  llenado_acequia: 'Llegó el turno de la acequia',
+  tanquero: 'Llegó un tanquero',
+  riego: 'Riego',
+  'medición_nivel': 'Medí el nivel del reservorio'
 };
+const STATUSES = ['sano', 'atención', 'enfermo', 'muerto'];
+const BUILD = 'v17';
 
-function saveState() {
-  localStorage.setItem(STORE_KEY, JSON.stringify({
-    lat: state.lat, lon: state.lon, altitud: state.altitud,
-    lugar: state.lugar, espacio: state.espacio, siembras: state.siembras,
-    precios: state.precios, fase: state.fase, riegoPropio: state.riegoPropio
-  }));
+let farmMap = null;
+let terrain = null;       // vista 3D, se carga bajo demanda
+let taskFilter = 'pendientes';
+let pendingPlacement = null;  // {kind, data} esperando un toque en el mapa
+let vistaActual = 'view-hoy';
+let panelFinca = 'mapa';
+let panelHuerto = 'sembrar';
+
+// ---------------------------------------------------------------------------
+// Arranque
+// ---------------------------------------------------------------------------
+
+async function boot() {
+  cargarIconos();
+  await db.seedIfEmpty();
+  await reload();
+  // Lo que había en Mi Huerto (siembras, precios, El Niño) pasa a la finca.
+  if (await huerto.migrarDesdeMiHuerto()) await reload();
+  // Cualquier módulo que guarde algo avisa, y aquí se repinta todo.
+  alCambiar(async () => { await reload(); renderAll(); });
+  wireChrome();
+  renderAll();
+  // Se entra a la sección que se pida en la dirección (#agua, #huerto…):
+  // así un enlace compartido por WhatsApp abre donde tiene que abrir.
+  const pedida = { '#finca': 'view-finca', '#tareas': 'view-tasks', '#agua': 'view-water', '#huerto': 'view-huerto' }[location.hash];
+  if (pedida) showView(pedida);
+  registerServiceWorker();
+  watchConnectivity();
+  refrescarClima().then(() => huerto.cargarHidrico()).then(() => { renderHoyAhora(); if (vistaActual === 'view-huerto') renderHuertoAhora(); });
+  sincronizarSensores();
+  // Mientras la app está abierta y a la vista, cada 15 minutos. Un sensor
+  // LoRa manda cada 20–60: preguntar más seguido sólo gasta batería del
+  // teléfono y datos móviles.
+  setInterval(() => { if (document.visibilityState === 'visible') sincronizarSensores(); }, 15 * 60000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') sincronizarSensores();
+  });
 }
 
-function loadState() {
+/** Configuración de sensores, con lo que falte rellenado. */
+function cfgSensores() {
+  return { aparatos: {}, ...(state.config.sensores || {}) };
+}
+
+/**
+ * Trae lecturas nuevas del receptor y rehace lo que se deriva de ellas. En
+ * silencio salvo que se pida: que el receptor no responda no es noticia cada
+ * quince minutos, y el estado de cada aparato ya lo dice en pantalla.
+ */
+let sincronizando = null;
+async function sincronizarSensores({ avisar = false } = {}) {
+  const cfg = cfgSensores();
+  if (!cfg.url) return null;
+  if (sincronizando) return sincronizando;
+  sincronizando = (async () => {
+    const r = await sensores.sincronizar(cfg);
+    if (r.ok) {
+      state.config = await db.saveConfig({ sensores: { ...cfg, ultimaSync: r.hasta, ultimoError: null } });
+      await sensores.aplicar(cfg.aparatos);
+      await reload();
+      renderAll();
+    } else {
+      state.config = await db.saveConfig({ sensores: { ...cfg, ultimoError: r.motivo } });
+    }
+    if (avisar) toast(r.ok ? `${r.nuevas} lecturas nuevas` : `Sensores: ${r.motivo}`);
+    return r;
+  })();
+  try { return await sincronizando; } finally { sincronizando = null; }
+}
+
+/**
+ * Lo que las pantallas necesitan de los sensores, calculado una vez. Lo que
+ * no tiene aparato asignado no entra en el modelo: aparece en la lista para
+ * poder reconocerlo, pero hasta que alguien diga qué mide, no decide nada.
+ */
+function resumenSensores() {
+  const cfg = cfgSensores();
+  if (!state.lecturas.length) return null;
+  return {
+    lluviaPorDia: sensores.lluviaPorDia(state.lecturas, cfg.aparatos),
+    reserva: sensores.reservaMedida(state.lecturas, cfg.aparatos, {
+      reservaMax: state.config.reservaSueloMm ?? clima.RESERVA_SUELO_MM,
+      cc: cfg.sueloCC ?? sensores.SUELO_CC,
+      pmp: cfg.sueloPMP ?? sensores.SUELO_PMP
+    }),
+    aparatos: sensores.estadoAparatos(state.lecturas, cfg.aparatos)
+  };
+}
+
+/**
+ * Baja ET0 y lluvia del punto de la finca. No bloquea el arranque y no avisa
+ * si falla: sin clima la app calcula con el de referencia, que es lo que hacía
+ * antes. Sólo repinta si llegó algo nuevo.
+ */
+async function refrescarClima({ forzar = false } = {}) {
+  const serie = await clima.refrescar(centroid(state.parcel.boundary), { forzar });
+  if (!serie) return null;
+  state.clima = serie;
+  renderWater();
+  return serie;
+}
+
+/**
+ * El sprite del sistema hay que meterlo en el documento: `<use href>` a un
+ * archivo externo no lo resuelve ningún navegador de los que importan. No se
+ * usa mal.js porque esta app ya trae su propia mecánica de pestañas y hoja, y
+ * cargarlo duplicaría los manejadores.
+ */
+async function cargarIconos() {
+  if (document.getElementById('mal-iconos')) return;
   try {
-    const raw = localStorage.getItem(STORE_KEY);
-    if (!raw) return false;
-    const s = JSON.parse(raw);
-    if (s.altitud == null || !s.espacio) return false;
-    Object.assign(state, s);
-    state.siembras = state.siembras || [];
-    state.precios = state.precios || [];
-    state.fase = state.fase || "neutral";
-    return true;
-  } catch { return false; }
+    const svg = await fetch('./ds/mal/iconos.svg').then(r => r.ok ? r.text() : null);
+    if (!svg) return;
+    const cont = document.createElement('div');
+    cont.id = 'mal-iconos';
+    cont.hidden = true;
+    cont.innerHTML = svg;
+    document.body.prepend(cont);
+  } catch {
+    /* Sin iconos la app se usa igual: los rótulos de texto siguen ahí. */
+  }
 }
 
-// ---------- Navegación ----------
-const tabbar = document.getElementById("tabbar");
+/** El mapa es la vista principal, pero si falla el resto de la app sigue sirviendo. */
+async function initMap() {
+  try {
+    await ensureMapLibre();
+    farmMap = new FarmMap('map', {
+      onSelectPoint: openPoint,
+      onSelectSector: id => openSector(id),
+      onSelectNothing: handleMapTap,
+      onVertexMoved: saveVertex,
+      onPointMoved: savePointPosition,
+      onDraftChange: draft => updateDraftBanner(draft)
+    });
+    await farmMap.ready;
+    // El contenedor pudo cambiar de tamaño mientras cargaba (se crea al abrir
+    // la pestaña): sin esto el encuadre sale para un mapa más chico.
+    farmMap.map.resize();
+    farmMap.render(state);
+    farmMap.fitToParcel(0);
+  } catch (err) {
+    farmMap = null;
+    showMapError(err);
+    console.error(err);
+  }
+}
 
-function show(id) {
-  document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
-  const scr = document.getElementById(id);
-  scr.classList.add("active");
-  tabbar.hidden = !scr.classList.contains("with-tabs");
-  tabbar.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.dataset.tab === id));
+/**
+ * MapLibre entra como script clásico en el <head>. Si no está, casi siempre es que
+ * la descarga de 800 kB se cortó por señal débil: vale la pena reintentar en vez
+ * de dejar el mapa muerto hasta recargar la página.
+ */
+async function ensureMapLibre(attempts = 2) {
+  if (typeof maplibregl !== 'undefined') return;
+  const diag = window.__mapLib || {};
+  if (diag.exec) throw new Error(`el navegador no pudo ejecutar la librería (${diag.exec})`);
+
+  let reason = diag.network ? 'la descarga se cortó' : 'la librería no está disponible';
+  for (let i = 0; i < attempts; i++) {
+    try {
+      await loadScript('./lib/maplibre-gl.js');
+    } catch {
+      reason = 'la descarga se cortó';
+      continue;
+    }
+    if (typeof maplibregl !== 'undefined') return;
+    reason = 'el archivo llegó pero el navegador no pudo ejecutarlo';
+  }
+  throw new Error(reason);
+}
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const el = document.createElement('script');
+    el.src = src;
+    el.onload = resolve;
+    el.onerror = () => reject(new Error('fallo de red en ' + src));
+    document.head.appendChild(el);
+  });
+}
+
+function showMapError(err) {
+  const msg = String(err.message || err);
+  const offline = !navigator.onLine;
+  document.getElementById('map').innerHTML = `
+    <div class="aviso aviso--atencion pad">
+      <p><strong>No se pudo cargar el mapa:</strong> ${escapeHtml(msg)}.</p>
+      <p>${offline
+        ? 'El dispositivo está sin conexión. Con señal, toca «Reintentar»: al cargar una vez, el mapa queda guardado y ya funciona sin señal.'
+        : 'Suele ser señal débil cortando la descarga de la librería (800 kB). Toca «Reintentar».'}</p>
+      <p>Las listas de sectores, plantas, tareas y agua funcionan igual mientras tanto.</p>
+      <button class="btn btn--rojo btn-block" id="btn-retry-map">Reintentar</button>
+      <p class="hint">¿Sigue fallando? Abre el <a href="./diagnostico.html">diagnóstico</a>:
+      dice exactamente qué no puede hacer este navegador.</p>
+    </div>`;
+  document.getElementById('btn-retry-map').onclick = async e => {
+    e.target.disabled = true;
+    e.target.textContent = 'Cargando…';
+    document.getElementById('map').innerHTML = '';
+    await initMap();
+    if (farmMap) { renderAll(); farmMap.fitToParcel(); toast('Mapa cargado'); }
+  };
+}
+
+async function reload() {
+  const [sectors, plants, infra, tasks, waterEvents, elevations, parcels, config] = await Promise.all([
+    db.all('sectors'), db.all('plants'), db.all('infra'), db.all('tasks'),
+    db.all('water'), db.all('elevations'), db.all('parcels'), db.config()
+  ]);
+  state.sectors = sectors.sort((a, b) => a.name.localeCompare(b.name));
+  state.plants = plants;
+  state.infra = infra;
+  state.tasks = tasks;
+  state.water = waterEvents;
+  state.elevations = elevations;
+  state.config = config;
+  if (parcels[0]) state.parcel = parcels[0];
+  state.clima = await clima.leerCache();
+  state.lecturas = await db.all('lecturas');
+  [state.siembras, state.precios] = await Promise.all([db.all('siembras'), db.all('precios')]);
+}
+
+/** Recalcula todo lo derivado y repinta las vistas activas. */
+function renderAll() {
+  renderHoyAhora();
+  renderSectors();
+  renderPlants();
+  renderTasks();
+  renderWater();
+  renderHuertoAhora();
+  renderFilterOptions();
+  farmMap?.render(state);
+  if (terrain) { terrain.render(state); renderThreeHint(); }
+  updateOutboxChip();
+}
+
+async function persist(store, record) {
+  const saved = await db.put(store, record);
+  await reload();
+  renderAll();
+  return saved;
+}
+
+// ---------------------------------------------------------------------------
+// Navegación y cromo
+// ---------------------------------------------------------------------------
+
+function wireChrome() {
+  // El selector de archivos del navegador ("Choose File · No file chosen")
+  // no se entiende; el campo .foto es un botón y dice si ya hay foto.
+  document.addEventListener('change', e => {
+    const inp = e.target.closest?.('.foto input[type="file"]');
+    if (!inp) return;
+    const n = inp.files.length;
+    inp.closest('.foto').classList.toggle('foto--lista', n > 0);
+    const txt = inp.closest('.foto').querySelector('.foto__nombre');
+    if (txt) txt.textContent = n ? (n === 1 ? '✓ 1 foto lista' : `✓ ${n} fotos listas`) : '';
+  });
+
+  $$('.nav-item').forEach(b => b.addEventListener('click', () => showView(b.dataset.view)));
+  $$('#finca-seg button').forEach(b => b.addEventListener('click', () => mostrarPanelFinca(b.dataset.pane)));
+  $$('#huerto-seg button').forEach(b => b.addEventListener('click', () => mostrarPanelHuerto(b.dataset.pane)));
+  $('#btn-3d').addEventListener('click', () => showView('view-3d'));
+  $('#btn-3d-volver').addEventListener('click', () => showView('view-finca', 'mapa'));
+  $('#sheet-close').addEventListener('click', closeSheet);
+  // Cerrar tocando fuera y limpiar también cuando cierra el propio navegador.
+  $('#sheet').addEventListener('click', e => { if (e.target === e.currentTarget) closeSheet(); });
+  $('#sheet').addEventListener('close', () => { $('#sheet-body').innerHTML = ''; });
+
+  $('#btn-fit').addEventListener('click', () => farmMap?.fitToParcel());
+  $('#btn-gps').addEventListener('click', locateMe);
+  $('#btn-layers').addEventListener('click', () => togglePanel('#panel-layers'));
+  $('#btn-move').addEventListener('click', e => {
+    if (!farmMap) return;
+    const on = farmMap.mode !== 'move';
+    farmMap.setMode(on ? 'move' : 'view');
+    e.currentTarget.setAttribute('aria-pressed', String(on));
+    banner(on ? 'Arrastra las plantas, las construcciones y los puntos de altura a su sitio. Toca «Mover puntos» otra vez para terminar.' : null);
+  });
+  $$('[data-close-panel]').forEach(b => b.addEventListener('click', () => hidePanels()));
+  $('#fab-add').addEventListener('click', openAddMenu);
+
+  $('#sel-colorby').addEventListener('change', e => {
+    farmMap?.setColorBy(e.target.value);
+    terrain?.setColorBy(e.target.value);
+  });
+  $('#sel-filter-species').addEventListener('change', e => farmMap?.setFilters({ species: e.target.value }));
+  $('#sel-filter-status').addEventListener('change', e => farmMap?.setFilters({ status: e.target.value }));
+  $('#sel-filter-sector').addEventListener('change', e => farmMap?.setFilters({ sectorId: e.target.value }));
+
+  $('#btn-new-sector').addEventListener('click', startDrawSector);
+  $('#btn-new-plant').addEventListener('click', () => promptPlacement('plant'));
+  $('#btn-new-task').addEventListener('click', () => openTaskForm({}));
+  $('#btn-share-plan').addEventListener('click', sharePlan);
+  $('#btn-new-water').addEventListener('click', () => openWaterForm({}));
+  $('#plant-search').addEventListener('input', renderPlants);
+
+  $$('#task-seg button').forEach(btn => btn.addEventListener('click', () => {
+    $$('#task-seg button').forEach(b => b.setAttribute('aria-selected', String(b === btn)));
+    taskFilter = btn.dataset.filter;
+    renderTasks();
+  }));
+
+  $('#range-exag').addEventListener('input', async e => {
+    const v = Number(e.target.value);
+    $('#out-exag').textContent = v + '×';
+    terrain?.setExaggeration(v);
+    state.config = await db.saveConfig({ exageracion3D: v });
+  });
+  $('#chk-arrows').addEventListener('change', e => terrain?.toggleArrows(e.target.checked));
+  $('#btn-recenter').addEventListener('click', () => terrain?.recentrar());
+  $('#three-toggle').addEventListener('click', e => {
+    const panel = $('#three-controls');
+    const abierto = panel.classList.toggle('abierto');
+    e.currentTarget.setAttribute('aria-expanded', String(abierto));
+    setTimeout(() => { terrain?.resize(); medirOclusion3D(); }, 260);
+  });
+  // En el teléfono el panel abierto tapaba media finca: empieza cerrado y se
+  // abre tocando el título. En tablet y computadora hay sitio para los dos.
+  if (!matchMedia('(min-width: 700px)').matches) {
+    $('#three-controls').classList.remove('abierto');
+    $('#three-toggle').setAttribute('aria-expanded', 'false');
+  }
+}
+
+/**
+ * Cambia de sección. `view-map` es el nombre viejo del mapa y se sigue
+ * aceptando: medio programa lo usa para "llévame al mapa".
+ */
+function showView(id, pane) {
+  if (id === 'view-map') { id = 'view-finca'; pane = 'mapa'; }
+  vistaActual = id;
+  $$('.view').forEach(v => v.classList.toggle('active', v.id === id));
+  // El relieve se abre desde Finca: mientras se ve, la pestaña marcada es Finca.
+  const tab = id === 'view-3d' ? 'view-finca' : id;
+  $$('.nav-item').forEach(b => {
+    if (b.dataset.view === tab) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  });
+  hidePanels();
   window.scrollTo(0, 0);
+  if (id === 'view-3d') init3D();
+  if (id === 'view-finca') mostrarPanelFinca(pane || panelFinca);
+  if (id === 'view-huerto') mostrarPanelHuerto(pane || panelHuerto);
+  if (id === 'view-hoy') renderHoyAhora();
 }
 
-tabbar.querySelectorAll(".tab").forEach(t => {
-  t.addEventListener("click", () => {
-    const id = t.dataset.tab;
-    show(id);
-    if (id === "screen-home") renderHome();
-    if (id === "screen-almanac") renderAlmanac();
-    if (id === "screen-market") renderMercado();
-    if (id === "screen-garden") renderGarden();
-    if (id === "screen-explore") renderExplore();
+function mostrarPanelFinca(p) {
+  panelFinca = p;
+  $$('#finca-seg button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.pane === p)));
+  for (const n of ['mapa', 'sectores', 'plantas']) $('#finca-' + n).hidden = n !== p;
+  $('#view-finca').classList.toggle('view--mapa', p === 'mapa');
+  if (p === 'mapa' && vistaActual === 'view-finca') {
+    asegurarMapa().then(() => setTimeout(() => farmMap?.map.resize(), 30));
+  }
+}
+
+function mostrarPanelHuerto(p) {
+  panelHuerto = p;
+  $$('#huerto-seg button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.pane === p)));
+  for (const n of ['sembrar', 'siembras', 'mercado']) $('#huerto-' + n).hidden = n !== p;
+  renderHuertoAhora();
+}
+
+/* El mapa pesa (800 kB y teselas satelitales): se carga la primera vez que
+   hace falta, no al abrir la app. Hoy es la entrada, y con mala señal no
+   tiene por qué esperar al mapa. */
+let mapaCargando = null;
+function asegurarMapa() {
+  if (farmMap) return Promise.resolve(farmMap);
+  if (!mapaCargando) mapaCargando = initMap().finally(() => { mapaCargando = null; });
+  return mapaCargando;
+}
+
+function renderHoyAhora() {
+  const sen = resumenSensores();
+  const s = water.summary({ ...state, clima: state.clima, sensores: sen });
+  renderHoy({
+    agua: s,
+    sensores: sen,
+    altitud: huerto.altitudFinca(),
+    tareas: tareasDeHoy(state.tasks, t => `${TASK_EMOJI[t.type] || ''} ${cap(t.type)} · ${targetName(t)}`, cuando),
+    irA: (id, pane) => showView(id, pane),
+    acciones: {
+      regue: () => openRiegoRapido(),
+      medi: () => openMedicionRapida(),
+      tarea: () => openTaskForm({}),
+      siembra: () => huerto.abrirNuevaSiembra(),
+      problema: () => openProblema(),
+      precio: () => huerto.abrirNuevoPrecio(),
+      ajustes: () => openSettings(),
+      hecha: async (id, el) => {
+        const t = state.tasks.find(x => x.id === id);
+        el.closest('.fila-tarea')?.classList.add('fila-tarea--hecha');
+        await persist('tasks', { ...t, doneAt: today() });
+        toast('¡Hecho!');
+      }
+    }
   });
-});
+}
 
-function onboardingListo() { return state.altitud != null && !!state.espacio; }
+function renderHuertoAhora() {
+  if (panelHuerto === 'sembrar') huerto.renderSembrar();
+  else if (panelHuerto === 'siembras') huerto.renderSiembras();
+  else huerto.renderMercado();
+}
 
-document.querySelectorAll(".btn-back").forEach(btn => {
-  btn.addEventListener("click", () => {
-    let target = btn.dataset.back === "__last" ? state.backTo : btn.dataset.back;
-    // Quien ya configuró su huerto no debe caer en el onboarding al volver
-    // (p. ej. al entrar a ubicación desde el chip de Hoy).
-    if (target === "screen-welcome" && onboardingListo()) target = "screen-home";
-    show(target);
+function togglePanel(sel) {
+  const el = $(sel);
+  const wasHidden = el.hidden;
+  hidePanels();
+  el.hidden = !wasHidden;
+}
+
+function hidePanels() { $$('.panel').forEach(p => (p.hidden = true)); }
+
+function banner(html) {
+  const el = $('#map-banner');
+  if (!html) { el.hidden = true; el.innerHTML = ''; return; }
+  el.innerHTML = html;
+  el.hidden = false;
+}
+
+// ---------------------------------------------------------------------------
+// Hoja modal
+// ---------------------------------------------------------------------------
+
+
+// ---------------------------------------------------------------------------
+// Mapa: colocación, edición, GPS
+// ---------------------------------------------------------------------------
+
+function openAddMenu() {
+  openSheet('Agregar al mapa', `
+    <div class="acciones-rapidas acciones-rapidas--hoja">
+      <button data-add="plant"><span class="tile t-hortaliza">🌳</span>Una planta</button>
+      <button data-add="sector"><span class="tile t-grano">🟩</span>Un sector</button>
+      <button data-add="infra"><span class="tile tile--agua">🏠</span>Una construcción</button>
+      <button data-add="elevation"><span class="tile t-animal">⛰️</span>Un punto de altura</button>
+    </div>
+    <p class="hint">Se colocan tocando el mapa o con el GPS, parado en el sitio.</p>
+  `, body => {
+    body.querySelectorAll('[data-add]').forEach(btn => btn.addEventListener('click', () => {
+      const kind = btn.dataset.add;
+      closeSheet();
+      if (kind === 'sector') startDrawSector();
+      else promptPlacement(kind);
+    }));
   });
-});
+}
 
-document.querySelectorAll("[data-goto]").forEach(btn => {
-  btn.addEventListener("click", () => {
-    const id = btn.dataset.goto;
-    if (id === "screen-explore") renderExplore();
-    show(id);
+function promptPlacement(kind) {
+  showView('view-map');
+  pendingPlacement = { kind };
+  const label = { plant: 'la planta', infra: 'la construcción', elevation: 'el punto de altura' }[kind];
+  banner(`Toca el mapa donde va ${label}, o <button class="link" id="banner-gps">usa mi GPS</button> · <button class="link" id="banner-cancel">cancelar</button>`);
+  $('#banner-gps').onclick = () => locateMe(true);
+  $('#banner-cancel').onclick = () => { pendingPlacement = null; banner(null); };
+}
+
+function handleMapTap(latlng) {
+  if (!pendingPlacement) return;
+  const kind = pendingPlacement.kind;
+  pendingPlacement = null;
+  banner(null);
+  placeAt(kind, latlng);
+}
+
+function placeAt(kind, [lat, lng]) {
+  const elevationM = round(interpolateElevation([lat, lng], measuredPoints()), 2);
+  if (kind === 'plant') {
+    const sectorId = state.sectors.find(s => pointInRing([lat, lng], s.polygon))?.id;
+    openPlantForm({ lat, lng, elevationM, sectorId, status: 'sano', species: 'aguacate' });
+  } else if (kind === 'infra') {
+    openInfraForm({ lat, lng, elevationM, type: 'reservorio', props: {} });
+  } else {
+    openElevationForm({ lat, lng, elevationM, measured: true });
+  }
+}
+
+function measuredPoints() {
+  return state.elevations.filter(e => typeof e.elevationM === 'number');
+}
+
+function locateMe(place = false) {
+  if (!navigator.geolocation) return toast('Este dispositivo no reporta ubicación.');
+  toast('Buscando señal GPS…');
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      const { latitude, longitude, accuracy } = pos.coords;
+      farmMap?.showGps([latitude, longitude], accuracy);
+      farmMap?.flyTo([latitude, longitude], 20);
+      const inside = pointInRing([latitude, longitude], state.parcel.boundary);
+      if (place && pendingPlacement) {
+        const kind = pendingPlacement.kind;
+        pendingPlacement = null;
+        banner(null);
+        placeAt(kind, [latitude, longitude]);
+        return;
+      }
+      toast(`GPS ±${Math.round(accuracy)} m · ${inside ? 'dentro' : 'fuera'} de la finca`);
+    },
+    err => toast('No se pudo obtener el GPS: ' + err.message),
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 }
+  );
+}
+
+async function startDrawSector() {
+  showView('view-map');
+  await asegurarMapa();
+  if (!farmMap) return toast('El mapa no está disponible.');
+  farmMap.setMode('draw');
+  farmMap.setEditTarget(null);
+  updateDraftBanner([]);
+}
+
+function updateDraftBanner(draft) {
+  if (farmMap?.mode !== 'draw') return banner(null);
+  const area = draft.length >= 3 ? fmtArea(areaM2(draft)) : '—';
+  banner(`
+    Dibujando: <strong>${draft.length}</strong> vértices · área <strong>${area}</strong>
+    · <button class="link" id="draft-undo">deshacer</button>
+    · <button class="link" id="draft-done">terminar</button>
+    · <button class="link" id="draft-cancel">cancelar</button>
+  `);
+  $('#draft-undo').onclick = () => farmMap.undoDraft();
+  $('#draft-cancel').onclick = () => { farmMap.setMode('view'); banner(null); };
+  $('#draft-done').onclick = () => {
+    const ring = farmMap.getDraft();
+    if (ring.length < 3) return toast('Un sector necesita al menos 3 vértices.');
+    farmMap.setMode('view');
+    banner(null);
+    openSectorForm({ polygon: ring, color: randomColor(), parcelId: state.parcel.id });
+  };
+}
+
+async function saveVertex(target, index, latlng) {
+  if (!target) return;
+  if (target.kind === 'boundary') {
+    const boundary = state.parcel.boundary.map(p => [...p]);
+    boundary[index] = latlng;
+    await persist('parcels', { ...state.parcel, boundary });
+    toast('Límite actualizado · ' + fmtArea(areaM2(boundary)));
+  } else {
+    const sector = state.sectors.find(s => s.id === target.id);
+    if (!sector) return;
+    const polygon = sector.polygon.map(p => [...p]);
+    polygon[index] = latlng;
+    await persist('sectors', { ...sector, polygon, areaM2: round(areaM2(polygon), 1) });
+    toast('Sector actualizado · ' + fmtArea(areaM2(polygon)));
+  }
+}
+
+async function savePointPosition(kind, id, [lat, lng]) {
+  const store = kind === 'plant' ? 'plants' : kind === 'infra' ? 'infra' : 'elevations';
+  const rec = (kind === 'plant' ? state.plants : kind === 'infra' ? state.infra : state.elevations)
+    .find(r => r.id === id);
+  if (!rec) return;
+  const patch = { ...rec, lat, lng };
+  if (kind === 'plant') {
+    patch.sectorId = state.sectors.find(s => pointInRing([lat, lng], s.polygon))?.id;
+    patch.elevationM = round(interpolateElevation([lat, lng], measuredPoints()), 2);
+  }
+  await persist(store, patch);
+  toast('Posición guardada');
+}
+
+// ---------------------------------------------------------------------------
+// Fichas
+// ---------------------------------------------------------------------------
+
+function openPoint(kind, id) {
+  if (kind === 'plant') return openPlant(id);
+  if (kind === 'infra') return openInfra(id);
+  return openElevation(id);
+}
+
+function openPlant(id) {
+  const p = state.plants.find(x => x.id === id);
+  if (!p) return;
+  const sector = state.sectors.find(s => s.id === p.sectorId);
+  const tasks = state.tasks
+    .filter(t => (t.targetType === 'plant' && t.targetId === p.id) ||
+                 (t.targetType === 'sector' && p.sectorId && t.targetId === p.sectorId))
+    .sort(byDateDesc);
+
+  openSheet(`${SPECIES[p.species]?.label || p.species}${p.variety ? ' · ' + p.variety : ''}`, `
+    <div class="chips">
+      ${estadoPastilla(p.status)}
+      ${sector ? `<span class="badge">${escapeHtml(sector.name)}</span>` : '<span class="badge">Sin sector</span>'}
+    </div>
+    <dl class="hechos">
+      <dt>Sembrada</dt><dd>${p.plantedAt ? fmtDate(p.plantedAt) + ' · ' + ageLabel(p.plantedAt) : '—'}</dd>
+      <dt>Elevación</dt><dd>${p.elevationM ? nf(p.elevationM, 2) + ' msnm' : '—'}</dd>
+      <dt>Coordenadas</dt><dd>${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}</dd>
+      <dt>Riego hoy</dt><dd>${nf(water.litrosPlantaDia(p, diaDeHoy()), 1)} L${
+        SPECIES[p.species] ? ` <small class="muted">· adulta en día normal: ${SPECIES[p.species].lppd} L</small>` : ''}</dd>
+    </dl>
+    ${p.notes ? `<p class="aviso aviso--ok">${escapeHtml(p.notes)}</p>` : ''}
+    ${p.photos?.length ? `<div class="photos">${p.photos.map(src => `<img src="${src}" alt="" />`).join('')}</div>` : ''}
+    <h4>Historial y tareas (${tasks.length})</h4>
+    ${tasks.length ? `<ul class="mini-list">${tasks.map(taskLine).join('')}</ul>` : '<p class="hint">Sin tareas registradas.</p>'}
+    <div class="sheet-actions">
+      <button class="btn btn--rojo btn-block" data-act="task">Nueva tarea</button>
+      <button class="btn" data-act="edit">Editar</button>
+      <button class="btn" data-act="center">Ver en mapa</button>
+      <button class="btn btn-danger" data-act="del">Eliminar</button>
+    </div>
+  `, body => {
+    body.querySelector('[data-act="edit"]').onclick = () => openPlantForm(p);
+    body.querySelector('[data-act="task"]').onclick = () => openTaskForm({ targetType: 'plant', targetId: p.id });
+    body.querySelector('[data-act="center"]').onclick = () => { closeSheet(); showView('view-map'); farmMap?.flyTo([p.lat, p.lng]); };
+    body.querySelector('[data-act="del"]').onclick = async () => {
+      if (!confirm('¿Eliminar esta planta?')) return;
+      await db.remove('plants', p.id);
+      await reload(); renderAll(); closeSheet(); toast('Planta eliminada');
+    };
   });
-});
+}
 
-// ---------- Onboarding: ubicación ----------
-const ZONAS_MANUALES = [
-  { emoji: "🌴", nombre: "Costa / Amazonía baja", desc: "Clima cálido (0 – 1.000 m)", alt: 300 },
-  { emoji: "🌤️", nombre: "Valle subtropical", desc: "Clima templado (1.000 – 2.000 m)", alt: 1500 },
-  { emoji: "⛰️", nombre: "Sierra andina", desc: "Clima frío moderado (2.000 – 3.200 m)", alt: 2600 },
-  { emoji: "🏔️", nombre: "Sierra alta / páramo", desc: "Clima frío (más de 3.200 m)", alt: 3400 }
+function openPlantForm(p) {
+  const isNew = !p.id;
+  openSheet(isNew ? 'Nueva planta' : 'Editar planta', `
+    <form id="f">
+      <label>Especie
+        <select name="species">${Object.entries(SPECIES).map(([k, v]) =>
+          `<option value="${k}" ${p.species === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select>
+      </label>
+      <label>Variedad <input name="variety" value="${attr(p.variety)}" placeholder="Hass, Fuerte…" /></label>
+      <label>Sector
+        <select name="sectorId"><option value="">Sin sector</option>${state.sectors.map(s =>
+          `<option value="${s.id}" ${p.sectorId === s.id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}</select>
+      </label>
+      <label>Fecha de siembra <input type="date" name="plantedAt" value="${attr(p.plantedAt)}" /></label>
+      <label>Estado
+        <select name="status">${STATUSES.map(s =>
+          `<option value="${s}" ${p.status === s ? 'selected' : ''}>${s}</option>`).join('')}</select>
+      </label>
+      <div class="field-grid-2">
+        <label>Latitud <input name="lat" type="number" step="0.0000001" value="${attr(p.lat)}" required /></label>
+        <label>Longitud <input name="lng" type="number" step="0.0000001" value="${attr(p.lng)}" required /></label>
+      </div>
+      <label>Elevación (msnm) <input name="elevationM" type="number" step="0.01" value="${attr(p.elevationM)}" /></label>
+      <label>Notas <textarea name="notes" rows="3">${escapeHtml(p.notes || '')}</textarea></label>
+      <label class="foto"><svg class="icono" aria-hidden="true"><use href="#i-camara"/></svg>
+        <span>Agregar fotos <small class="foto__nombre"></small></span>
+        <input type="file" name="photo" accept="image/*" capture="environment" multiple /></label>
+      <button class="btn btn--rojo btn-block" type="submit">Guardar</button>
+    </form>
+  `, body => {
+    body.querySelector('#f').onsubmit = async ev => {
+      ev.preventDefault();
+      const f = new FormData(ev.target);
+      const photos = await readPhotos(f.getAll('photo'));
+      await persist('plants', {
+        ...p,
+        species: f.get('species'),
+        variety: f.get('variety') || undefined,
+        sectorId: f.get('sectorId') || undefined,
+        plantedAt: f.get('plantedAt') || undefined,
+        status: f.get('status'),
+        lat: Number(f.get('lat')),
+        lng: Number(f.get('lng')),
+        elevationM: f.get('elevationM') ? Number(f.get('elevationM')) : undefined,
+        notes: f.get('notes') || undefined,
+        photos: [...(p.photos || []), ...photos]
+      });
+      closeSheet();
+      toast(isNew ? 'Planta agregada' : 'Planta actualizada');
+    };
+  });
+}
+
+function openInfra(id) {
+  const i = state.infra.find(x => x.id === id);
+  if (!i) return;
+  const low = Math.min(...measuredPoints().map(p => p.elevationM));
+  const head = i.elevationM ? i.elevationM - low : null;
+  openSheet(cap(i.type), `
+    <dl class="hechos">
+      <dt>Elevación</dt><dd>${i.elevationM ? nf(i.elevationM, 2) + ' msnm' : '—'}</dd>
+      ${head != null ? `<dt>Carga al punto más bajo</dt><dd>${nf(head)} m · ${nf(staticPressureBar(head), 2)} bar</dd>` : ''}
+      <dt>Coordenadas</dt><dd>${i.lat.toFixed(6)}, ${i.lng.toFixed(6)}</dd>
+      ${Object.entries(i.props || {}).map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(v))}</dd>`).join('')}
+    </dl>
+    <div class="sheet-actions">
+      <button class="btn" data-act="edit">Editar</button>
+      <button class="btn" data-act="center">Ver en mapa</button>
+      <button class="btn btn-danger" data-act="del">Eliminar</button>
+    </div>
+  `, body => {
+    body.querySelector('[data-act="edit"]').onclick = () => openInfraForm(i);
+    body.querySelector('[data-act="center"]').onclick = () => { closeSheet(); showView('view-map'); farmMap?.flyTo([i.lat, i.lng]); };
+    body.querySelector('[data-act="del"]').onclick = async () => {
+      if (!confirm('¿Eliminar?')) return;
+      await db.remove('infra', i.id);
+      await reload(); renderAll(); closeSheet();
+    };
+  });
+}
+
+function openInfraForm(i) {
+  openSheet(i.id ? 'Editar infraestructura' : 'Nueva infraestructura', `
+    <form id="f">
+      <label>Tipo
+        <select name="type">${INFRA_TYPES.map(t =>
+          `<option value="${t}" ${i.type === t ? 'selected' : ''}>${cap(t)}</option>`).join('')}</select>
+      </label>
+      <div class="field-grid-2">
+        <label>Latitud <input name="lat" type="number" step="0.0000001" value="${attr(i.lat)}" required /></label>
+        <label>Longitud <input name="lng" type="number" step="0.0000001" value="${attr(i.lng)}" required /></label>
+      </div>
+      <label>Elevación (msnm) <input name="elevationM" type="number" step="0.01" value="${attr(i.elevationM)}" /></label>
+      <label>Volumen (m³) — sólo reservorio <input name="volumenM3" type="number" step="0.1" value="${attr(i.props?.volumenM3)}" /></label>
+      <label>Material <input name="material" value="${attr(i.props?.material)}" /></label>
+      <button class="btn btn--rojo btn-block" type="submit">Guardar</button>
+    </form>
+  `, body => {
+    body.querySelector('#f').onsubmit = async ev => {
+      ev.preventDefault();
+      const f = new FormData(ev.target);
+      const props = { ...(i.props || {}) };
+      if (f.get('volumenM3')) props.volumenM3 = Number(f.get('volumenM3'));
+      if (f.get('material')) props.material = f.get('material');
+      await persist('infra', {
+        ...i,
+        type: f.get('type'),
+        lat: Number(f.get('lat')),
+        lng: Number(f.get('lng')),
+        elevationM: f.get('elevationM') ? Number(f.get('elevationM')) : undefined,
+        props
+      });
+      closeSheet();
+      toast('Guardado');
+    };
+  });
+}
+
+function openElevation(id) {
+  const e = state.elevations.find(x => x.id === id);
+  if (!e) return;
+  openSheet(e.name || 'Punto de elevación', `
+    <dl class="hechos">
+      <dt>Elevación</dt><dd>${nf(e.elevationM, 2)} msnm</dd>
+      <dt>Coordenada</dt><dd>${e.lat.toFixed(6)}, ${e.lng.toFixed(6)} ${e.measured ? '' : '<em>(estimada)</em>'}</dd>
+    </dl>
+    ${e.measured ? '' : '<p class="aviso aviso--atencion">La altura es real pero la coordenada aún no se ha tomado con GPS. Párate en el punto y usa “Fijar con mi GPS”.</p>'}
+    <div class="sheet-actions">
+      <button class="btn btn--rojo btn-block" data-act="gps">Fijar con mi GPS</button>
+      <button class="btn" data-act="edit">Editar</button>
+      <button class="btn btn-danger" data-act="del">Eliminar</button>
+    </div>
+  `, body => {
+    body.querySelector('[data-act="edit"]').onclick = () => openElevationForm(e);
+    body.querySelector('[data-act="del"]').onclick = async () => {
+      if (!confirm('¿Eliminar este punto? El modelo de terreno se recalcula sin él.')) return;
+      await db.remove('elevations', e.id);
+      await reload(); renderAll(); closeSheet();
+    };
+    body.querySelector('[data-act="gps"]').onclick = () => {
+      if (!navigator.geolocation) return toast('Sin GPS disponible.');
+      toast('Buscando señal GPS…');
+      navigator.geolocation.getCurrentPosition(async pos => {
+        await persist('elevations', {
+          ...e, lat: pos.coords.latitude, lng: pos.coords.longitude, measured: true,
+          gpsAccuracyM: round(pos.coords.accuracy, 1)
+        });
+        closeSheet();
+        toast(`Coordenada fijada (±${Math.round(pos.coords.accuracy)} m)`);
+      }, err => toast('GPS: ' + err.message), { enableHighAccuracy: true, timeout: 15000 });
+    };
+  });
+}
+
+function openElevationForm(e) {
+  openSheet(e.id ? 'Editar punto de elevación' : 'Nuevo punto de elevación', `
+    <form id="f">
+      <label>Nombre <input name="name" value="${attr(e.name)}" placeholder="Cuyero, esquina norte…" required /></label>
+      <label>Elevación (msnm) <input name="elevationM" type="number" step="0.01" value="${attr(e.elevationM)}" required /></label>
+      <div class="field-grid-2">
+        <label>Latitud <input name="lat" type="number" step="0.0000001" value="${attr(e.lat)}" required /></label>
+        <label>Longitud <input name="lng" type="number" step="0.0000001" value="${attr(e.lng)}" required /></label>
+      </div>
+      <label class="row"><input type="checkbox" name="measured" ${e.measured ? 'checked' : ''} /> Coordenada tomada con GPS</label>
+      <p class="hint">Cada punto nuevo afina el modelo del terreno y la vista 3D.</p>
+      <button class="btn btn--rojo btn-block" type="submit">Guardar</button>
+    </form>
+  `, body => {
+    body.querySelector('#f').onsubmit = async ev => {
+      ev.preventDefault();
+      const f = new FormData(ev.target);
+      await persist('elevations', {
+        ...e,
+        name: f.get('name'),
+        elevationM: Number(f.get('elevationM')),
+        lat: Number(f.get('lat')),
+        lng: Number(f.get('lng')),
+        measured: f.get('measured') === 'on'
+      });
+      closeSheet();
+      toast('Modelo de terreno actualizado');
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Sectores
+// ---------------------------------------------------------------------------
+
+function renderSectors() {
+  const total = areaM2(state.parcel.boundary);
+  const used = state.sectors.reduce((s, x) => s + areaM2(x.polygon), 0);
+  const rows = state.sectors.map(s => {
+    const area = areaM2(s.polygon);
+    const plants = state.plants.filter(p => p.sectorId === s.id);
+    return `
+      <button class="list-row" data-sector="${s.id}">
+        <span class="franja" style="background:${s.color}"></span>
+        <span class="fila-main">
+          <strong>${escapeHtml(s.name)}</strong>
+          <small>${fmtArea(area)} · ${plants.length} plantas${s.irrigationZone ? ' · ' + escapeHtml(s.irrigationZone) : ''}</small>
+          ${/* Lo que se hace con un sector depende del agua que pide y de en
+                qué etapa va; el área y la zona no cambian nunca. */
+            plants.length ? `<small class="muted">${
+              Math.round(plants.reduce((sum, p) => sum + water.litrosPlantaDia(p, diaDeHoy()), 0))
+            } L/día${s.etapa ? ` · ${water.ETAPAS[s.etapa].label.toLowerCase()}` : ''}${
+              etapaVieja(s) ? ' ⚠︎' : ''}</small>` : ''}
+        </span>
+        <span class="fila-go"><svg class="icono icono--s" aria-hidden="true"><use href="#i-chevron-der"/></svg></span>
+      </button>`;
+  }).join('');
+
+  $('#sectors-list').innerHTML = `
+    <div class="card datos card--ancha">
+      <div><span>Superficie total</span><strong>${fmtArea(total)}</strong></div>
+      <div><span>Perímetro</span><strong>${fmtM(perimeterM(state.parcel.boundary))}</strong></div>
+      <div><span>En sectores</span><strong>${fmtArea(used)} (${Math.round((used / total) * 100)}%)</strong></div>
+    </div>
+    <div class="card card--filas card--ancha">
+      <button class="list-row" id="edit-boundary">
+        <span class="franja" style="background:var(--mal-ambar)"></span>
+        <span class="fila-main">
+          <strong>Límite del terreno</strong>
+          <small>${state.parcel.boundary.length} vértices · editar en el mapa</small>
+        </span>
+        <span class="fila-go"><svg class="icono icono--s" aria-hidden="true"><use href="#i-chevron-der"/></svg></span>
+      </button>
+      ${rows}
+    </div>
+    ${state.sectors.length ? '' : '<p class="hint">Aún no hay sectores. Usa “Dibujar sector”.</p>'}
+  `;
+  $('#sectors-list').querySelectorAll('[data-sector]').forEach(el =>
+    el.addEventListener('click', () => openSector(el.dataset.sector)));
+  $('#edit-boundary').addEventListener('click', () => {
+    if (!farmMap) return toast('El mapa no está disponible.');
+    showView('view-map');
+    farmMap.setMode('view');
+    farmMap.setEditTarget({ kind: 'boundary' });
+    banner(`Arrastra los vértices amarillos del límite · <button class="link" id="edit-done">listo</button>`);
+    $('#edit-done').onclick = () => { farmMap.setEditTarget(null); banner(null); };
+  });
+}
+
+function openSector(id) {
+  const s = state.sectors.find(x => x.id === id);
+  if (!s) return;
+  const area = areaM2(s.polygon);
+  const plants = state.plants.filter(p => p.sectorId === s.id);
+  const bySpecies = new Map();
+  for (const p of plants) bySpecies.set(p.species, (bySpecies.get(p.species) || 0) + 1);
+  const dia = diaDeHoy();
+  const dailyL = plants.reduce((sum, p) => sum + water.litrosPlantaDia(p, dia), 0);
+  const dailyAdultoL = plants.reduce((sum, p) => sum + (SPECIES[p.species]?.lppd ?? 0), 0);
+  const tasks = state.tasks.filter(t => t.targetType === 'sector' && t.targetId === s.id).sort(byDateDesc);
+  const elevs = s.polygon.map(p => interpolateElevation(p, measuredPoints()));
+
+  openSheet(s.name, `
+    <dl class="hechos">
+      <dt>Área</dt><dd>${fmtArea(area)}</dd>
+      <dt>Perímetro</dt><dd>${fmtM(perimeterM(s.polygon))}</dd>
+      <dt>Plantas</dt><dd>${plants.length}</dd>
+      <dt>Riego hoy</dt><dd>${Math.round(dailyL).toLocaleString('es-EC')} L/día${
+        dailyAdultoL > dailyL * 1.05 ? ` <small class="muted">· ${Math.round(dailyAdultoL).toLocaleString('es-EC')} adultas</small>` : ''}</dd>
+      <dt>Elevación</dt><dd>${nf(Math.min(...elevs))}–${nf(Math.max(...elevs))} msnm</dd>
+      ${s.irrigationZone ? `<dt>Zona de riego</dt><dd>${escapeHtml(s.irrigationZone)}</dd>` : ''}
+      <dt>Etapa</dt><dd>${s.etapa
+        ? `${water.ETAPAS[s.etapa].label} <small class="muted">· riego ×${water.ETAPAS[s.etapa].kc}</small>`
+        : '<span class="muted">sin declarar</span>'}</dd>
+    </dl>
+    ${s.etapa ? `<p class="hint">${water.ETAPAS[s.etapa].dice}</p>` : ''}
+    ${etapaVieja(s) ? `<p class="aviso aviso--atencion">La etapa se declaró hace ${etapaVieja(s)} días.
+      Si el bloque ya pasó a otra, el riego calculado se está quedando corto o largo.</p>` : ''}
+    <h4>Plantas por especie</h4>
+    ${bySpecies.size ? `<ul class="mini-list">${[...bySpecies].map(([sp, n]) =>
+      `<li><span class="punto" style="background:${SPECIES[sp]?.color}"></span>${SPECIES[sp]?.label || sp}<b>${n}</b></li>`).join('')}</ul>`
+      : '<p class="hint">Sin plantas registradas en este sector.</p>'}
+    <h4>Tareas del sector (${tasks.length})</h4>
+    ${tasks.length ? `<ul class="mini-list">${tasks.map(taskLine).join('')}</ul>` : '<p class="hint">Sin tareas.</p>'}
+    <div class="sheet-actions">
+      <button class="btn btn--rojo btn-block" data-act="plant">Sembrar en marco</button>
+      <button class="btn" data-act="water">Riego por gravedad</button>
+      <button class="btn" data-act="task">Tarea del sector</button>
+      <button class="btn" data-act="edit">Editar datos</button>
+      <button class="btn" data-act="shape">Editar forma</button>
+      <button class="btn btn-danger" data-act="del">Eliminar</button>
+    </div>
+  `, body => {
+    body.querySelector('[data-act="edit"]').onclick = () => openSectorForm(s);
+    body.querySelector('[data-act="plant"]').onclick = () => openPlantingForm(s);
+    body.querySelector('[data-act="water"]').onclick = () => openHydraulics(s);
+    body.querySelector('[data-act="task"]').onclick = () => openTaskForm({ targetType: 'sector', targetId: s.id });
+    body.querySelector('[data-act="shape"]').onclick = () => {
+      if (!farmMap) return toast('El mapa no está disponible.');
+      closeSheet();
+      showView('view-map');
+      farmMap.setEditTarget({ kind: 'sector', id: s.id });
+      farmMap.flyTo(centroid(s.polygon), 19);
+      banner(`Arrastra los vértices de <strong>${escapeHtml(s.name)}</strong> · <button class="link" id="edit-done">listo</button>`);
+      $('#edit-done').onclick = () => { farmMap.setEditTarget(null); banner(null); };
+    };
+    body.querySelector('[data-act="del"]').onclick = async () => {
+      if (!confirm(`¿Eliminar el sector "${s.name}"? Las plantas quedan sin sector.`)) return;
+      for (const p of plants) await db.put('plants', { ...p, sectorId: undefined });
+      await db.remove('sectors', s.id);
+      await reload(); renderAll(); closeSheet(); toast('Sector eliminado');
+    };
+  });
+}
+
+/** Días desde que se declaró la etapa, si ya lleva demasiados. */
+function etapaVieja(s) {
+  if (!s.etapa || !s.etapaDesde) return 0;
+  const d = water.daysBetween(s.etapaDesde, today());
+  return d > 90 ? d : 0;
+}
+
+function openSectorForm(s) {
+  const isNew = !s.id;
+  openSheet(isNew ? 'Nuevo sector' : 'Editar sector', `
+    <form id="f">
+      <p class="hint">Área calculada: <strong>${fmtArea(areaM2(s.polygon))}</strong></p>
+      <label>Nombre <input name="name" value="${attr(s.name)}" placeholder="Bloque arándanos" required /></label>
+      <label>Color <input type="color" name="color" value="${s.color || '#2f9e44'}" /></label>
+      <label>Zona de riego <input name="irrigationZone" value="${attr(s.irrigationZone)}" placeholder="Zona alta" /></label>
+      <label>Etapa del cultivo
+        <select name="etapa">
+          <option value="">Sin declarar</option>
+          ${Object.entries(water.ETAPAS).map(([id, e]) =>
+            `<option value="${id}" ${s.etapa === id ? 'selected' : ''}>${e.label} (×${e.kc})</option>`).join('')}
+        </select>
+      </label>
+      <p class="hint">Cambia cuánta agua pide el sector. Nadie puede deducirla de la fecha
+      de siembra —en la sierra no hay una estación que la fije—, así que se declara aquí y
+      la app avisa cuando lleva mucho sin tocarse.</p>
+      <button class="btn btn--rojo btn-block" type="submit">Guardar</button>
+    </form>
+  `, body => {
+    body.querySelector('#f').onsubmit = async ev => {
+      ev.preventDefault();
+      const f = new FormData(ev.target);
+      await persist('sectors', {
+        ...s,
+        parcelId: state.parcel.id,
+        name: f.get('name'),
+        color: f.get('color'),
+        irrigationZone: f.get('irrigationZone') || undefined,
+        etapa: f.get('etapa') || undefined,
+        // Se marca cuándo, porque una etapa de hace seis meses ya no es cierta.
+        etapaDesde: f.get('etapa') && f.get('etapa') !== s.etapa ? today() : s.etapaDesde,
+        areaM2: round(areaM2(s.polygon), 1)
+      });
+      closeSheet();
+      toast(isNew ? 'Sector creado' : 'Sector actualizado');
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Marco de siembra
+// ---------------------------------------------------------------------------
+
+/** Genera las posiciones de un bloque entero y las siembra de una vez. */
+function openPlantingForm(sector) {
+  const defaults = { arandano: [2.5, 1.2], aguacate: [6, 6], mora: [3, 2], lavanda: [1, 0.6] };
+
+  openSheet(`Sembrar en ${sector.name}`, `
+    <form id="f">
+      <label>Especie
+        <select name="species">${Object.entries(SPECIES).map(([k, v]) =>
+          `<option value="${k}" ${k === 'arandano' ? 'selected' : ''}>${v.label}</option>`).join('')}</select>
+      </label>
+      <label>Variedad <input name="variety" placeholder="opcional" /></label>
+      <div class="field-grid-2">
+        <label>Entre hileras (m) <input name="rowSpacingM" type="number" step="0.1" min="0.2" value="2.5" required /></label>
+        <label>Entre plantas (m) <input name="spacingM" type="number" step="0.1" min="0.2" value="1.2" required /></label>
+      </div>
+      <div class="field-grid-2">
+        <label>Margen al borde (m) <input name="marginM" type="number" step="0.1" min="0" value="1" /></label>
+        <label>Giro de hileras (°) <input name="angleDeg" type="number" step="5" min="0" max="180" value="0" /></label>
+      </div>
+      <label>Disposición
+        <select name="layout">${Object.entries(LAYOUTS).map(([k, v]) =>
+          `<option value="${k}">${v.label}</option>`).join('')}</select>
+      </label>
+      <label>Fecha de siembra <input type="date" name="plantedAt" value="${today()}" /></label>
+      <div id="planting-summary" class="card datos"></div>
+      <p class="hint">Las posiciones naranjas en el mapa son la propuesta. Nada se guarda hasta confirmar.</p>
+      <button class="btn btn--rojo btn-block" type="submit" id="btn-sow">Sembrar</button>
+    </form>
+  `, body => {
+    const form = body.querySelector('#f');
+    let points = [];
+
+    const recompute = () => {
+      const f = new FormData(form);
+      const p = plantingPreview({
+        polygon: sector.polygon,
+        spacingM: Number(f.get('spacingM')) || 1,
+        rowSpacingM: Number(f.get('rowSpacingM')) || 1,
+        marginM: Number(f.get('marginM')) || 0,
+        angleDeg: Number(f.get('angleDeg')) || 0,
+        layout: f.get('layout')
+      });
+      points = p.points;
+      const species = f.get('species');
+      const lppd = SPECIES[species]?.lppd ?? 0;
+      const existing = state.plants.filter(x => x.sectorId === sector.id).length;
+
+      body.querySelector('#planting-summary').innerHTML = `
+        <div><span>Caben</span><strong>${p.count.toLocaleString('es-EC')} plantas</strong></div>
+        <div><span>Densidad</span><strong>${p.densityPerHa.toLocaleString('es-EC')}/ha · ${nf(p.m2PerPlant, 1)} m²/planta</strong></div>
+        <div><span>Riego que suma (adultas)</span><strong>${nf((p.count * lppd) / 1000, 2)} m³/día</strong></div>
+        ${existing ? `<div><span>Ya sembradas aquí</span><strong>${existing}</strong></div>` : ''}`;
+      body.querySelector('#btn-sow').textContent = p.count ? `Sembrar ${p.count} plantas` : 'No cabe ninguna';
+      body.querySelector('#btn-sow').disabled = p.count === 0;
+      farmMap?.previewPoints(points);
+    };
+
+    form.querySelector('[name="species"]').addEventListener('change', e => {
+      const d = defaults[e.target.value];
+      if (d) {
+        form.querySelector('[name="rowSpacingM"]').value = d[0];
+        form.querySelector('[name="spacingM"]').value = d[1];
+      }
+      recompute();
+    });
+    form.addEventListener('input', recompute);
+    recompute();
+
+    form.onsubmit = async ev => {
+      ev.preventDefault();
+      if (!points.length) return;
+      const f = new FormData(ev.target);
+      if (!confirm(`Se crearán ${points.length} plantas en "${sector.name}". ¿Seguir?`)) return;
+
+      const btn = body.querySelector('#btn-sow');
+      btn.disabled = true;
+      btn.textContent = 'Sembrando…';
+
+      const elevPoints = measuredPoints();
+      const records = points.map(([lat, lng]) => ({
+        sectorId: sector.id,
+        species: f.get('species'),
+        variety: f.get('variety') || undefined,
+        lat, lng,
+        elevationM: round(interpolateElevation([lat, lng], elevPoints), 2),
+        plantedAt: f.get('plantedAt') || undefined,
+        status: 'sano'
+      }));
+
+      await db.putMany('plants', records);
+      await reload();
+      renderAll();
+      farmMap?.previewPoints([]);
+      closeSheet();
+      toast(`${records.length} plantas sembradas en ${sector.name}`, 4000);
+    };
+  });
+
+  // Al cerrar la hoja se limpia la propuesta del mapa.
+  const observer = new MutationObserver(() => {
+    if ($('#sheet').hidden) { farmMap?.previewPoints([]); observer.disconnect(); }
+  });
+  observer.observe($('#sheet'), { attributes: true, attributeFilter: ['hidden'] });
+}
+
+// ---------------------------------------------------------------------------
+// Riego por gravedad
+// ---------------------------------------------------------------------------
+
+/** Presión real disponible en un sector: desnivel menos pérdidas por fricción. */
+function openHydraulics(sector) {
+  const source = state.infra.find(i => i.type === 'reservorio');
+  if (!source) {
+    return openSheet('Riego por gravedad',
+      '<p class="aviso aviso--atencion">No hay ningún reservorio registrado. Agrégalo desde el mapa para calcular la presión.</p>');
+  }
+
+  const target = centroid(sector.polygon);
+  const targetElev = interpolateElevation(target, measuredPoints());
+  const plants = state.plants.filter(p => p.sectorId === sector.id);
+  const demandL = plants.reduce((sum, p) => sum + (SPECIES[p.species]?.lppd ?? 0), 0);
+
+  openSheet(`Riego por gravedad · ${sector.name}`, `
+    <form id="f">
+      <div class="field-grid-2">
+        <label>Demanda del sector (L/día, a pico) <input name="demandLitresPerDay" type="number" step="1" value="${Math.round(demandL)}" /></label>
+        <label>Horas de riego <input name="irrigationHours" type="number" step="0.5" min="0.5" value="2" /></label>
+      </div>
+      <div class="field-grid-2">
+        <label>Diámetro de tubería
+          <select name="diameterMm">${hyd.DIAMETERS_MM.map(d =>
+            `<option value="${d}" ${d === 25 ? 'selected' : ''}>${d} mm</option>`).join('')}</select>
+        </label>
+        <label>Recorrido extra (%) <input name="extra" type="number" step="5" min="0" value="25" /></label>
+      </div>
+      <div id="hyd-result"></div>
+    </form>
+  `, body => {
+    const form = body.querySelector('#f');
+
+    const recompute = () => {
+      const f = new FormData(form);
+      const params = {
+        sourceElevationM: source.elevationM,
+        targetElevationM: targetElev,
+        sourceLatLng: [source.lat, source.lng],
+        targetLatLng: target,
+        demandLitresPerDay: Number(f.get('demandLitresPerDay')) || 0,
+        irrigationHours: Number(f.get('irrigationHours')) || 2,
+        extraLengthFactor: 1 + (Number(f.get('extra')) || 0) / 100
+      };
+      const r = hyd.pressureAt({ ...params, diameterMm: Number(f.get('diameterMm')) });
+      const sug = hyd.suggestDiameter(params);
+
+      let veredicto;
+      if (r.tooLow) {
+        veredicto = `<p class="aviso aviso--atencion">Presión insuficiente para goteros autocompensados, que necesitan al menos
+          ${nf(hyd.DRIPPER_MIN_BAR, 1)} bar.
+          ${r.lossShare > 0.3
+            ? 'La fricción se está comiendo ' + Math.round(r.lossShare * 100) + '% del desnivel: sube el diámetro.'
+            : 'El desnivel hasta este sector no da para más, por mucho que engroses la tubería. Opciones: goteros no compensados (trabajan desde 0,5 bar), microaspersión de baja presión, o una bomba pequeña.'}</p>`;
+      } else if (r.tooHigh) {
+        veredicto = `<p class="aviso aviso--atencion">Presión por encima de ${nf(hyd.DRIPPER_MAX_BAR, 1)} bar: conviene un regulador
+          para no forzar goteros y uniones.</p>`;
+      } else {
+        veredicto = `<p class="aviso aviso--ok">Presión dentro del rango de trabajo del goteo autocompensado
+          (${nf(hyd.DRIPPER_MIN_BAR, 1)}–${nf(hyd.DRIPPER_MAX_BAR, 1)} bar).</p>`;
+      }
+
+      body.querySelector('#hyd-result').innerHTML = `
+        <div class="card datos">
+          <div><span>Desnivel reservorio → sector</span><strong>${nf(r.dropM)} m</strong></div>
+          <div><span>Presión estática</span><strong>${nf(r.staticBar, 2)} bar</strong></div>
+          <div><span>Tubería estimada</span><strong>${nf(r.pipeLengthM, 0)} m</strong></div>
+          <div><span>Caudal de diseño</span><strong>${nf(r.flowLps, 2)} L/s</strong></div>
+          <div><span>Pérdida por fricción</span><strong>${nf(r.lossM, 2)} m (${Math.round(r.lossShare * 100)}%)</strong></div>
+          <div><span>Presión neta</span><strong class="${r.ok ? 'good' : 'bad'}">${nf(r.netBar, 2)} bar</strong></div>
+          <div><span>Velocidad</span><strong class="${r.fastFlow ? 'bad' : ''}">${nf(r.velocity, 2)} m/s</strong></div>
+        </div>
+        ${veredicto}
+        ${r.fastFlow ? '<p class="aviso aviso--atencion">Más de 1,5 m/s: golpe de ariete y desgaste. Sube de diámetro.</p>' : ''}
+        <p class="hint">Diámetro mínimo que mantiene la presión y una velocidad sana:
+          <strong>${sug.diameterMm} mm</strong>${sug.insufficient ? ' (aun así no alcanza: el límite es el desnivel, no la tubería)' : ''}.
+          Cálculo por Hazen-Williams con C=${hyd.C_PE} (PE/PVC liso); no incluye pérdidas en filtros, válvulas ni codos.</p>`;
+    };
+
+    form.addEventListener('input', recompute);
+    recompute();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Plantas (lista)
+// ---------------------------------------------------------------------------
+
+/* Cómo está una planta, en palabras y en un color suave: lo que está bien no
+   necesita gritar, lo que hay que revisar sí tiene que verse. */
+const ESTADO_PLANTA = {
+  sano: ['Sana', ''], 'atención': ['Revisar', 'pastilla--ambar'],
+  enfermo: ['Enferma', 'pastilla--roja'], muerto: ['Muerta', 'pastilla--off']
+};
+function estadoPastilla(status) {
+  const [txt, cls] = ESTADO_PLANTA[status] || [cap(status || '—'), 'pastilla--off'];
+  return `<span class="pastilla ${cls}">${txt}</span>`;
+}
+
+let filtroEspecie = 'todas';
+function renderPlants() {
+  const q = ($('#plant-search')?.value || '').toLowerCase().trim();
+  const rows = state.plants
+    .filter(p => !q || [p.species, p.variety, p.notes, SPECIES[p.species]?.label]
+      .some(v => v && v.toLowerCase().includes(q)))
+    .sort((a, b) => (a.species + a.variety).localeCompare(b.species + b.variety));
+
+  const counts = new Map();
+  for (const p of state.plants) counts.set(p.species, (counts.get(p.species) || 0) + 1);
+  if (filtroEspecie !== 'todas' && !counts.has(filtroEspecie)) filtroEspecie = 'todas';
+  const visibles = rows.filter(p => filtroEspecie === 'todas' || p.species === filtroEspecie);
+
+  $('#plants-list').innerHTML = `
+    <div class="chips" id="plantas-especie">
+      <button data-especie="todas" class="${filtroEspecie === 'todas' ? 'on' : ''}">Todas · ${state.plants.length}</button>
+      ${[...counts].map(([sp, n]) =>
+        `<button data-especie="${attr(sp)}" class="${filtroEspecie === sp ? 'on' : ''}">${SPECIES[sp]?.emoji || ''} ${SPECIES[sp]?.label || sp} · ${n}</button>`).join('')}
+    </div>
+    <div class="card card--filas">${visibles.map(p => `
+      <button class="list-row" data-plant="${p.id}">
+        <span class="franja" style="background:${SPECIES[p.species]?.color}"></span>
+        <span class="fila-main">
+          <strong>${SPECIES[p.species]?.label || p.species}${p.variety ? ' · ' + escapeHtml(p.variety) : ''}</strong>
+          <small>${state.sectors.find(s => s.id === p.sectorId)?.name || 'Sin sector'}${p.plantedAt ? ' · ' + ageLabel(p.plantedAt) : ''}</small>
+        </span>
+        ${estadoPastilla(p.status)}
+      </button>`).join('')}</div>
+    ${visibles.length ? '' : '<p class="hint">Ninguna planta coincide con la búsqueda.</p>'}
+  `;
+  $('#plants-list').querySelectorAll('[data-plant]').forEach(el =>
+    el.addEventListener('click', () => openPlant(el.dataset.plant)));
+  $('#plants-list').querySelectorAll('[data-especie]').forEach(el =>
+    el.addEventListener('click', () => { filtroEspecie = el.dataset.especie; renderPlants(); }));
+}
+
+// ---------------------------------------------------------------------------
+// Tareas
+// ---------------------------------------------------------------------------
+
+/**
+ * Cuándo toca una tarea, dicho como se piensa.
+ *
+ * «Para 22 sept 2026» obliga a restar mentalmente contra el calendario de hoy
+ * cada vez. Lo que se quiere saber es si va tarde y cuánto, y eso es una resta
+ * que la app puede hacer. La fecha exacta sigue estando, detrás.
+ */
+function cuando(iso) {
+  const d = water.daysBetween(today(), iso);
+  const atras = iso < today();
+  const dd = water.daysBetween(iso, today());
+  if (iso === today()) return { txt: 'hoy', tono: 'urgente' };
+  if (atras) return { txt: dd === 1 ? 'atrasada 1 día' : `atrasada ${dd} días`, tono: 'atrasada' };
+  if (d === 1) return { txt: 'mañana', tono: 'urgente' };
+  if (d <= 7) return { txt: `en ${d} días`, tono: 'pronto' };
+  return { txt: `en ${d} días`, tono: '' };
+}
+
+/* Los tres grupos son los tres momentos en que se decide algo distinto: lo que
+   ya se pasó, lo de esta semana y lo que todavía no aprieta. Una sola lista
+   ordenada por fecha obliga a leerla entera para encontrar lo urgente. */
+const GRUPOS = [
+  { id: 'atrasadas', titulo: 'Atrasadas', test: t => t.dueAt && t.dueAt < today() },
+  { id: 'semana', titulo: 'Esta semana', test: t => t.dueAt && water.daysBetween(today(), t.dueAt) <= 7 },
+  { id: 'despues', titulo: 'Más adelante', test: () => true }
 ];
 
-function renderManualZones() {
-  const cont = document.getElementById("manual-zones");
-  cont.innerHTML = ZONAS_MANUALES.map((z, i) => `
-    <button class="option-card" data-zone="${i}">
-      <span class="option-emoji">${z.emoji}</span>
-      <span class="option-text"><strong>${z.nombre}</strong><small>${z.desc}</small></span>
-    </button>`).join("");
-  cont.querySelectorAll("[data-zone]").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const z = ZONAS_MANUALES[+btn.dataset.zone];
-      state.altitud = z.alt; state.lugar = z.nombre;
-      state.lat = null; state.lon = null; state.forecast = null;
-      show("screen-space");
+function renderTasks() {
+  const rows = state.tasks
+    .filter(t => taskFilter === 'todas' || (taskFilter === 'hechas' ? t.doneAt : !t.doneAt))
+    .sort((a, b) => (a.dueAt || a.doneAt || '').localeCompare(b.dueAt || b.doneAt || ''));
+
+  const overdue = state.tasks.filter(t => !t.doneAt && t.dueAt && t.dueAt < today()).length;
+
+  const fila = t => {
+    const c = !t.doneAt && t.dueAt ? cuando(t.dueAt) : null;
+    return `
+      <div class="list-row ${c?.tono === 'atrasada' ? 'atrasada' : ''}">
+        <input type="checkbox" class="chk" data-done="${t.id}" ${t.doneAt ? 'checked' : ''} />
+        <button class="fila-main" data-task="${t.id}">
+          <strong>${TASK_EMOJI[t.type] || ''} ${cap(t.type)} · ${escapeHtml(targetName(t))}</strong>
+          <small>${t.doneAt
+            ? 'Hecha ' + fmtDate(t.doneAt)
+            : c
+              ? `<b class="cuando cuando--${c.tono}">${c.txt}</b> <span class="muted">· ${fmtDate(t.dueAt)}</span>`
+              : 'Sin fecha'}${t.quantity ? ` · ${t.quantity} ${escapeHtml(t.unit || '')}` : ''}</small>
+          ${t.notes ? `<small class="muted">${escapeHtml(t.notes)}</small>` : ''}
+        </button>
+      </div>`;
+  };
+
+  // Agrupar sólo tiene sentido en la lista de pendientes: las hechas se leen
+  // por fecha y «atrasada» ya no significa nada para ellas.
+  let cuerpo;
+  const agrupado = taskFilter === 'pendientes' && rows.length;
+  if (agrupado) {
+    const resto = [...rows];
+    cuerpo = GRUPOS.map(g => {
+      const suyas = [];
+      for (let i = resto.length - 1; i >= 0; i--) {
+        if (g.test(resto[i])) suyas.unshift(...resto.splice(i, 1));
+      }
+      if (!suyas.length) return '';
+      return `<section class="col-tareas">
+        <h4 class="grupo-tareas">${g.titulo} <span>${suyas.length}</span></h4>
+        <div class="card card--filas">${suyas.map(fila).join('')}</div>
+      </section>`;
+    }).join('');
+  } else {
+    cuerpo = `<div class="card card--filas">${rows.map(fila).join('')}</div>`;
+  }
+
+  $('#tasks-list').innerHTML = `
+    ${/* Con grupos, el título «Atrasadas · 1» ya lo dice: la cinta sería la
+          misma frase dos veces seguidas. */
+      overdue && taskFilter !== 'hechas' && !agrupado
+      ? `<p class="aviso aviso--atencion">${overdue} tarea${overdue > 1 ? 's' : ''} atrasada${overdue > 1 ? 's' : ''}.</p>`
+      : ''}
+    ${cuerpo}
+    ${rows.length ? '' : '<p class="hint">Nada por aquí.</p>'}
+  `;
+  $('#tasks-list').querySelectorAll('[data-done]').forEach(el => el.addEventListener('change', async () => {
+    const t = state.tasks.find(x => x.id === el.dataset.done);
+    await persist('tasks', { ...t, doneAt: el.checked ? today() : undefined });
+    toast(el.checked ? 'Tarea completada' : 'Tarea reabierta');
+  }));
+  $('#tasks-list').querySelectorAll('[data-task]').forEach(el =>
+    el.addEventListener('click', () => openTaskForm(state.tasks.find(x => x.id === el.dataset.task))));
+}
+
+/* Un emoji por tipo de tarea: se reconoce de un vistazo, también para quien
+   lee poco. Van delante del nombre en todas las listas. */
+const TASK_EMOJI = { riego: '💧', poda: '✂️', 'fertilización': '🧪', 'fumigación': '🧴', cosecha: '🧺', siembra: '🌱', otro: '📝' };
+
+function nombrePlanta(p) {
+  return `${SPECIES[p.species]?.label || p.species}${p.variety ? ' ' + p.variety : ''}${p.plantedAt ? ' · ' + ageLabel(p.plantedAt) : ''}`;
+}
+
+/** Opciones de "a qué se aplica", agrupadas por sector y con nombres legibles. */
+function opcionesObjetivo(actual) {
+  const opt = (v, label) => `<option value="${v}" ${actual === v ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+  const sinSector = state.plants.filter(p => !state.sectors.some(s => s.id === p.sectorId));
+  return opt('parcel:' + state.parcel.id, 'Toda la finca') +
+    state.sectors.map(s => {
+      const plantas = state.plants.filter(p => p.sectorId === s.id && p.status !== 'muerto');
+      return `<optgroup label="${attr(s.name)}">${opt('sector:' + s.id, 'Todo el sector ' + s.name)}${
+        plantas.map(p => opt('plant:' + p.id, nombrePlanta(p))).join('')}</optgroup>`;
+    }).join('') +
+    (sinSector.length ? `<optgroup label="Sin sector">${sinSector.map(p => opt('plant:' + p.id, nombrePlanta(p))).join('')}</optgroup>` : '');
+}
+
+function openTaskForm(t = {}) {
+  const current = t.targetId ? `${t.targetType}:${t.targetId}` : 'parcel:' + state.parcel.id;
+  const nueva = !t.id;
+
+  openSheet(nueva ? 'Nueva tarea' : 'Tarea', `
+    <form id="f">
+      <label>¿Qué hay que hacer?
+        <select name="type">${TASK_TYPES.map(x =>
+          `<option value="${x}" ${t.type === x ? 'selected' : ''}>${TASK_EMOJI[x]} ${cap(x)}</option>`).join('')}</select>
+      </label>
+      <label>¿Dónde?
+        <select name="target">${opcionesObjetivo(current)}</select>
+      </label>
+      <label>¿Para cuándo? <input type="date" name="dueAt" value="${attr(t.dueAt ?? (nueva ? today() : ''))}" /></label>
+      <label>Detalle <textarea name="notes" rows="2" placeholder="Ej.: dos sacos de abono por planta">${escapeHtml(t.notes || '')}</textarea></label>
+      <details class="mas-campos" ${t.doneAt || t.quantity ? 'open' : ''}>
+        <summary>Más datos (cantidad, si ya está hecha)</summary>
+        <label>Hecha el <input type="date" name="doneAt" value="${attr(t.doneAt)}" /></label>
+        <div class="field-grid-2">
+          <label>Cantidad <input type="number" step="0.01" name="quantity" value="${attr(t.quantity)}" /></label>
+          <label>Unidad <input name="unit" value="${attr(t.unit)}" placeholder="kg, L, sacos" /></label>
+        </div>
+      </details>
+      <button class="btn btn--rojo btn-block" type="submit">Guardar</button>
+      ${t.id ? '<button class="btn btn-danger btn-block" type="button" data-act="del">Borrar la tarea</button>' : ''}
+    </form>
+  `, body => {
+    body.querySelector('#f').onsubmit = async ev => {
+      ev.preventDefault();
+      const f = new FormData(ev.target);
+      const [targetType, targetId] = f.get('target').split(':');
+      await persist('tasks', {
+        ...t,
+        type: f.get('type'),
+        targetType, targetId,
+        dueAt: f.get('dueAt') || undefined,
+        doneAt: f.get('doneAt') || undefined,
+        quantity: f.get('quantity') ? Number(f.get('quantity')) : undefined,
+        unit: f.get('unit') || undefined,
+        notes: f.get('notes') || undefined
+      });
+      closeSheet();
+      toast('Tarea guardada');
+    };
+    body.querySelector('[data-act="del"]')?.addEventListener('click', async () => {
+      if (!confirm('¿Borrar la tarea?')) return;
+      await db.remove('tasks', t.id);
+      await reload(); renderAll(); closeSheet();
     });
   });
 }
 
-document.getElementById("btn-geolocate").addEventListener("click", () => {
-  const status = document.getElementById("location-status");
-  if (!navigator.geolocation) {
-    status.textContent = "Tu dispositivo no permite geolocalización. Elige tu zona abajo.";
+/* ── Anotar rápido, desde Hoy ─────────────────────────────────────────────
+   Tres formularios cortos para lo que pasa todos los días en la finca. Hacen
+   pocas preguntas, en palabras del campo, y dejan lo técnico para quien lo
+   quiera: el volumen de un riego es opcional porque casi nadie lo sabe, y el
+   nivel del reservorio se mide con una vara, en centímetros. */
+
+function openRiegoRapido() {
+  openSheet('Regué', `
+    <form id="f">
+      <label>¿Cuándo? <input type="date" name="date" value="${today()}" max="${today()}" required /></label>
+      <label>¿Qué regaste?
+        <select name="sectorId"><option value="">Toda la finca</option>${state.sectors.map(s =>
+          `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('')}</select></label>
+      <label>¿Cuántas horas? (opcional)
+        <input type="number" name="horas" min="0" step="0.5" inputmode="decimal" placeholder="Ej.: 2" /></label>
+      <label>¿Cuánta agua salió del reservorio? (opcional)
+        <span class="con-unidad"><input type="number" name="volumeM3" min="0" step="0.1" inputmode="decimal" /><i>m³</i></span></label>
+      <p class="hint">Si no sabes cuánta agua fue, déjalo vacío: la app la calcula con el clima y las plantas.</p>
+      <label>Nota (opcional) <input name="notes" placeholder="Ej.: se tapó un gotero en la hilera 3" /></label>
+      <button class="btn btn--rojo btn-block" type="submit">Guardar</button>
+    </form>`, body => {
+    body.querySelector('#f').onsubmit = async ev => {
+      ev.preventDefault();
+      const f = new FormData(ev.target);
+      const horas = f.get('horas') ? Number(f.get('horas')) : undefined;
+      const sector = state.sectors.find(s => s.id === f.get('sectorId'));
+      const nota = [sector ? sector.name : null, horas ? `${nf(horas, horas % 1 ? 1 : 0)} h` : null, f.get('notes') || null].filter(Boolean).join(' · ');
+      await persist('water', {
+        type: 'riego', date: f.get('date'),
+        volumeM3: f.get('volumeM3') ? Number(f.get('volumeM3')) : undefined,
+        sectorId: sector?.id, horas, notes: nota || undefined
+      });
+      closeSheet();
+      toast('Riego anotado');
+    };
+  });
+}
+
+function openMedicionRapida() {
+  const alto = state.config.reservorioAlturaUtilM || 2;
+  const capM3 = state.config.reservorioVolumenM3 || 80;
+  openSheet('Medí el reservorio', `
+    <form id="f">
+      <p class="hint">Mete una vara recta hasta el fondo, sácala y mide con la cinta hasta dónde llegó el agua.</p>
+      <label>¿Cuántos centímetros de agua hay?
+        <span class="con-unidad con-unidad--grande"><input type="number" name="cm" min="0" max="${Math.round(alto * 100)}" step="1" inputmode="numeric" required autofocus /><i>cm</i></span></label>
+      <p class="equivale" id="equivale">El reservorio lleno tiene ${Math.round(alto * 100)} cm.</p>
+      <label>¿Cuándo? <input type="date" name="date" value="${today()}" max="${today()}" required /></label>
+      <button class="btn btn--rojo btn-block" type="submit">Guardar</button>
+    </form>`, body => {
+    const f = body.querySelector('#f');
+    f.cm.addEventListener('input', () => {
+      const cm = Number(f.cm.value);
+      const out = body.querySelector('#equivale');
+      if (!(cm >= 0) || f.cm.value === '') { out.textContent = `El reservorio lleno tiene ${Math.round(alto * 100)} cm.`; return; }
+      const m3 = Math.min(capM3, (cm / 100 / alto) * capM3);
+      out.innerHTML = cm > alto * 100
+        ? `<b>Más de lo que cabe</b> (${Math.round(alto * 100)} cm): revisa la medida.`
+        : `= <b>${nf(m3, 0)} m³</b> de ${nf(capM3, 0)} · ${Math.round(m3 / capM3 * 100)} % del reservorio`;
+    });
+    f.onsubmit = async ev => {
+      ev.preventDefault();
+      const cm = Number(f.cm.value);
+      await persist('water', { type: 'medición_nivel', date: f.date.value, levelM: Math.min(alto, cm / 100) });
+      closeSheet();
+      toast('Medición guardada: el cálculo del agua parte de aquí.');
+    };
+  });
+}
+
+function openProblema() {
+  openSheet('Una planta con problema', `
+    <form id="f">
+      <label>¿Cuál?
+        <select name="target" required><option value="">Elige la planta o el sector…</option>${
+          opcionesObjetivo('').replace(/<option value="parcel:[^"]*"[^>]*>Toda la finca<\/option>/, '')}</select></label>
+      <fieldset class="elige">
+        <legend>¿Cómo está?</legend>
+        <label><input type="radio" name="status" value="atención" checked /><span>😐 Algo raro</span></label>
+        <label><input type="radio" name="status" value="enfermo" /><span>🤒 Enferma</span></label>
+        <label><input type="radio" name="status" value="muerto" /><span>🥀 Se murió</span></label>
+      </fieldset>
+      <label>¿Qué le ves? <textarea name="nota" rows="2" placeholder="Ej.: hojas amarillas, manchas negras, la comió algo"></textarea></label>
+      <label class="foto"><svg class="icono" aria-hidden="true"><use href="#i-camara"/></svg>
+        <span>Tomar una foto <small class="foto__nombre">opcional</small></span>
+        <input type="file" name="photo" accept="image/*" capture="environment" /></label>
+      <button class="btn btn--rojo btn-block" type="submit">Guardar y crear la tarea de revisarla</button>
+    </form>`, body => {
+    body.querySelector('#f').onsubmit = async ev => {
+      ev.preventDefault();
+      const f = new FormData(ev.target);
+      const [targetType, targetId] = (f.get('target') || '').split(':');
+      if (!targetId) return toast('Elige la planta o el sector');
+      const nota = (f.get('nota') || '').trim();
+      const estado = f.get('status');
+      const fotos = await readPhotos(f.getAll('photo'));
+      if (targetType === 'plant') {
+        const p = state.plants.find(x => x.id === targetId);
+        await db.put('plants', {
+          ...p, status: estado, photos: [...(p.photos || []), ...fotos],
+          notes: nota ? `${p.notes ? p.notes + '\n' : ''}${fmtDate(today())}: ${nota}` : p.notes
+        });
+      }
+      if (estado !== 'muerto' || targetType !== 'plant') {
+        await db.put('tasks', { type: 'otro', targetType, targetId, dueAt: today(),
+          notes: `Revisar: ${nota || ({ 'atención': 'algo raro', enfermo: 'está enferma', muerto: 'se murió' }[estado])}` });
+      }
+      await reload(); renderAll();
+      closeSheet();
+      toast(estado === 'muerto' ? 'Anotado' : 'Anotado, con una tarea para revisarla hoy');
+    };
+  });
+}
+
+/**
+ * Parte de trabajo en texto plano para mandar por WhatsApp a quien está en la
+ * finca. El dueño maneja a distancia: la app tiene que servir para dar
+ * instrucciones, no sólo para registrar.
+ */
+function buildPlan() {
+  const pendientes = state.tasks
+    .filter(t => !t.doneAt)
+    .sort((a, b) => (a.dueAt || '9999').localeCompare(b.dueAt || '9999'));
+
+  const lineas = [`FINCA MULALILLO — plan de trabajo`, fmtDate(today()), ''];
+
+  if (!pendientes.length) {
+    lineas.push('No hay tareas pendientes.');
+  } else {
+    const atrasadas = pendientes.filter(t => t.dueAt && t.dueAt < today());
+    const resto = pendientes.filter(t => !atrasadas.includes(t));
+
+    const escribir = (titulo, lista) => {
+      if (!lista.length) return;
+      lineas.push(titulo);
+      for (const t of lista) {
+        const cuando = t.dueAt ? fmtDate(t.dueAt) : 'sin fecha';
+        lineas.push(`• ${cap(t.type)} — ${targetName(t)} (${cuando})`);
+        if (t.quantity) lineas.push(`  cantidad: ${t.quantity} ${t.unit || ''}`.trimEnd());
+        if (t.notes) lineas.push(`  ${t.notes}`);
+      }
+      lineas.push('');
+    };
+
+    escribir(`ATRASADAS (${atrasadas.length})`, atrasadas);
+    escribir(`PRÓXIMAS (${resto.length})`, resto);
+  }
+
+  const w = water.summary({ ...state, clima: state.clima, sensores: resumenSensores() });
+  lineas.push('AGUA');
+  lineas.push(`• Reservorio estimado: ${nf(w.volume.volumeM3)} m³ de ${nf(state.config.reservorioVolumenM3 || 0, 0)} m³`);
+  lineas.push(`• Alcanza para: ${w.proyeccion.diasHastaVacio != null
+    ? nf(w.proyeccion.diasHastaVacio, 0) + ' días'
+    : 'más de ' + w.proyeccion.alMenosDias + ' días'}`);
+  // Quien está en la finca riega o no riega según esto, así que va el motivo,
+  // no sólo el veredicto: "no riegues el lunes" sin decir que llueve no se
+  // obedece igual.
+  if (w.clima.conocido) {
+    lineas.push(`• Clima: hoy evapora ${nf(w.clima.et0Hoy, 1)} mm` +
+      (w.clima.lluviaHoy > 0.5 ? ` y llueve ${nf(w.clima.lluviaHoy, 1)} mm` : ', sin lluvia') +
+      `. Pronóstico de 7 días: ${nf(w.clima.lluviaFutura, 0)} mm de lluvia.`);
+  }
+  if (w.turns[0]) {
+    lineas.push(`• Próximo turno de la junta: ${fmtDate(w.turns[0].date)} (en ${w.turns[0].inDays} días)`);
+  }
+  if (!w.llegaAlTurno && w.turns[0]) {
+    lineas.push(`• ATENCIÓN: con el pronóstico de esta semana el agua NO llega al turno. Faltarían ${nf(w.deficitM3)} m³.`);
+  }
+
+  const atencion = state.plants.filter(p => p.status === 'atención' || p.status === 'enfermo');
+  if (atencion.length) {
+    lineas.push('', `PLANTAS A REVISAR (${atencion.length})`);
+    for (const p of atencion.slice(0, 20)) {
+      const sector = state.sectors.find(s => s.id === p.sectorId)?.name || 'sin sector';
+      lineas.push(`• ${SPECIES[p.species]?.label || p.species} en ${sector} — ${p.status}${p.notes ? ': ' + p.notes : ''}`);
+    }
+    if (atencion.length > 20) lineas.push(`• …y ${atencion.length - 20} más`);
+  }
+
+  return lineas.join('\n');
+}
+
+async function sharePlan() {
+  const texto = buildPlan();
+  try {
+    if (navigator.share) {
+      await navigator.share({ title: 'Plan de trabajo — Finca Mulalillo', text: texto });
+      return;
+    }
+    await navigator.clipboard.writeText(texto);
+    toast('Plan copiado al portapapeles', 3500);
+  } catch (err) {
+    if (err?.name === 'AbortError') return;   // el usuario cerró el diálogo de compartir
+    openSheet('Plan de trabajo', `
+      <p class="hint">Copia este texto y mándalo por WhatsApp.</p>
+      <textarea id="plan-text" rows="16" readonly></textarea>`,
+      body => { body.querySelector('#plan-text').value = texto; });
+  }
+}
+
+function targetName(t) {
+  if (t.targetType === 'parcel') return 'toda la finca';
+  if (t.targetType === 'sector') return state.sectors.find(s => s.id === t.targetId)?.name || 'sector';
+  const p = state.plants.find(p => p.id === t.targetId);
+  return p ? (SPECIES[p.species]?.label || p.species) + (p.variety ? ' ' + p.variety : '') : 'planta';
+}
+
+function taskLine(t) {
+  return `<li><span class="punto punto--${t.doneAt ? 'hecha' : 'pendiente'}"></span>
+    ${cap(t.type)} — ${t.doneAt ? fmtDate(t.doneAt) : t.dueAt ? 'para ' + fmtDate(t.dueAt) : 'sin fecha'}
+    ${t.notes ? `<em>${escapeHtml(t.notes)}</em>` : ''}</li>`;
+}
+
+// ---------------------------------------------------------------------------
+// Agua
+// ---------------------------------------------------------------------------
+
+/**
+ * De dónde sale la demanda de hoy. Sin esto el número de arriba cambia solo de
+ * un día para otro y parece un error de la app; con esto se lee la causa.
+ *
+ * Cuando no hay clima bajado lo dice con todas las letras en vez de callarse:
+ * un cálculo con supuestos disfrazado de medición es peor que ningún cálculo.
+ */
+/** El día de hoy según el clima bajado. Sin clima, el de referencia. */
+function diaDeHoy() {
+  const sen = resumenSensores();
+  const c = clima.contexto(state.clima, {
+    reservaMax: state.config.reservaSueloMm ?? clima.RESERVA_SUELO_MM,
+    lluviaLocal: sen?.lluviaPorDia || null,
+    reservaMedida: sen?.reserva?.mm ?? null
+  });
+  return { et0: c.et0Hoy, lluvia: c.lluviaHoy, reservaMm: c.reservaMm, sectors: state.sectors };
+}
+
+/** La barra de agua en el suelo, con de dónde sale el número. */
+function bloqueReserva(c) {
+  return `<div class="reserva">
+      <span>Agua guardada en el suelo${c.reservaOrigen === 'sonda' ? ' · <b>medida por la sonda</b>' : ' · estimada'}</span>
+      <div class="result-bar agua"><span style="width:${Math.min(100, (c.reservaMm / c.reservaMaxMm) * 100).toFixed(0)}%"></span></div>
+      <small>${nf(c.reservaMm, 0)} de ${c.reservaMaxMm} mm · ${
+        c.reservaMm >= c.reservaMaxMm * 0.8 ? 'el suelo está cargado, hoy no hace falta regar'
+        : c.reservaMm > 3 ? 'todavía hay reserva, se puede estirar un día o dos'
+        : 'el suelo está seco: lo que pidan las plantas sale del reservorio'}</small>
+    </div>`;
+}
+
+function renderClimaAgua(s) {
+  const c = s.clima;
+  const d = s.demand;
+
+  if (!c.conocido) {
+    return `<div class="card">
+      ${c.reservaOrigen === 'sonda' ? bloqueReserva(c) : ''}
+      <p class="hint">Demanda calculada con el clima de referencia de la zona
+      (ET0 ${clima.ET0_REF} mm/día, sin lluvia): todavía no se ha podido bajar el clima
+      real de este punto.</p>
+      <p class="pie-accion"><button class="btn btn--fantasma btn--sm" data-act="clima">Intentar ahora</button></p>
+    </div>`;
+  }
+
+  const ref = d.totalRefL / 1000;
+  const delta = ref > 0 ? Math.round((d.totalM3 / ref - 1) * 100) : 0;
+  const lluviaHoy = c.lluviaHoy || 0;
+
+  return `<div class="card">
+    <div class="datos datos--fila">
+      <div><span>Evapora hoy</span><strong>${nf(c.et0Hoy, 1)} mm</strong></div>
+      <div><span>Llueve hoy</span><strong>${nf(lluviaHoy, 1)} mm</strong></div>
+      <div><span>Lluvia 7 d</span><strong>${nf(c.lluviaFutura, 0)} mm</strong></div>
+    </div>
+
+    ${bloqueReserva(c)}
+
+    <p class="hint">${
+      d.totalL === 0
+        ? 'Hoy la demanda es cero: entre la lluvia y lo que guarda el suelo está cubierta.'
+        : Math.abs(delta) < 8
+          ? 'La demanda de hoy está en lo normal de la zona.'
+          : delta < 0
+            ? `Hoy se pide <b>${Math.abs(delta)} % menos</b> que en un día normal de la zona, ${
+                lluviaHoy > 2 ? 'porque está lloviendo'
+                : c.reservaMm > 3 ? 'porque el suelo todavía tiene reserva'
+                : 'porque evapora menos'}.`
+            : `Hoy se pide <b>${delta} % más</b> que en un día normal: evapora más de lo habitual.`
+    } ${c.diasPasados ? `En los últimos ${c.diasPasados} días llovieron ${nf(c.lluviaPasada, 0)} mm, de los que aprovechó la planta unos ${nf(c.lluviaEfectivaPasada, 0)} mm.` : ''}</p>
+    <p class="pie-accion hint muted">
+      <span>Open-Meteo · ${c.horas < 1 ? 'recién bajado' : 'hace ' + Math.round(c.horas) + ' h'}</span>
+      <button class="btn btn--fantasma btn--sm" data-act="clima">Actualizar</button></p>
+  </div>`;
+}
+
+function renderWater() {
+  const s = water.summary({ ...state, clima: state.clima, sensores: resumenSensores() });
+  const capacityM3 = state.config.reservorioVolumenM3 || 0;
+  const pct = capacityM3 ? Math.min(100, (s.volume.volumeM3 / capacityM3) * 100) : 0;
+
+  const dias = s.proyeccion.diasHastaVacio;
+  const t = s.turns[0];
+  const tono = !s.llegaAlTurno ? 'mal' : s.alert ? 'atencion' : 'bien';
+  const fuente = s.volume.source === 'sensor del reservorio' && s.volume.medidoA
+    // Del sensor sale una hora exacta: decir "estimado desde el 1 oct" de una
+    // lectura de hace cinco minutos esconde lo único que importa: que es fresca.
+    ? `Medido por el sensor ${haceTexto((Date.now() - new Date(s.volume.medidoA)) / 3600000)}`
+    : s.volume.anchorDate
+      ? `Calculado desde ${s.volume.source === 'nivel medido' ? 'la última medición' : 'el último ' + s.volume.source} (${fmtDate(s.volume.anchorDate)})`
+      : 'Sin mediciones todavía: anota cuánto tiene el reservorio';
+
+  $('#water-body').innerHTML = `
+    <div class="veredicto veredicto--${tono}">
+      <div class="veredicto__cab">
+        <span class="tile tile--agua tile--l">💧</span>
+        <span>
+          <strong>${dias != null ? `Agua para ${dias} ${dias === 1 ? 'día' : 'días'}` : `Agua para más de ${s.proyeccion.alMenosDias} días`}</strong>
+          <small>${t
+            ? `Turno de la junta ${t.inDays === 0 ? 'hoy' : t.inDays === 1 ? 'mañana' : `el ${fechaCorta(t.date)} (en ${t.inDays} días)`}: ${
+                s.llegaAlTurno ? '<b class="ok">✓ llega con agua</b>' : `<b class="mal">✗ no llega, faltan unos ${nf(s.deficitM3, 0)} m³</b>`}`
+            : 'Pon la fecha del próximo turno en Ajustes'}</small>
+        </span>
+      </div>
+      <div class="barra barra--agua barra--l"><span style="width:${pct.toFixed(1)}%"></span></div>
+      <div class="veredicto__pie">
+        <span><b>${nf(s.volume.volumeM3, 0)} m³</b> de ${nf(capacityM3, 0)} · ${Math.round(pct)} %</span>
+        <span>Hoy se gastan unos ${nf(s.dailyM3, 2)} m³</span>
+      </div>
+      <p class="hint">${fuente}.</p>
+      ${!s.llegaAlTurno && t ? `<p class="consejo t-malo"><b>Qué hacer:</b> pedir un tanquero antes del ${fechaCorta(t.date)}, o regar menos los sectores que menos lo necesitan (mira «Regado y pedido» más abajo si hay caudalímetro).</p>` : ''}
+    </div>
+
+    ${renderProyeccion(s)}
+
+    <div id="agua-anio" class="bloque--ancho"></div>
+
+    ${renderClimaAgua(s)}
+
+    ${renderSensoresAgua()}
+
+    ${renderComparacion(s)}
+
+
+    <section class="bloque">
+      <h4>Próximos turnos de la junta</h4>
+      <p class="hint">5 horas cada ${state.config.cicloTurnoDias || 15} días.</p>
+      <ul class="mini-list">
+        ${s.turns.map(t => `<li><span class="punto punto--agua"></span>${fmtDate(t.date)}<b>${t.inDays === 0 ? 'hoy' : 'en ' + t.inDays + ' d'}</b></li>`).join('')}
+      </ul>
+    </section>
+
+    <section class="bloque">
+    <h4>Demanda por sector</h4>
+    <p class="hint">Calculada sobre las ${state.plants.length} plantas registradas. Al sembrar los arándanos y aguacates nuevos, súbelos a la app para que la autonomía refleje la demanda real.</p>
+    <ul class="mini-list">
+      ${s.demand.bySector.map(x => `<li>${escapeHtml(x.name)}<b>${Math.round(x.litres)} L/día</b></li>`).join('') || '<li>Sin plantas registradas</li>'}
+    </ul>
+
+    ${s.demand.totalAdultoL > s.demand.totalRefL * 1.08 ? `
+      <p class="hint">Las plantas jóvenes todavía no beben como adultas: hoy la finca pide
+      ${nf(s.demand.totalRefL / 1000, 2)} m³ en un día normal, y cuando todas estén crecidas pedirá
+      <b>${nf(s.demand.totalAdultoL / 1000, 2)} m³</b>. Vale la pena mirar ese número antes de sembrar más.</p>` : ''}
+
+    <h4>Demanda por especie</h4>
+    <ul class="mini-list">
+      ${s.demand.bySpecies.map(x => `<li><span class="punto" style="background:${SPECIES[x.species]?.color}"></span>${escapeHtml(x.label)}<b>${Math.round(x.litres)} L/día</b></li>`).join('') || '<li>—</li>'}
+    </ul>
+    </section>
+
+    <section class="bloque bloque--ancho">
+    <h4>Lo anotado</h4>
+    ${(() => {
+      const niveles = state.water.filter(w => w.origen === 'sensor' && w.type === 'medición_nivel');
+      const riegos = state.water.filter(w => w.origen === 'sensor' && w.type === 'riego');
+      if (!niveles.length && !riegos.length) return '';
+      const ult = [...niveles].sort(byDateDesc)[0];
+      const partes = [];
+      if (niveles.length) partes.push(`<b>${niveles.length} niveles del sensor</b> (el último, ${fmtDate(ult.date)}: ${nf(ult.levelM, 2)} m)`);
+      if (riegos.length) partes.push(`<b>${riegos.length} riegos del caudalímetro</b> (${nf(riegos.reduce((s, r) => s + r.volumeM3, 0), 2)} m³)`);
+      return `<p class="hint">Además, ${partes.join(' y ')}. No se listan: son uno por día y
+        taparían lo anotado a mano.</p>`;
+    })()}
+    <div class="card card--filas">${[...state.water].filter(w => w.origen !== 'sensor').sort(byDateDesc).map(e => `
+      <button class="list-row" data-water="${e.id}">
+        <span class="franja franja--${e.type === 'tanquero' ? 'tanquero' : 'agua'}"></span>
+        <span class="fila-main">
+          <strong>${cap2(e.type)}</strong>
+          <small>${fmtDate(e.date)}${e.volumeM3 != null ? ` · ${e.volumeM3} m³` : ''}${e.levelM != null ? ` · nivel ${e.levelM} m` : ''}</small>
+          ${e.notes ? `<small class="muted">${escapeHtml(e.notes)}</small>` : ''}
+        </span>
+        <span class="fila-go"><svg class="icono icono--s" aria-hidden="true"><use href="#i-chevron-der"/></svg></span>
+      </button>`).join('')}</div>
+    ${state.water.some(w => w.origen !== 'sensor') ? '' : '<p class="hint">Sin eventos anotados a mano.</p>'}
+    </section>
+  `;
+  $('#water-body').querySelectorAll('[data-water]').forEach(el =>
+    el.addEventListener('click', () => openWaterForm(state.water.find(w => w.id === el.dataset.water))));
+  huerto.tarjetaAnio($('#agua-anio'));
+  $('#water-body').querySelectorAll('[data-act="sensores"]').forEach(el =>
+    el.addEventListener('click', openSensores));
+  $('#water-body').querySelectorAll('[data-act="clima"]').forEach(el =>
+    el.addEventListener('click', async () => {
+      el.disabled = true; el.textContent = 'Bajando…';
+      const ok = await refrescarClima({ forzar: true });
+      toast(ok ? 'Clima actualizado' : 'Sin señal: se sigue con lo guardado');
+      if (!ok) renderWater();
+    }));
+}
+
+function openWaterForm(e = {}) {
+  openSheet(e.id ? 'Evento de agua' : 'Registrar evento', `
+    <form id="f">
+      <label>Tipo
+        <select name="type">${WATER_TYPES.map(t =>
+          `<option value="${t}" ${e.type === t ? 'selected' : ''}>${cap2(t)}</option>`).join('')}</select>
+      </label>
+      <label>Fecha <input type="date" name="date" value="${attr(e.date || today())}" required /></label>
+      <label>Volumen (m³) <input type="number" step="0.1" name="volumeM3" value="${attr(e.volumeM3)}" /></label>
+      <label>Nivel medido en el reservorio (m) <input type="number" step="0.01" name="levelM" value="${attr(e.levelM)}" /></label>
+      <label>Notas <textarea name="notes" rows="2">${escapeHtml(e.notes || '')}</textarea></label>
+      <button class="btn btn--rojo btn-block" type="submit">Guardar</button>
+      ${e.id ? '<button class="btn btn-danger" type="button" data-act="del">Eliminar</button>' : ''}
+    </form>
+  `, body => {
+    body.querySelector('#f').onsubmit = async ev => {
+      ev.preventDefault();
+      const f = new FormData(ev.target);
+      await persist('water', {
+        ...e,
+        type: f.get('type'),
+        date: f.get('date'),
+        volumeM3: f.get('volumeM3') ? Number(f.get('volumeM3')) : undefined,
+        levelM: f.get('levelM') ? Number(f.get('levelM')) : undefined,
+        notes: f.get('notes') || undefined
+      });
+      closeSheet();
+      toast('Evento guardado');
+    };
+    body.querySelector('[data-act="del"]')?.addEventListener('click', async () => {
+      if (!confirm('¿Eliminar el evento?')) return;
+      await db.remove('water', e.id);
+      await reload(); renderAll(); closeSheet();
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Vista 3D
+// ---------------------------------------------------------------------------
+
+async function init3D() {
+  if (terrain) { terrain.resize(); return; }
+  const container = document.getElementById('three');
+  container.innerHTML = '<p class="hint pad">Cargando terreno…</p>';
+  try {
+    const { Terrain3D } = await import('./view3d.js');
+    container.innerHTML = '';
+    terrain = new Terrain3D(container);
+    const exag = state.config.exageracion3D || 3;
+    $('#range-exag').value = exag;
+    $('#out-exag').textContent = exag + '×';
+    terrain.setExaggeration(exag);
+    terrain.setColorBy($('#sel-colorby').value);
+    terrain.render(state);
+    terrain.resize();
+    medirOclusion3D();
+    renderThreeHint();
+  } catch (err) {
+    container.innerHTML = `
+      <div class="aviso aviso--atencion pad">
+        <p><strong>No se pudo cargar la vista 3D.</strong></p>
+        <p>Si ya la abriste antes, casi siempre es un archivo viejo guardado en el
+        teléfono. Entra en Ajustes ⚙︎ → <strong>«Reinstalar la app»</strong>: borra lo
+        guardado y vuelve a bajar todo limpio. Tus datos no se tocan.</p>
+        <p><small>Detalle técnico: ${escapeHtml(String(err.message || err))}</small></p>
+        <button class="btn btn--rojo btn-block" id="btn-retry-3d">Reintentar</button>
+        <p class="hint">¿Sigue fallando? Abre el <a href="./diagnostico.html">diagnóstico</a>.</p>
+      </div>`;
+    container.querySelector('#btn-retry-3d').onclick = () => { terrain = null; init3D(); };
+  }
+}
+
+/** Le dice al relieve cuánto lienzo le tapa el panel de controles. */
+function medirOclusion3D() {
+  if (!terrain) return;
+  const panel = $('#three-controls');
+  const lienzo = $('#three');
+  if (!panel || !lienzo || !lienzo.clientHeight) return;
+  const tapado = panel.getBoundingClientRect().height + 28;
+  terrain.setOclusion(tapado / lienzo.clientHeight);
+}
+
+function renderThreeHint() {
+  const pts = measuredPoints();
+  const low = Math.min(...pts.map(p => p.elevationM));
+  const high = Math.max(...pts.map(p => p.elevationM));
+  const pendingGps = pts.filter(p => !p.measured).length;
+  $('#three-hint').innerHTML = `
+    De lo más alto a lo más bajo de la finca hay <strong>${nf(high - low)} m</strong>.
+    Las flechas muestran por dónde baja el agua sola, sin bomba.
+    <details class="mas-campos"><summary>Datos técnicos</summary>
+      Entre ${nf(low, 2)} y ${nf(high, 2)} msnm · ${nf(staticPressureBar(high - low), 2)} bar de
+      presión estática en el punto bajo. Terreno interpolado desde ${pts.length} puntos${
+      pendingGps ? ` (${pendingGps} con coordenada estimada)` : ''}.
+    </details>
+  `;
+}
+
+// ---------------------------------------------------------------------------
+// Ajustes, respaldo y sincronización
+// ---------------------------------------------------------------------------
+
+/** El permiso de avisos, en palabras: qué hay, y el botón si falta pedirlo. */
+function pintarAjusteNotificaciones(cont) {
+  if (!cont) return;
+  if (!notificacionesDisponibles()) {
+    cont.innerHTML = '<p class="hint">Este navegador no permite avisos. Instalada en la pantalla de inicio suele funcionar.</p>';
     return;
   }
-  status.textContent = "Buscando tu ubicación…";
-  navigator.geolocation.getCurrentPosition(async pos => {
-    state.lat = pos.coords.latitude;
-    state.lon = pos.coords.longitude;
-    state.forecast = null;
-    status.textContent = "Consultando tu zona…";
-    try {
-      const [alt, lugar] = await Promise.all([
-        fetchAltitud(state.lat, state.lon),
-        fetchLugar(state.lat, state.lon)
-      ]);
-      state.altitud = Math.round(alt);
-      state.lugar = lugar;
-      show("screen-space");
-    } catch {
-      status.textContent = "No pudimos consultar tu zona. Elige tu zona abajo.";
+  const p = Notification.permission;
+  cont.innerHTML = p === 'granted'
+    ? `<p class="hint">✓ Activados. Al abrir la app, una vez al día, avisa de heladas, de agua que no
+       alcanza y de cosechas listas. Para avisos con la app cerrada están los de Telegram, en Sensores.</p>`
+    : p === 'denied'
+      ? '<p class="hint">Bloqueados. Se vuelven a permitir desde los permisos del sitio en el navegador.</p>'
+      : `<p class="hint">Que el teléfono avise de heladas, de agua que no alcanza y de cosechas listas.</p>
+         <button class="btn btn-block" type="button" data-act="notif">🔔 Activar avisos</button>`;
+  cont.querySelector('[data-act="notif"]')?.addEventListener('click', async () => {
+    const r = await Notification.requestPermission();
+    pintarAjusteNotificaciones(cont);
+    if (r === 'granted') {
+      try { localStorage.removeItem(NOTIF_DIA); } catch { /* sin almacenamiento: avisará mañana */ }
+      toast('Listo: te avisaremos');
+      renderHoyAhora();
     }
-  }, () => {
-    status.textContent = "No diste permiso de ubicación. Elige tu zona abajo.";
-  }, { timeout: 10000 });
+  });
+}
+
+function openSettings() {
+  const c = state.config;
+  openSheet('Ajustes', `
+    <form id="f">
+      <h4>Avisos en el teléfono</h4>
+      <div id="notif-ajuste"></div>
+      <h4>Turno de agua de la junta</h4>
+      <div class="field-grid-2">
+        <label>Próximo turno <input type="date" name="proximoTurno" value="${attr(c.proximoTurno)}" /></label>
+        <label>Cada cuántos días <input type="number" name="cicloTurnoDias" value="${attr(c.cicloTurnoDias)}" /></label>
+      </div>
+      <h4>Reservorio</h4>
+      <div class="field-grid-2">
+        <label>Capacidad (m³) <input type="number" step="0.1" name="reservorioVolumenM3" value="${attr(c.reservorioVolumenM3)}" /></label>
+        <label>Altura útil (m) <input type="number" step="0.01" name="reservorioAlturaUtilM" value="${attr(c.reservorioAlturaUtilM)}" /></label>
+      </div>
+      <details class="mas-campos">
+        <summary>Opciones avanzadas</summary>
+        <label>Avisar cuando quede agua para menos de (días) <input type="number" name="alertaAutonomiaDias" value="${attr(c.alertaAutonomiaDias)}" /></label>
+        <label>Gasto diario fijo (m³/día) <input type="number" step="0.01" name="demandaDiariaM3" value="${attr(c.demandaDiariaM3)}" placeholder="vacío = lo calcula la app" /></label>
+        <label>Agua que retiene el suelo (mm)
+          <input type="number" step="1" min="0" max="120" name="reservaSueloMm"
+                 value="${attr(c.reservaSueloMm ?? clima.RESERVA_SUELO_MM)}" />
+        </label>
+        <p class="hint">Cuánta lluvia guarda la zona de raíces para los días siguientes. Los
+        ${clima.RESERVA_SUELO_MM} mm de partida son un valor razonable para el suelo volcánico de
+        la zona, no una medición: un análisis de suelo o un tensiómetro lo afinan. Subirlo hace
+        que la app cuente con más agua de la que quizá hay, así que conviene quedarse corto.</p>
+        <h4>Sensores</h4>
+        <p class="hint">${(state.config.sensores?.url) ? 'Conectados a un receptor.' : 'Sin conectar.'}
+          <button class="btn btn--fantasma btn--sm" type="button" data-act="sensores">Abrir sensores</button></p>
+        <h4>Sincronización</h4>
+        <label>Endpoint de sincronización <input name="syncEndpoint" value="${attr(c.syncEndpoint)}" placeholder="https://…/sync" /></label>
+        <p class="hint">Sin endpoint, los cambios quedan en la cola local y se pueden trasladar con el respaldo JSON.</p>
+      </details>
+      <button class="btn btn--rojo btn-block" type="submit">Guardar ajustes</button>
+    </form>
+    <h4>Respaldo y arreglos</h4>
+    <div class="sheet-actions">
+      <button class="btn" data-act="export">Exportar respaldo</button>
+      <button class="btn" data-act="import">Importar respaldo</button>
+      <button class="btn" data-act="sync">Sincronizar ahora</button>
+      <button class="btn" data-act="tiles">Descargar mapa del terreno</button>
+      <button class="btn" data-act="reinstall">Reinstalar la app</button>
+      <button class="btn" data-act="diag">Diagnóstico</button>
+      <button class="btn btn-danger" data-act="reset">Restaurar datos medidos</button>
+    </div>
+    <p class="hint">Versión instalada: <strong>${BUILD}</strong>. «Reinstalar la app» borra
+    el código y los mapas guardados y los vuelve a bajar; tus sectores, plantas, tareas y
+    registros de agua no se tocan.</p>
+    <input type="file" id="import-file" accept="application/json" hidden />
+  `, body => {
+    body.querySelector('#f').onsubmit = async ev => {
+      ev.preventDefault();
+      const f = new FormData(ev.target);
+      const num = k => (f.get(k) === '' ? null : Number(f.get(k)));
+      state.config = await db.saveConfig({
+        reservorioVolumenM3: num('reservorioVolumenM3'),
+        reservorioAlturaUtilM: num('reservorioAlturaUtilM'),
+        demandaDiariaM3: num('demandaDiariaM3'),
+        alertaAutonomiaDias: num('alertaAutonomiaDias'),
+        reservaSueloMm: num('reservaSueloMm'),
+        proximoTurno: f.get('proximoTurno') || null,
+        cicloTurnoDias: num('cicloTurnoDias'),
+        syncEndpoint: f.get('syncEndpoint') || ''
+      });
+      renderAll();
+      toast('Ajustes guardados');
+    };
+
+    pintarAjusteNotificaciones(body.querySelector('#notif-ajuste'));
+
+    body.querySelector('[data-act="export"]').onclick = async () => {
+      const dump = await db.exportAll();
+      const url = URL.createObjectURL(new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `mulalillo-${today()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+
+    const file = body.querySelector('#import-file');
+    body.querySelector('[data-act="import"]').onclick = () => file.click();
+    file.onchange = async () => {
+      if (!file.files[0]) return;
+      try {
+        const dump = JSON.parse(await file.files[0].text());
+        await db.importAll(dump);
+        await reload(); renderAll(); closeSheet();
+        toast('Respaldo importado');
+      } catch (err) { toast('No se pudo importar: ' + err.message); }
+    };
+
+    body.querySelector('[data-act="sync"]').onclick = async () => {
+      try {
+        const res = await db.flushOutbox(state.config.syncEndpoint);
+        updateOutboxChip();
+        toast(res.reason === 'sin-backend'
+          ? `${res.pending} cambios en cola (sin endpoint configurado)`
+          : `${res.sent} cambios sincronizados`);
+      } catch (err) { toast('Sincronización fallida: ' + err.message); }
+    };
+
+    body.querySelector('[data-act="tiles"]').onclick = () => prefetchTiles();
+    body.querySelector('[data-act="sensores"]').onclick = () => openSensores();
+    body.querySelector('[data-act="diag"]').onclick = () => { location.href = './diagnostico.html'; };
+
+    body.querySelector('[data-act="reinstall"]').onclick = async () => {
+      if (!confirm('Se borra el código y los mapas guardados, y se vuelven a bajar.\n\nTus datos (sectores, plantas, tareas, agua) NO se borran. ¿Seguir?')) return;
+      toast('Reinstalando…', 6000);
+      try {
+        const regs = await navigator.serviceWorker?.getRegistrations?.() || [];
+        await Promise.all(regs.map(r => r.unregister()));
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+      } catch (err) {
+        console.warn('reinstalación parcial', err);
+      }
+      // Sin caché por medio: recarga saltándose lo guardado.
+      location.replace(location.pathname + '?nuevo=' + Date.now());
+    };
+
+    body.querySelector('[data-act="reset"]').onclick = async () => {
+      if (!confirm('Esto borra los datos locales y vuelve a sembrar los datos medidos en campo. ¿Seguir?')) return;
+      for (const store of ['parcels', 'sectors', 'plants', 'infra', 'tasks', 'water', 'elevations', 'outbox', 'meta']) {
+        await db.clearStore(store);
+      }
+      await db.seedIfEmpty();
+      await reload(); renderAll(); closeSheet();
+      toast('Datos restaurados');
+    };
+  });
+}
+
+async function updateOutboxChip() {
+  const chip = $('#chip-outbox');
+  if (!chip) return;
+  const n = await db.outboxCount();
+  chip.hidden = n === 0;
+  chip.textContent = `${n} sin sincronizar`;
+}
+
+function watchConnectivity() {
+  const paint = () => { $('#chip-offline').hidden = navigator.onLine; };
+  addEventListener('online', () => { paint(); toast('Conexión recuperada'); });
+  addEventListener('offline', paint);
+  paint();
+}
+
+/**
+ * Modo sin service worker: `?sw=off` lo da de baja y no lo vuelve a registrar.
+ * Safari en iOS ha tenido fallos sirviendo módulos ES a través de un service
+ * worker; si la app funciona así, el culpable es ese intermediario y no el código.
+ */
+function swDisabled() {
+  const params = new URLSearchParams(location.search);
+  if (params.get('sw') === 'off') {
+    try { localStorage.setItem('mulalillo-sw', 'off'); } catch {}
+    return true;
+  }
+  if (params.get('sw') === 'on') {
+    try { localStorage.removeItem('mulalillo-sw'); } catch {}
+    return false;
+  }
+  try { return localStorage.getItem('mulalillo-sw') === 'off'; } catch { return false; }
+}
+
+function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+
+  if (swDisabled()) {
+    navigator.serviceWorker.getRegistrations?.()
+      .then(rs => Promise.all(rs.map(r => r.unregister())))
+      .then(() => { document.body.classList.add('sin-sw'); })
+      .catch(() => {});
+    return;
+  }
+
+  navigator.serviceWorker.register('./sw.js', { scope: './' }).catch(() => {});
+  navigator.serviceWorker.addEventListener('message', e => {
+    if (e.data?.type === 'prefetch-done') {
+      toast(`Mapa guardado: ${e.data.cached} de ${e.data.total} tiles`, 4000);
+    }
+  });
+}
+
+/**
+ * Guarda los tiles satelitales del área de la finca para trabajar sin señal.
+ * Zoom 15–19: suficiente para llegar al detalle de árbol individual.
+ */
+async function prefetchTiles() {
+  const reg = await navigator.serviceWorker?.ready;
+  if (!reg?.active) return toast('El modo sin conexión aún se está preparando.');
+  const b = bbox(state.parcel.boundary);
+  const urls = [];
+  for (let z = 15; z <= 19; z++) {
+    const [x0, y0] = tileXY(b.maxLat, b.minLng, z);
+    const [x1, y1] = tileXY(b.minLat, b.maxLng, z);
+    for (let x = x0 - 1; x <= x1 + 1; x++) {
+      for (let y = y0 - 1; y <= y1 + 1; y++) {
+        urls.push(`https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`);
+      }
+    }
+  }
+  toast(`Descargando ${urls.length} tiles…`, 4000);
+  reg.active.postMessage({ type: 'prefetch-tiles', urls });
+}
+
+function tileXY(lat, lng, z) {
+  const n = 2 ** z;
+  const latRad = (lat * Math.PI) / 180;
+  return [
+    Math.floor(((lng + 180) / 360) * n),
+    Math.floor(((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n)
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// Utilidades
+// ---------------------------------------------------------------------------
+
+function renderFilterOptions() {
+  const sp = $('#sel-filter-species');
+  const sec = $('#sel-filter-sector');
+  const used = [...new Set(state.plants.map(p => p.species))];
+  sp.innerHTML = '<option value="all">Todas</option>' +
+    used.map(s => `<option value="${s}">${SPECIES[s]?.label || s}</option>`).join('');
+  sec.innerHTML = '<option value="all">Todos</option>' +
+    state.sectors.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+}
+
+async function readPhotos(files) {
+  const out = [];
+  for (const file of files) {
+    if (!file || !file.size) continue;
+    out.push(await downscale(file, 1024));
+  }
+  return out;
+}
+
+/** Reduce la foto antes de guardarla: el celular en el campo no debe llenar la base. */
+function downscale(file, max) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, max / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(img.src);
+      resolve(canvas.toDataURL('image/jpeg', 0.72));
+    };
+    img.onerror = reject;
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+function cap2(s) { return WATER_LABELS[s] || cap(String(s).replace(/_/g, ' ')); }
+function ageLabel(iso) {
+  const months = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 2629800000));
+  if (months < 12) return `${months} meses`;
+  const years = Math.floor(months / 12);
+  const rest = months % 12;
+  return `${years} año${years > 1 ? 's' : ''}${rest ? ` y ${rest} mes${rest > 1 ? 'es' : ''}` : ''}`;
+}
+function randomColor() {
+  const palette = ['#2f9e44', '#4c6ef5', '#f08c00', '#862e9c', '#e8590c', '#0ca678', '#c2255c'];
+  return palette[state.sectors.length % palette.length];
+}
+
+boot().catch(err => {
+  document.body.insertAdjacentHTML('afterbegin',
+    `<p class="aviso aviso--atencion pad">No se pudo iniciar la aplicación: ${escapeHtml(String(err.message || err))}</p>`);
+  console.error(err);
 });
 
-async function fetchAltitud(lat, lon) {
-  const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m`);
-  const j = await r.json();
-  if (typeof j.elevation !== "number") throw new Error("sin elevación");
-  return j.elevation;
+// ---------------------------------------------------------------------------
+// Proyección del reservorio
+// ---------------------------------------------------------------------------
+
+/**
+ * La curva de 21 días que el módulo de agua ya calculaba y que no se veía por
+ * ningún lado: se mostraba un solo número sacado de ella. Puesta en pantalla
+ * responde de un vistazo lo que el número no puede —cuándo se vacía, si la
+ * lluvia de la semana lo endereza, y si la línea cruza el fondo ANTES o
+ * DESPUÉS del turno de la junta, que es la decisión.
+ *
+ * Una sola serie, un solo tono: el volumen del reservorio. La lluvia NO va en
+ * un segundo eje —dos escalas en un gráfico inventan una correlación que no
+ * está en los datos—; los días con lluvia se marcan con una gota sobre el eje,
+ * que dice "este día llueve" sin fingir una magnitud comparable.
+ *
+ * Los 7 días pronosticados van en línea llena y el resto, que es sólo el
+ * promedio proyectado hacia adelante, en línea punteada. La diferencia entre
+ * lo que se sabe y lo que se supone tiene que verse.
+ */
+function renderProyeccion(s) {
+  const curva = s.proyeccion?.curva;
+  if (!curva?.length) return '';
+  const capacidad = state.config.reservorioVolumenM3 || 0;
+  if (!capacidad) return '';
+
+  const W = 320, H = 108, PL = 6, PR = 6, PT = 8, PB = 26;
+  const n = curva.length;
+  /* El eje llega hasta la CAPACIDAD del reservorio, no hasta el volumen de hoy.
+     Escalar al volumen actual dibuja igual de lleno un reservorio al 20 % que
+     uno al 90 %, y el hueco que queda arriba es justo la información que se
+     necesita para decidir si conviene pedir tanquero. */
+  const maxY = Math.max(capacidad, s.volume.volumeM3);
+  const x = i => PL + (i / (n - 1)) * (W - PL - PR);
+  const y = v => PT + (1 - v / maxY) * (H - PT - PB);
+
+  // El punto de partida es hoy, antes de gastar: por eso va delante de la curva.
+  const pts = [{ volumeM3: s.volume.volumeM3, pronosticado: true, lluvia: 0 }, ...curva];
+  const px = i => PL + (i / pts.length) * (W - PL - PR);
+  const linea = tramo => tramo.map(([i, p]) => `${px(i).toFixed(1)},${y(p.volumeM3).toFixed(1)}`).join(' ');
+
+  const idx = pts.map((p, i) => [i, p]);
+  const corte = pts.findIndex(p => !p.pronosticado);
+  const firmes = corte < 0 ? idx : idx.slice(0, corte + 1);
+  const supuestos = corte < 0 ? [] : idx.slice(corte - 1 < 0 ? 0 : corte - 1);
+
+  const area = `${linea(firmes)} ${px(firmes.length - 1).toFixed(1)},${y(0).toFixed(1)} ${px(0).toFixed(1)},${y(0).toFixed(1)}`;
+
+  const turno = s.turns[0];
+  const xTurno = turno && turno.inDays <= n ? px(turno.inDays) : null;
+  const vacio = s.proyeccion.diasHastaVacio;
+
+  return `
+    <div class="card proyeccion">
+      <div class="proy-head">
+        <strong>Cómo baja el reservorio</strong>
+        <small>${vacio != null
+          ? `se vacía en ${vacio} ${vacio === 1 ? 'día' : 'días'}`
+          : `aguanta los ${n} días proyectados`}</small>
+      </div>
+      <svg viewBox="0 0 ${W} ${H}" class="proy-svg" role="img"
+           aria-label="Volumen del reservorio proyectado a ${n} días${turno ? `, con el turno de la junta en ${turno.inDays} días` : ''}.">
+        <line x1="${PL}" y1="${y(0)}" x2="${W - PR}" y2="${y(0)}" class="proy-eje" />
+        ${/* El rótulo va BAJO el eje: arriba se montaba sobre la curva justo
+              cuando el reservorio está lleno, que es cuando más plana va. */
+          xTurno != null ? `
+          <line x1="${xTurno.toFixed(1)}" y1="${PT}" x2="${xTurno.toFixed(1)}" y2="${y(0)}" class="proy-turno" />
+          <text x="${Math.min(Math.max(xTurno, 16), W - 16).toFixed(1)}" y="${(y(0) + 19).toFixed(1)}"
+                class="proy-turno-txt" text-anchor="middle">turno · ${turno.inDays} d</text>` : ''}
+        ${/* Si se vacía antes del turno, los días sin agua son el déficit del
+              aviso, dibujado: lo que hay que traer en tanquero. */
+          vacio != null && xTurno != null && px(vacio) < xTurno ? `
+          <rect x="${px(vacio).toFixed(1)}" y="${PT}" width="${(xTurno - px(vacio)).toFixed(1)}"
+                height="${(y(0) - PT).toFixed(1)}" class="proy-hueco" />
+          <text x="${((px(vacio) + xTurno) / 2).toFixed(1)}" y="${(y(0) - 5).toFixed(1)}"
+                class="proy-hueco-txt" text-anchor="middle">sin agua</text>` : ''}
+        <polygon points="${area}" class="proy-area" />
+        <polyline points="${linea(firmes)}" class="proy-linea" />
+        ${supuestos.length > 1 ? `<polyline points="${linea(supuestos)}" class="proy-linea proy-linea--supuesta" />` : ''}
+        ${/* Sólo los días PRONOSTICADOS llevan gota. Los siguientes cargan la
+              lluvia media, y marcarlos haría creer que está pronosticado que
+              llueva veintiún días seguidos. */
+          pts.map((p, i) => p.pronosticado && p.lluvia > 2
+          ? `<circle cx="${px(i).toFixed(1)}" cy="${(y(0) + 6).toFixed(1)}" r="2.4" class="proy-gota" />` : '').join('')}
+        <circle cx="${px(0).toFixed(1)}" cy="${y(pts[0].volumeM3).toFixed(1)}" r="4" class="proy-hoy" />
+      </svg>
+      <div class="proy-pie">
+        <span><i class="proy-k proy-k--firme"></i>7 días pronosticados</span>
+        <span><i class="proy-k proy-k--supuesta"></i>después, promedio</span>
+        ${pts.some(p => p.lluvia > 2) ? '<span><i class="proy-k proy-k--gota"></i>días con lluvia</span>' : ''}
+      </div>
+    </div>`;
 }
 
-async function fetchLugar(lat, lon) {
-  try {
-    const r = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=es`);
-    const j = await r.json();
-    const partes = [j.locality || j.city, j.principalSubdivision].filter(Boolean);
-    return partes.length ? partes.join(", ") : null;
-  } catch { return null; }
-}
+// ---------------------------------------------------------------------------
+// Sensores
+// ---------------------------------------------------------------------------
 
-// ---------- Onboarding: espacio ----------
-function renderSpaceOptions() {
-  const cont = document.getElementById("space-options");
-  cont.innerHTML = ESPACIOS.map(e => `
-    <button class="option-card" data-space="${e.id}">
-      <span class="option-emoji">${e.emoji}</span>
-      <span class="option-text"><strong>${e.nombre}</strong><small>${e.desc}</small></span>
-    </button>`).join("");
-  cont.querySelectorAll("[data-space]").forEach(btn => {
-    btn.addEventListener("click", () => {
-      state.espacio = btn.dataset.space;
-      saveState();
-      renderHome();
-      show("screen-home");
+
+/**
+ * La pantalla de sensores. Está pensada para el día que llegue el primer
+ * aparato: se pega la dirección del receptor, se prueba, y el sensor aparece
+ * solo en la lista en cuanto manda su primer mensaje. Ahí se le dice para qué
+ * está —reservorio, suelo, lluvia— y, si es un ultrasónico, a qué altura del
+ * fondo se montó. Nada más: lo demás lo resuelve el modelo.
+ */
+function openSensores() {
+  const cfg = cfgSensores();
+  const sen = resumenSensores();
+  const aparatos = sen?.aparatos || [];
+  const hayPrueba = state.lecturas.some(l => l.fuente === 'prueba');
+
+  openSheet('Sensores', `
+    <form id="f-sen">
+      <p class="hint">Los sensores no hablan con la app: mandan sus lecturas a un
+      <b>receptor</b> (un servidor pequeño), y la app las lee de ahí. Cómo montarlo, qué
+      comprar y cómo registrar cada aparato está en <code>SENSORES.md</code> del repositorio.</p>
+
+      <label>Dirección del receptor
+        <input name="url" type="url" value="${attr(cfg.url)}" placeholder="https://mulalillo-receptor.tu-cuenta.workers.dev" />
+      </label>
+      <label>Token de lectura
+        <input name="token" type="password" value="${attr(cfg.token)}" autocomplete="off" placeholder="el TOKEN_LECTURA del receptor" />
+      </label>
+      <p class="hint">Es el de <b>lectura</b>, no el de escritura: si este teléfono se pierde,
+      quien lo tenga podrá ver el nivel del reservorio, pero no inventar lecturas.</p>
+
+      <div class="pie-accion">
+        <span class="hint muted">${cfg.ultimoError
+          ? `Último intento: ${escapeHtml(cfg.ultimoError)}`
+          : cfg.ultimaSync ? `Al día ${haceTexto((Date.now() - new Date(cfg.ultimaSync)) / 3600000)}` : 'Sin conectar todavía'}</span>
+        <span>
+          <button class="btn btn--fantasma btn--sm" type="button" data-act="probar">Probar</button>
+          <button class="btn btn--rojo btn--sm" type="submit">Guardar</button>
+        </span>
+      </div>
+    </form>
+
+    <h4>Aparatos</h4>
+    ${aparatos.length ? `<div class="card card--filas">${aparatos.map(a => filaAparato(a, cfg)).join('')}</div>`
+      : `<p class="hint">Todavía no ha llegado nada. Un sensor aparece aquí en cuanto manda su
+         primer mensaje al receptor, aunque no esté configurado.</p>`}
+
+    <h4>Suelo</h4>
+    <div class="field-grid-2">
+      <label>Capacidad de campo (%) <input form="f-sen" name="sueloCC" type="number" step="0.5" value="${attr(cfg.sueloCC ?? sensores.SUELO_CC)}" /></label>
+      <label>Punto de marchitez (%) <input form="f-sen" name="sueloPMP" type="number" step="0.5" value="${attr(cfg.sueloPMP ?? sensores.SUELO_PMP)}" /></label>
+    </div>
+    <p class="hint">Convierten la humedad que mide la sonda en agua aprovechable. Los de partida
+    son típicos de un suelo volcánico de la sierra, no una medición de esta finca: un análisis
+    de suelo da los de verdad.</p>
+
+    <h4>Probar sin hardware</h4>
+    <p class="hint">Carga una semana de lecturas como las que mandarían un ultrasónico en el
+    reservorio, una sonda en los arándanos y un pluviómetro, generadas con el mismo traductor
+    que usa el receptor. Se borran con un toque y no tocan nada anotado a mano.</p>
+    <div class="sheet-actions">
+      <button class="btn" data-act="prueba">${hayPrueba ? 'Volver a generar' : 'Cargar datos de prueba'}</button>
+      ${hayPrueba ? '<button class="btn btn-danger" data-act="borrar-prueba">Borrar datos de prueba</button>' : ''}
+      ${cfg.url ? '<button class="btn" data-act="sync">Leer ahora</button>' : ''}
+    </div>
+  `, body => {
+    const form = body.querySelector('#f-sen');
+    const leerForm = () => {
+      const f = new FormData(form);
+      const num = k => (f.get(k) === '' || f.get(k) == null ? null : Number(f.get(k)));
+      return { url: (f.get('url') || '').trim(), token: (f.get('token') || '').trim(),
+        sueloCC: num('sueloCC'), sueloPMP: num('sueloPMP') };
+    };
+
+    form.onsubmit = async ev => {
+      ev.preventDefault();
+      const nuevo = { ...cfgSensores(), ...leerForm() };
+      // Cambiar de receptor obliga a releer desde el principio.
+      if (nuevo.url !== cfg.url) nuevo.ultimaSync = null;
+      state.config = await db.saveConfig({ sensores: nuevo });
+      toast('Sensores guardados');
+      if (nuevo.url) await sincronizarSensores({ avisar: true });
+      openSensores();
+    };
+
+    body.querySelector('[data-act="probar"]').onclick = async ev => {
+      ev.target.disabled = true; ev.target.textContent = 'Probando…';
+      const r = await sensores.probar(leerForm());
+      toast(r.ok
+        ? `Conectado. ${r.aparatos ? r.aparatos + ' aparato' + (r.aparatos > 1 ? 's' : '') + ' en el receptor' : 'El receptor todavía no tiene lecturas'}.`
+        : `No conecta: ${r.motivo}`, 4500);
+      ev.target.disabled = false; ev.target.textContent = 'Probar';
+    };
+
+    body.querySelectorAll('[data-aparato]').forEach(el => el.addEventListener('click', () =>
+      openAparato(el.dataset.aparato)));
+
+    body.querySelector('[data-act="prueba"]').onclick = async () => {
+      await sensores.borrarPrueba();
+      // El consumo de prueba sale del modelo, para que todo cuadre.
+      const w = water.summary({ ...state, clima: state.clima });
+      await db.saveLocal('lecturas', sensores.lecturasDePrueba({
+        consumoDiaM3: Math.max(0.05, w.demand.totalRefL / 1000),
+        capacidadM3: state.config.reservorioVolumenM3 || 80,
+        alturaUtilM: state.config.reservorioAlturaUtilM || 2
+      }));
+      const c = cfgSensores();
+      state.config = await db.saveConfig({ sensores: { ...c, aparatos: { ...sensores.APARATOS_DE_PRUEBA, ...c.aparatos } } });
+      await sensores.aplicar(cfgSensores().aparatos);
+      await reload(); renderAll();
+      toast('Datos de prueba cargados');
+      openSensores();
+    };
+    body.querySelector('[data-act="borrar-prueba"]')?.addEventListener('click', async () => {
+      await sensores.borrarPrueba();
+      const c = cfgSensores();
+      const aparatos = Object.fromEntries(Object.entries(c.aparatos).filter(([id]) => !(id in sensores.APARATOS_DE_PRUEBA)));
+      state.config = await db.saveConfig({ sensores: { ...c, aparatos } });
+      await sensores.aplicar(aparatos);
+      await reload(); renderAll();
+      toast('Datos de prueba borrados');
+      openSensores();
+    });
+    body.querySelector('[data-act="sync"]')?.addEventListener('click', async () => {
+      await sincronizarSensores({ avisar: true });
+      openSensores();
     });
   });
 }
 
-// ---------- Utilidades de catálogo ----------
-function aptoZona(c) {
-  return state.altitud >= c.altMin && state.altitud <= c.altMax && c.espacios.includes(state.espacio);
-}
-function catalogoZona() { return CULTIVOS.filter(aptoZona); }
-function getItem(id) { return CULTIVOS.find(c => c.id === id); }
-function catInfo(id) { return CATEGORIAS.find(c => c.id === id); }
-
-function formatDias(d) {
-  if (d >= 330) {
-    const anios = d / 365;
-    if (anios < 1.25) return "1 año";
-    const medio = Math.round(anios * 2) / 2;          // redondea a medio año
-    if (Number.isInteger(medio)) return medio + " años";
-    const enteros = medio - 0.5;
-    return enteros === 1 ? "1 año y medio" : enteros + " años y medio";
-  }
-  if (d >= 55) return Math.round(d / 30) + " meses";
-  return d === 1 ? "1 día" : d + " días";
-}
-
-function fmt(n) {
-  const r = n >= 100 ? Math.round(n) : Math.round(n * 100) / 100;
-  return r.toLocaleString("es-EC");
-}
-
-const SINGULAR = {
-  unidades: "unidad", atados: "atado", choclos: "choclo", cuyes: "cuy",
-  pollos: "pollo", cerdos: "cerdo", conejos: "conejo", ovejas: "oveja",
-  litros: "litro", huevos: "huevo", "kg de miel": "kg"
-};
-function unidadPrecio(rendUnidad) { return SINGULAR[rendUnidad] || rendUnidad; }
-
-function proximaSiembra(c) {
-  const mes = new Date().getMonth() + 1;
-  for (let i = 1; i <= 12; i++) {
-    const m = ((mes - 1 + i) % 12) + 1;
-    if (c.mesesSiembra.includes(m)) return "Desde " + MESES[m - 1].slice(0, 3).toLowerCase();
-  }
-  return "";
-}
-
-function plantCardHTML(c, badge, badgeOff) {
-  const b = badge ? `<span class="plant-badge ${badgeOff ? "off" : ""}">${badge}</span>` : "";
-  const sub = c.cat === "animal"
-    ? `${c.modelo === "mensual" ? "Producción mensual" : c.modelo === "anual" ? "Producción anual" : "Listo en " + formatDias(c.diasProduccion)} · ${c.tipo}`
-    : `Cosecha en ${formatDias(c.diasProduccion)} · ${c.tipo}`;
+function filaAparato(a, cfg) {
+  const p = a.principal;
+  const sinUso = !a.uso;
   return `
-    <button class="plant-card" data-plant="${c.id}">
-      <span class="plant-thumb t-${c.cat}">${c.emoji}</span>
-      <span class="plant-info"><strong>${c.nombre}</strong><small>${sub}</small></span>
-      ${b}
+    <button class="list-row" data-aparato="${attr(a.dispositivo)}">
+      <span class="franja franja--${a.callado ? 'mal' : sinUso ? 'nuevo' : 'ok'}"></span>
+      <span class="fila-main">
+        <strong>${escapeHtml(a.nombre)}</strong>
+        <small>${sinUso ? '<b class="cuando cuando--atrasada">sin asignar</b> · '
+          : a.nombre === sensores.USOS[a.uso]?.label ? '' : `${sensores.USOS[a.uso]?.label} · `}${p ? escapeHtml(p.texto) : '—'}</small>
+        <small class="muted">${a.callado ? `<b class="cuando cuando--atrasada">callado</b> · ` : ''}${haceTexto(a.horas)}${
+          a.bateriaTexto ? ` · batería ${a.bateriaTexto}${a.bateriaBaja ? ' ⚠︎' : ''}` : ''}${
+          p?.falta ? ` · falta la ${p.falta}` : ''}</small>
+      </span>
+      <span class="fila-go"><svg class="icono icono--s" aria-hidden="true"><use href="#i-chevron-der"/></svg></span>
     </button>`;
 }
 
-function bindPlantCards(container, backTo) {
-  container.querySelectorAll(".plant-card").forEach(card => {
-    card.addEventListener("click", () => {
-      state.plantaActual = card.dataset.plant;
-      state.backTo = backTo;
-      renderPlantDetail();
-      show("screen-plant");
-    });
+/** Ficha de un aparato: para qué está y, si hace falta, cómo calibrarlo. */
+function openAparato(id) {
+  const cfg = cfgSensores();
+  const ap = cfg.aparatos[id] || {};
+  const estado = sensores.estadoAparatos(state.lecturas, cfg.aparatos).find(a => a.dispositivo === id);
+  const tipos = Object.keys(estado?.tipos || {});
+
+  openSheet(ap.nombre || id, `
+    <form id="f-ap">
+      <p class="hint">Identificador en el receptor: <code>${escapeHtml(id)}</code><br>
+      Manda: ${tipos.map(t => escapeHtml(TIPO_TEXTO(t))).join(', ') || '—'}</p>
+      <label>Nombre <input name="nombre" value="${attr(ap.nombre || '')}" placeholder="Reservorio" /></label>
+      <label>Para qué está
+        <select name="uso">
+          <option value="">Sin asignar</option>
+          ${Object.entries(sensores.USOS).map(([k, u]) =>
+            `<option value="${k}" ${ap.uso === k ? 'selected' : ''}>${u.label}</option>`).join('')}
+        </select>
+      </label>
+      <div class="solo-reservorio">
+        <label>Altura del sensor sobre el fondo (m)
+          <input name="montajeM" type="number" step="0.01" min="0" value="${attr(ap.montajeM)}" placeholder="2,30" />
+        </label>
+        <p class="hint">Un ultrasónico mide la distancia hasta el agua, no el agua: para saber
+        cuánta hay hay que restarla de la altura a la que está montado. Mídela con cinta del
+        sensor al fondo, con el reservorio vacío o con una vara. Un error de 5 cm aquí es un
+        error de ${nf((0.05 / (state.config.reservorioAlturaUtilM || 2)) * (state.config.reservorioVolumenM3 || 80), 1)} m³ en todas las lecturas.</p>
+      </div>
+      <div class="solo-caudal">
+        <label>Qué manda el medidor
+          <select name="acumulado">
+            <option value="si" ${ap.acumulado !== false ? 'selected' : ''}>Un total que sólo crece (lo más común)</option>
+            <option value="no" ${ap.acumulado === false ? 'selected' : ''}>Lo que pasó desde la lectura anterior</option>
+          </select>
+        </label>
+        <p class="hint">Si no lo sabes, mira dos lecturas seguidas con el riego cerrado: si
+        repiten el mismo número, es un total; si mandan cero, es lo del rato. Confundirlos
+        cuenta mil veces el mismo litro.</p>
+        ${tipos.includes('pulsos') ? `
+        <label>Litros por pulso
+          <input name="litrosPorPulso" type="number" step="0.001" min="0" value="${attr(ap.litrosPorPulso)}" placeholder="1" />
+        </label>
+        <p class="hint">Viene en la placa o el manual del medidor (1, 10 o 100 L por pulso
+        son lo habitual). Sin este dato los pulsos no se pueden convertir en agua.</p>` : ''}
+        <fieldset class="sectores-linea">
+          <legend>Sectores que alimenta esta línea</legend>
+          ${state.sectors.map(sc => `<label class="row"><input type="checkbox" name="sectorIds" value="${sc.id}"
+            ${(ap.sectorIds || []).includes(sc.id) ? 'checked' : ''} /> ${escapeHtml(sc.name)}</label>`).join('')}
+        </fieldset>
+        <p class="hint">Sólo para saber de dónde sale el agua. El volumen no se reparte entre
+        ellos: un medidor en una línea compartida mide el total, y cualquier reparto sería un
+        supuesto disfrazado de medición.</p>
+      </div>
+      <label class="solo-suelo">Sector donde está la sonda
+        <select name="sectorId">
+          <option value="">—</option>
+          ${state.sectors.map(s => `<option value="${s.id}" ${ap.sectorId === s.id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
+        </select>
+      </label>
+      <button class="btn btn--rojo btn-block" type="submit">Guardar</button>
+    </form>
+  `, body => {
+    const form = body.querySelector('#f-ap');
+    const mostrar = () => {
+      const uso = form.uso.value;
+      form.querySelector('.solo-reservorio').hidden = uso !== 'reservorio' || !tipos.includes('distancia');
+      form.querySelector('.solo-suelo').hidden = uso !== 'suelo';
+      form.querySelector('.solo-caudal').hidden = uso !== 'caudal';
+    };
+    form.uso.addEventListener('change', mostrar);
+    mostrar();
+
+    form.onsubmit = async ev => {
+      ev.preventDefault();
+      const f = new FormData(form);
+      const c = cfgSensores();
+      const nuevo = {
+        nombre: (f.get('nombre') || '').trim() || undefined,
+        uso: f.get('uso') || undefined,
+        montajeM: f.get('montajeM') ? Number(f.get('montajeM')) : undefined,
+        sectorId: f.get('sectorId') || undefined,
+        acumulado: f.get('uso') === 'caudal' ? f.get('acumulado') !== 'no' : undefined,
+        litrosPorPulso: f.get('litrosPorPulso') ? Number(f.get('litrosPorPulso')) : undefined,
+        sectorIds: f.get('uso') === 'caudal' ? f.getAll('sectorIds') : undefined
+      };
+      state.config = await db.saveConfig({ sensores: { ...c, aparatos: { ...c.aparatos, [id]: nuevo } } });
+      // Cambiar el uso o la altura cambia TODOS los niveles pasados de este
+      // aparato, así que se rehace lo derivado entero.
+      await sensores.aplicar(cfgSensores().aparatos);
+      await reload(); renderAll();
+      toast('Aparato guardado');
+      openSensores();
+    };
   });
 }
 
-// ---------- Pronóstico (cacheado) ----------
-async function getForecast() {
-  if (state.forecast) return state.forecast;
-  if (state.lat == null) return null;
-  const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${state.lat}&longitude=${state.lon}` +
-    `&current=temperature_2m,relative_humidity_2m,weather_code` +
-    `&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code,et0_fao_evapotranspiration&forecast_days=14&timezone=auto`);
-  state.forecast = await r.json();
-  return state.forecast;
+const TIPO_TEXTO = t => ({
+  distancia: 'distancia al agua', nivel: 'nivel', lluvia: 'lluvia', humedad_suelo: 'humedad de suelo',
+  caudal: 'caudal', pulsos: 'pulsos', bateria: 'batería', temperatura: 'temperatura'
+}[t] || t);
+
+/**
+ * La tarjeta de sensores en la pantalla de agua. Si no hay ninguno, una sola
+ * línea que invita a conectarlos; si hay, su estado, con lo callado arriba:
+ * un sensor caído es lo único de esta lista que exige hacer algo.
+ */
+function renderSensoresAgua() {
+  const sen = resumenSensores();
+  const enUso = (sen?.aparatos || []).filter(a => a.uso && a.uso !== 'ignorar');
+  const nuevos = (sen?.aparatos || []).filter(a => !a.uso);
+
+  if (!enUso.length && !nuevos.length) {
+    return `<div class="card sensores-vacio">
+      <p class="hint">Sin sensores conectados: el nivel del reservorio sale de las mediciones a mano
+      y la lluvia, del modelo de Open-Meteo.</p>
+      <p class="pie-accion"><span></span><button class="btn btn--fantasma btn--sm" data-act="sensores">Conectar sensores</button></p>
+    </div>`;
+  }
+
+  const orden = [...enUso].sort((a, b) => (b.callado - a.callado));
+  return `<div class="card card--filas sensores">
+    <div class="sensores-cab">
+      <strong>Sensores</strong>
+      <button class="btn btn--fantasma btn--sm" data-act="sensores">Configurar</button>
+    </div>
+    ${nuevos.length ? `<p class="aviso aviso--atencion">${nuevos.length === 1 ? 'Hay un aparato nuevo' : `Hay ${nuevos.length} aparatos nuevos`} mandando datos sin asignar.</p>` : ''}
+    ${orden.map(a => `
+      <div class="list-row">
+        <span class="franja franja--${a.callado ? 'mal' : 'ok'}"></span>
+        <span class="fila-main">
+          <strong>${escapeHtml(a.nombre)}</strong>
+          <small>${a.principal ? escapeHtml(a.principal.texto) : '—'} · ${a.callado
+            ? `<b class="cuando cuando--atrasada">callado, ${haceTexto(a.horas)}</b>`
+            : haceTexto(a.horas)}${a.bateriaBaja ? ' · <b class="cuando cuando--atrasada">batería baja</b>' : ''}</small>
+        </span>
+      </div>`).join('')}
+  </div>`;
 }
 
 /**
- * Lo llovido en los últimos 90 días y lo que evaporó la atmósfera (ET0), más
- * la MEDIANA de esas mismas fechas en los 10 años anteriores.
+ * Regado frente a pedido. Sólo aparece con caudalímetro: es la única forma de
+ * saber cuánto se regó de verdad. Lo primero es una frase con el veredicto de
+ * la semana, que es lo que se decide —abrir menos la llave, o más—; los días
+ * van debajo, para quien quiera ver si fue uno solo o todos.
  *
- * Sin la mediana el dato no dice nada: 40 mm en tres meses es normal en un
- * páramo y una sequía severa en el subtrópico. La referencia la da el propio
- * sitio, no una tabla nacional.
- *
- * Dos fuentes a propósito, y no es un capricho:
- *   · Lo reciente sale del endpoint de pronóstico con `past_days`, el mismo
- *     host que ya usa la app. El archivo histórico va varios días retrasado,
- *     así que pedirle "hasta ayer" devolvería huecos justo en los días que más
- *     pesan y subestimaría la lluvia.
- *   · La normal sale del archivo, donde el retraso es irrelevante porque se
- *     pregunta por años anteriores.
- *
- * Si algo falla, el almanaque sigue funcionando como antes; sólo pierde el
- * análisis. Nunca deja la pantalla a medias.
+ * Dos barras por día en la MISMA escala (no dos ejes): lo regado, lleno; lo
+ * pedido, en contorno. Se distinguen por forma además de por color, y cada
+ * una lleva su número.
  */
-async function getHidrico() {
-  if (state.hidrico) return state.hidrico;
-  if (state.lat == null) return { conocido: false };
+function renderComparacion(s) {
+  const c = s.comparacion;
+  if (!c) return '';
+  const max = Math.max(...c.filas.flatMap(f => [f.regadoM3, f.pedidoM3]), 0.001);
+  const pct = v => Math.max(1.5, (v / max) * 100).toFixed(1);
+  const dif = c.regadoM3 - c.pedidoM3;
 
-  const iso = d => d.toISOString().slice(0, 10);
-  const base = `latitude=${state.lat}&longitude=${state.lon}&timezone=auto`;
-  const VENTANA = 90;
+  const veredicto = c.desvio == null
+    ? `Las plantas casi no pedían agua (lluvia o reserva en el suelo) y se regaron ${nf(c.regadoM3, 2)} m³.`
+    : Math.abs(c.desvio) < 15
+      ? `El riego va acorde con lo que piden las plantas (${c.desvio > 0 ? '+' : ''}${c.desvio} %).`
+      : c.desvio > 0
+        ? `Se regó <b>${c.desvio} % más</b> de lo que pedían las plantas: ${nf(dif, 2)} m³ de más en ${c.filas.length} días.${
+            c.sinNecesidad
+              ? ` <b>${c.sinNecesidad === 1 ? 'Un día' : c.sinNecesidad + ' días'} se regó sin que hiciera falta</b> —llovió o el suelo estaba cargado—, ${nf(c.sinNecesidadM3, 2)} m³ en total: si el riego va con temporizador, conviene cortarlo después de una lluvia.`
+              : ' Con el agua contada por turnos, es agua que falta al final del ciclo.'}`
+        : `Se regó <b>${Math.abs(c.desvio)} % menos</b> de lo que pedían las plantas: faltaron ${nf(-dif, 2)} m³ en ${c.filas.length} días.`;
 
-  let lluvia90 = null, et090 = null, normal90 = null, anios = 0;
-
-  try {
-    const reciente = await fetch('https://api.open-meteo.com/v1/forecast?' + base +
-      `&past_days=${VENTANA}&forecast_days=1` +
-      '&daily=precipitation_sum,et0_fao_evapotranspiration').then(r => r.json());
-
-    // El último día es el pronóstico de hoy: fuera, que aún no ha ocurrido.
-    const p = (reciente?.daily?.precipitation_sum || []).slice(0, VENTANA);
-    const e = (reciente?.daily?.et0_fao_evapotranspiration || []).slice(0, VENTANA);
-    if (p.length) { lluvia90 = CLIMA.suma(p); et090 = CLIMA.suma(e); }
-  } catch { /* sin conexión: se queda sin medición */ }
-
-  if (lluvia90 == null) return { conocido: false };
-
-  try {
-    const fin = new Date(Date.now() - 86400000);
-    const ini = new Date(fin.getTime() - (VENTANA - 1) * 86400000);
-    const rangos = [];
-    for (let k = 1; k <= 10; k++) {
-      const a = new Date(ini); a.setFullYear(a.getFullYear() - k);
-      const b = new Date(fin); b.setFullYear(b.getFullYear() - k);
-      rangos.push([iso(a), iso(b)]);
-    }
-    const hist = await fetch('https://archive-api.open-meteo.com/v1/archive?' + base +
-      `&start_date=${rangos[rangos.length - 1][0]}&end_date=${rangos[0][1]}` +
-      '&daily=precipitation_sum').then(r => r.json());
-
-    const t = hist?.daily?.time || [];
-    const pp = hist?.daily?.precipitation_sum || [];
-    const porAnio = rangos.map(([desde, hasta]) => {
-      let acc = 0, dias = 0;
-      for (let i = 0; i < t.length; i++) {
-        if (t[i] >= desde && t[i] <= hasta) { acc += pp[i] || 0; dias++; }
-      }
-      // Un año con la serie incompleta distorsiona la mediana: se descarta.
-      return dias >= VENTANA * 0.9 ? acc : null;
-    }).filter(v => v != null);
-
-    normal90 = CLIMA.mediana(porAnio);
-    anios = porAnio.length;
-  } catch { /* sin histórico: se informa la lluvia sin comparación */ }
-
-  state.hidrico = CLIMA.estadoHidrico({ lluvia90, et090, normal90 });
-  state.hidrico.anios = anios;
-  return state.hidrico;
-}
-
-const WMO = {
-  0: ["☀️","Despejado"], 1: ["🌤️","Mayormente despejado"], 2: ["⛅","Parcialmente nublado"],
-  3: ["☁️","Nublado"], 45: ["🌫️","Neblina"], 48: ["🌫️","Neblina"],
-  51: ["🌦️","Llovizna"], 53: ["🌦️","Llovizna"], 55: ["🌧️","Llovizna fuerte"],
-  61: ["🌧️","Lluvia ligera"], 63: ["🌧️","Lluvia"], 65: ["🌧️","Lluvia fuerte"],
-  80: ["🌧️","Chubascos"], 81: ["🌧️","Chubascos"], 82: ["⛈️","Chubascos fuertes"],
-  95: ["⛈️","Tormenta"], 96: ["⛈️","Tormenta"], 99: ["⛈️","Tormenta"]
-};
-
-// ---------- Home ----------
-function renderHome() {
-  const zona = zonaPorAltitud(state.altitud);
-  document.getElementById("home-place").textContent =
-    `📍 ${state.lugar || zona.nombre} · ${state.altitud} m`;
-
-  const mes = new Date().getMonth() + 1;
-  const plantas = catalogoZona().filter(c => c.cat !== "animal");
-  const ahora = plantas.filter(c => c.mesesSiembra.includes(mes)).slice(0, 8);
-
-  const list = document.getElementById("plant-list");
-  list.innerHTML = ahora.length
-    ? ahora.map(c => plantCardHTML(c, "Sembrar ya")).join("")
-    : `<p class="sub">Este mes no hay siembras ideales en tu zona. Revisa el almanaque para planificar.</p>`;
-  bindPlantCards(list, "screen-home");
-
-  renderGardenSummary();
-  renderWeatherHome();
-  renderMoonStrip();
-  renderMarketStrip();
-  renderInstallBanner();
-  checkAndSendNotifications();
-}
-
-function renderGardenSummary() {
-  const cont = document.getElementById("garden-summary");
-  if (!state.siembras.length) { cont.innerHTML = ""; return; }
-  const n = state.siembras.length;
-  const prox = state.siembras
-    .map(s => ({ s, rest: diasRestantes(s) }))
-    .filter(x => x.rest != null && x.rest >= 0)
-    .sort((a, b) => a.rest - b.rest)[0];
-  const detalle = prox
-    ? (prox.rest === 0 ? `${getItem(prox.s.cropId).nombre}: ¡listo para cosechar!`
-       : `Próxima cosecha: ${getItem(prox.s.cropId).nombre} en ${formatDias(prox.rest)}`)
-    : "Toca para ver el seguimiento";
-  cont.innerHTML = `
-    <div class="garden-summary" id="garden-summary-card">
-      <span class="g-emoji">🌱</span>
-      <span class="g-text"><strong>Mi huerto: ${n} ${n === 1 ? "cultivo" : "cultivos"}</strong>
-      <small>${detalle}</small></span>
-      <span class="chev">›</span>
-    </div>`;
-  document.getElementById("garden-summary-card").addEventListener("click", () => {
-    renderGarden(); show("screen-garden");
-  });
-}
-
-async function renderWeatherHome() {
-  const card = document.getElementById("weather-card");
-  const alerts = document.getElementById("alert-box");
-  if (state.lat == null) {
-    // Estado vacío discreto: informa y ofrece la acción, sin robarle protagonismo al contenido.
-    card.classList.add("no-loc");
-    card.innerHTML = `<div class="weather-emoji">📍</div>
-      <div class="weather-info"><strong>Activa tu ubicación</strong>
-      <small>Para ver el clima, la lluvia de la semana y avisos de helada en tu zona.</small></div>
-      <button class="weather-cta" id="btn-weather-loc">Activar</button>`;
-    document.getElementById("btn-weather-loc").addEventListener("click", () => show("screen-location"));
-    alerts.innerHTML = "";
-    return;
-  }
-  card.classList.remove("no-loc");
-  try {
-    const j = await getForecast();
-    const [emoji, desc] = WMO[j.current.weather_code] || ["🌡️", "Clima"];
-    const lluvia7 = j.daily.precipitation_sum.slice(0, 7).reduce((a, b) => a + (b || 0), 0);
-    // Balance de agua: lluvia menos lo que evapora el sol (ET0, dato agronómico de Open-Meteo)
-    const et07 = (j.daily.et0_fao_evapotranspiration || []).slice(0, 7).reduce((a, b) => a + (b || 0), 0);
-    const balance = Math.round(lluvia7 - et07);
-    let lluviaTxt;
-    if (et07 > 0) {
-      lluviaTxt = balance >= 5
-        ? `Semana húmeda: la lluvia (${Math.round(lluvia7)} mm) cubre lo que evapora el sol. Aprovecha para sembrar.`
-        : balance >= -10
-        ? `Lluvia y sol parejos esta semana: riega solo lo más delicado.`
-        : `Al suelo le faltarán ~${Math.abs(balance)} mm esta semana: toca regar seguido.`;
-    } else {
-      lluviaTxt = lluvia7 >= 15
-        ? `Lluvia esta semana: ${Math.round(lluvia7)} mm. Aprovecha para sembrar.`
-        : `Poca lluvia esta semana (${Math.round(lluvia7)} mm): riega tus plantas.`;
-    }
-    card.innerHTML = `<div class="weather-emoji">${emoji}</div>
-      <div class="weather-info"><strong>${Math.round(j.current.temperature_2m)}°C</strong>
-      <small>${desc} · humedad ${j.current.relative_humidity_2m}%</small>
-      <small>${lluviaTxt}</small></div>
-      <div class="weather-minmax">↑ ${Math.round(j.daily.temperature_2m_max[0])}°<br>↓ ${Math.round(j.daily.temperature_2m_min[0])}°</div>`;
-
-    // Alertas de los próximos 7 días
-    const out = [];
-    const heladaIdx = j.daily.temperature_2m_min.slice(0, 7).findIndex(t => t <= 2);
-    if (heladaIdx >= 0) {
-      const d = new Date(j.daily.time[heladaIdx] + "T12:00:00");
-      out.push(`<div class="alert-chip frost">❄️ <span><strong>Riesgo de helada</strong> el ${DIAS_SEM[d.getDay()].toLowerCase()} ${d.getDate()}: cubre tus cultivos tiernos en la noche.</span></div>`);
-    }
-    const aguaceroIdx = j.daily.precipitation_sum.slice(0, 7).findIndex(p => p >= 25);
-    if (aguaceroIdx >= 0) {
-      const d = new Date(j.daily.time[aguaceroIdx] + "T12:00:00");
-      out.push(`<div class="alert-chip rain">🌧️ <span><strong>Lluvia fuerte</strong> el ${DIAS_SEM[d.getDay()].toLowerCase()} ${d.getDate()}: revisa drenajes y no abones ese día.</span></div>`);
-    }
-    alerts.innerHTML = out.join("");
-  } catch {
-    card.innerHTML = `<div class="weather-loading">No se pudo cargar el clima (revisa tu conexión).</div>`;
-  }
-}
-
-// ---------- Luna ----------
-const SINODICO = 29.53058867;
-function faseLunar(fecha = new Date()) {
-  const ref = Date.UTC(2000, 0, 6, 18, 14);
-  const dias = (fecha.getTime() - ref) / 86400000;
-  const edad = ((dias % SINODICO) + SINODICO) % SINODICO;
-  if (edad < 1.85) return { emoji: "🌑", nombre: "Luna nueva", ciclo: "nueva", edad };
-  if (edad < 7.38) return { emoji: "🌒", nombre: "Luna creciente", ciclo: "creciente", edad };
-  if (edad < 9.23) return { emoji: "🌓", nombre: "Cuarto creciente", ciclo: "creciente", edad };
-  if (edad < 14.77) return { emoji: "🌔", nombre: "Creciente gibosa", ciclo: "creciente", edad };
-  if (edad < 16.61) return { emoji: "🌕", nombre: "Luna llena", ciclo: "llena", edad };
-  if (edad < 22.15) return { emoji: "🌖", nombre: "Menguante gibosa", ciclo: "menguante", edad };
-  if (edad < 24.00) return { emoji: "🌗", nombre: "Cuarto menguante", ciclo: "menguante", edad };
-  return { emoji: "🌘", nombre: "Luna menguante", ciclo: "menguante", edad };
-}
-
-const CONSEJO_LUNA = {
-  nueva: "Descanso: prepara la tierra, abona y haz compost. Evita sembrar.",
-  creciente: "Siembra lo que da fruto sobre la tierra: tomate, maíz, fréjol, pimiento.",
-  llena: "Trasplanta y cosecha frutos. Evita podar.",
-  menguante: "Siembra raíces y hojas: papa, zanahoria, cebolla, lechuga. Buen momento para podar."
-};
-
-function renderMoonStrip() {
-  const f = faseLunar();
-  const strip = document.getElementById("moon-strip");
-  strip.innerHTML = `
-    <span class="m-emoji">${f.emoji}</span>
-    <span class="m-text"><strong>${f.nombre}</strong>
-    <small>${CONSEJO_LUNA[f.ciclo]}</small></span>
-    <span class="chev">›</span>`;
-  strip.onclick = () => { show("screen-almanac"); renderAlmanac(); };
-}
-
-// ---------- Almanaque ----------
-let almanacMes = new Date().getMonth() + 1;
-
-async function renderAlmanac() {
-  renderBestDays();
-  renderMonthChips();
-  renderAlmanacList();          // pinta ya, con lo que haya
-  renderClima();                // y se completa cuando llegan los datos
-}
-
-/**
- * Tarjeta de estado del agua: lo medido primero, la fase declarada después.
- * Es lo que faltaba para que el almanaque no recomiende igual un año seco que
- * un año normal.
- */
-async function renderClima() {
-  const cont = document.getElementById("clima-card");
-  if (!cont) return;
-
-  const reg = CLIMA.region(state.altitud);
-  const fase = CLIMA.FASES[state.fase] || CLIMA.FASES.neutral;
-  const patron = fase[reg];
-
-  cont.innerHTML = `<div class="clima-box cargando"><p class="sub">Midiendo la lluvia de los últimos 90 días…</p></div>`;
-  const e = await getHidrico();
-  state.hidrico = e;
-
-  const medido = e.conocido ? `
-    <div class="clima-cifras">
-      <div><small>Llovió (90 días)</small><strong class="tabular">${e.lluvia90}<i>mm</i></strong></div>
-      ${e.normal90 != null ? `<div><small>Normal de estas fechas</small><strong class="tabular">${e.normal90}<i>mm</i></strong></div>` : ""}
-      ${e.balance != null ? `<div><small>Lluvia menos evaporación</small><strong class="tabular">${e.balance > 0 ? "+" : ""}${e.balance}<i>mm</i></strong></div>` : ""}
-    </div>
-    ${e.desvio != null ? `<p class="clima-lectura">${
-      e.desvio < 0 ? `Llovió <b>${Math.abs(e.desvio)}% menos</b> que lo habitual`
-                   : `Llovió <b>${e.desvio}% más</b> que lo habitual`
-    } en estas fechas${e.anios ? `, comparado con la mediana de ${e.anios} años en este mismo punto` : ""}.${
-      // Sólo cuando la pérdida es material: a −18 mm en 90 días el suelo está
-      // en equilibrio, y decir "pierde agua" justo debajo de "exceso de
-      // lluvia" se contradice y no ayuda a decidir nada.
-      e.balance != null && e.balance < -50 && e.nivel !== "exceso"
-        ? " El balance es negativo: el suelo pierde más agua de la que recibe."
-        : ""}</p>` : ""}
-    ` : `<p class="sub">No se pudo medir la lluvia (sin conexión o sin ubicación). El almanaque sigue recomendando por fecha y altitud.</p>`;
-
-  cont.innerHTML = `
-    <div class="clima-box clima-${e.conocido ? e.color : "neutro"}">
-      <div class="clima-head">
-        <strong>${e.conocido ? e.etiqueta[0].toUpperCase() + e.etiqueta.slice(1) : "Estado del agua"}</strong>
-        <button class="clima-fase" id="btn-fase">${fase.nombre}${reg !== "desconocida" ? " · " + reg : ""}</button>
-      </div>
-      ${medido}
-      ${patron ? `<p class="clima-patron">${patron.dice} <em>${patron.ojo}</em></p>` : ""}
-      ${state.riegoPropio == null ? `
-        <div class="clima-pregunta">
-          <p>¿Tienes riego en tu terreno? Cambia por completo el consejo.</p>
-          <div class="clima-botones">
-            <button class="btn-chip" data-riego="si">Sí, tengo riego</button>
-            <button class="btn-chip" data-riego="no">No, sólo lluvia</button>
-          </div>
-        </div>` : `
-        <p class="clima-riego">${state.riegoPropio ? "Con riego" : "Sólo lluvia"} ·
-          <button class="link-sm" data-riego="cambiar">cambiar</button></p>`}
-    </div>`;
-
-  cont.querySelector("#btn-fase")?.addEventListener("click", abrirFase);
-  cont.querySelectorAll("[data-riego]").forEach(b => b.addEventListener("click", () => {
-    const v = b.dataset.riego;
-    state.riegoPropio = v === "cambiar" ? null : v === "si";
-    saveState();
-    renderClima();
-    renderAlmanacList();
-  }));
-
-  renderAlmanacList();   // los consejos dependen de lo que acaba de llegar
-}
-
-/** Selector de fase. Se declara a mano: no se inventa una fuente que no hay. */
-function abrirFase() {
-  const cont = document.getElementById("clima-card");
-  const reg = CLIMA.region(state.altitud);
-  cont.innerHTML = `
-    <div class="clima-box">
-      <div class="clima-head"><strong>¿Cómo viene el año?</strong></div>
-      <p class="sub">El Niño y La Niña cambian la temporada de lluvias, y no igual en todas partes:
-      en la costa El Niño trae agua de sobra y en la sierra tiende a lo contrario.
-      Esto lo anuncia el INAMHI; declararlo aquí ajusta los consejos de los próximos meses.</p>
-      <div class="clima-opciones">
-        ${Object.entries(CLIMA.FASES).map(([id, f]) => `
-          <button class="clima-opcion ${state.fase === id ? "on" : ""}" data-fase="${id}">
-            <strong>${f.nombre}</strong>
-            <small>${f[reg] ? f[reg].dice : "Año sin señal marcada: manda lo que midan tus últimos 90 días."}</small>
-          </button>`).join("")}
-      </div>
-    </div>`;
-  cont.querySelectorAll("[data-fase]").forEach(b => b.addEventListener("click", () => {
-    state.fase = b.dataset.fase;
-    saveState();
-    renderClima();
-  }));
-}
-
-async function renderBestDays() {
-  const cont = document.getElementById("best-days");
-  let forecast = null;
-  try { forecast = await getForecast(); } catch { /* sin conexión */ }
-
-  const dias = [];
-  for (let i = 0; i < 10; i++) {
-    const fecha = new Date(Date.now() + i * 86400000);
-    const f = faseLunar(fecha);
-    let score = { nueva: 0, creciente: 2, llena: 1, menguante: 2 }[f.ciclo];
-    let notas = [CONSEJO_LUNA[f.ciclo]];
-    let iconos = f.emoji;
-
-    if (forecast && forecast.daily && forecast.daily.time[i]) {
-      const lluvia = forecast.daily.precipitation_sum[i] || 0;
-      const tmin = forecast.daily.temperature_2m_min[i];
-      const code = forecast.daily.weather_code[i];
-      iconos += " " + ((WMO[code] || ["🌡️"])[0]);
-      if (tmin <= 2) { score -= 3; notas = ["❄️ Riesgo de helada: no siembres, cubre lo sembrado."]; }
-      else if (lluvia >= 25) { score -= 2; notas.push("Lluvia fuerte: mejor no sembrar."); }
-      else if (lluvia >= 3) { score += 2; notas.push("Suelo húmedo: buen día para sembrar."); }
-      else if (lluvia >= 0.5) { score += 1; notas.push("Lluvia ligera."); }
-      else { notas.push("Sin lluvia: riega después de sembrar."); }
-    }
-    dias.push({ fecha, f, score, notas, iconos });
-  }
-
-  const corte = [...dias].sort((a, b) => b.score - a.score)[2]?.score ?? 3;
-  cont.innerHTML = dias.map(d => {
-    const best = d.score >= Math.max(corte, 3);
-    const hoy = d.fecha.toDateString() === new Date().toDateString();
-    return `
-    <div class="day-card ${best ? "best" : ""}">
-      <div class="day-date"><small>${hoy ? "Hoy" : DIAS_SEM[d.fecha.getDay()]}</small><strong>${d.fecha.getDate()}</strong></div>
-      <div class="day-icons">${d.iconos}</div>
-      <div class="day-text">${best ? '<span class="best-tag">Buen día para sembrar</span>' : ""}
-        <strong>${d.f.nombre}</strong>${d.notas.join(" ")}</div>
-    </div>`;
-  }).join("");
-}
-
-function renderMonthChips() {
-  const cont = document.getElementById("month-chips");
-  cont.innerHTML = MESES.map((m, i) =>
-    `<button class="${i + 1 === almanacMes ? "on" : ""}" data-mes="${i + 1}">${m}</button>`).join("");
-  cont.querySelectorAll("button").forEach(b => {
-    b.addEventListener("click", () => { almanacMes = +b.dataset.mes; renderMonthChips(); renderAlmanacList(); });
-  });
-  const on = cont.querySelector(".on");
-  if (on) on.scrollIntoView({ inline: "center", block: "nearest" });
-}
-
-function renderAlmanacList() {
-  const cont = document.getElementById("almanac-list");
-  let lista = catalogoZona().filter(c => c.cat !== "animal" && c.mesesSiembra.includes(almanacMes));
-
-  const ctx = {
-    estado: state.hidrico || { conocido: false },
-    fase: state.fase,
-    altitud: state.altitud,
-    tieneRiego: state.riegoPropio === true
-  };
-  // Con el agua escasa, lo que aguanta seco va primero: el orden ES el consejo.
-  const orden = CLIMA.ordenaPorAgua(lista, ctx);
-  const reordenado = orden[0] !== lista[0];
-  lista = orden;
-
-  // Si se cambió el orden hay que decirlo: una lista que se reordena sola sin
-  // explicarse parece un error, no un consejo.
-  const nota = reordenado
-    ? `<p class="orden-nota">${ctx.estado.nivel === "exceso"
-        ? "Ordenado por el agua de estas fechas: arriba lo que aprovecha la lluvia de sobra."
-        : "Ordenado por el agua de estas fechas: arriba lo que aguanta con menos."}</p>`
-    : "";
-
-  cont.innerHTML = lista.length
-    ? nota + lista.map(c => {
-        const consejo = CLIMA.consejoCultivo(c, ctx);
-        return plantCardHTML(c, catInfo(c.cat).nombre, true) +
-          (consejo ? `<p class="consejo-agua t-${consejo.tono}">
-            <b>${consejo.titulo}.</b> ${consejo.texto}</p>` : "");
-      }).join("")
-    : `<p class="sub">No hay siembras recomendadas en ${MESES[almanacMes - 1].toLowerCase()} para tu zona.</p>`;
-  bindPlantCards(cont, "screen-almanac");
-}
-
-// ---------- Mi huerto (seguimiento) ----------
-function diasTranscurridos(s) {
-  return Math.max(0, Math.floor((Date.now() - new Date(s.fecha + "T12:00:00").getTime()) / 86400000));
-}
-function diasRestantes(s) {
-  const c = getItem(s.cropId);
-  if (!c) return null;
-  return Math.max(0, c.diasProduccion - diasTranscurridos(s));
-}
-
-function renderGarden() {
-  const cont = document.getElementById("garden-list");
-  if (!state.siembras.length) {
-    cont.innerHTML = `
-      <div class="empty-state">
-        <div class="e-emoji">🌱</div>
-        <strong>Aún no sigues ningún cultivo</strong>
-        Agrega lo que ya tienes sembrado o lo que vas a sembrar, y te avisamos cuándo cosechar.
-      </div>`;
-    return;
-  }
-  cont.innerHTML = state.siembras.map(s => {
-    const c = getItem(s.cropId);
-    if (!c) return "";
-    const trans = diasTranscurridos(s);
-    const total = c.diasProduccion;
-    const pct = Math.min(100, Math.round(trans / total * 100));
-    const rest = Math.max(0, total - trans);
-    const enProduccion = trans >= total && c.modelo !== "ciclo";
-    const listo = trans >= total && c.modelo === "ciclo";
-    const status = enProduccion ? `<span class="track-status st-cont">En producción</span>`
-      : listo ? `<span class="track-status st-ready">¡Listo para cosechar!</span>`
-      : `<span class="track-status st-grow">Creciendo</span>`;
-    const fechaCosecha = new Date(new Date(s.fecha + "T12:00:00").getTime() + total * 86400000);
-    const meta = listo || enProduccion
-      ? (enProduccion ? `Produce desde ${fechaCosecha.getDate()} de ${MESES[fechaCosecha.getMonth()].toLowerCase()}` : `Cumplió su ciclo de ${formatDias(total)}`)
-      : `Faltan ${formatDias(rest)} · ${c.modelo === "ciclo" && c.cat !== "animal" ? "cosecha" : c.cat === "animal" ? "produce desde" : "primera cosecha"} ~${fechaCosecha.getDate()} de ${MESES[fechaCosecha.getMonth()].toLowerCase()}`;
-    const unidad = UNIDAD_INFO[c.unidad];
-    const verbo = c.cat === "animal" ? "desde" : "sembrado";
-    const desde = trans === 0 ? `${verbo} hoy` : `${verbo} hace ${formatDias(trans)}`;
-    return `
-    <div class="track-card" data-sid="${s.id}">
-      <div class="track-head">
-        <span class="plant-thumb t-${c.cat}">${c.emoji}</span>
-        <span class="track-title">
-          <strong>${c.nombre}</strong>
-          <small>${s.cantidad} ${s.cantidad === 1 ? unidad.singular : unidad.plural} · ${desde}</small>
+  return `<div class="card bloque--ancho comparacion">
+    <div class="proy-head"><strong>Regado y pedido</strong><small>últimos ${c.filas.length} días con caudalímetro</small></div>
+    <p class="hint">${veredicto}</p>
+    <div class="cmp-filas">${c.filas.map(f => `
+      <div class="cmp-fila">
+        <span class="cmp-dia">${fmtDate(f.date).replace(/ \d{4}$/, '')}</span>
+        <span class="cmp-barras" aria-label="Regado ${nf(f.regadoM3, 2)} m³, pedido ${nf(f.pedidoM3, 2)} m³">
+          <i class="cmp-reg" style="width:${pct(f.regadoM3)}%"></i>
+          <i class="cmp-ped" style="width:${pct(f.pedidoM3)}%"></i>
         </span>
-        ${status}
-      </div>
-      <div class="track-bar"><span style="width:${pct}%"></span></div>
-      <div class="track-meta"><span>${meta}</span><span>${pct}%</span></div>
-      ${s.nota ? `<div class="track-note">📝 ${s.nota}</div>` : ""}
-      <div class="track-actions">
-        <button class="see" data-see="${c.id}">Ver guía</button>
-        ${listo ? `<button class="harvest" data-harvest="${s.id}">✓ Cosechado</button>` : `<button data-del="${s.id}">Quitar</button>`}
-      </div>
-    </div>`;
-  }).join("");
-
-  cont.querySelectorAll("[data-see]").forEach(b => b.addEventListener("click", () => {
-    state.plantaActual = b.dataset.see; state.backTo = "screen-garden";
-    renderPlantDetail(); show("screen-plant");
-  }));
-  cont.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", () => {
-    if (confirm("¿Quitar este cultivo del seguimiento?")) {
-      state.siembras = state.siembras.filter(s => s.id !== b.dataset.del);
-      saveState(); renderGarden();
-    }
-  }));
-  cont.querySelectorAll("[data-harvest]").forEach(b => b.addEventListener("click", () => {
-    state.siembras = state.siembras.filter(s => s.id !== b.dataset.harvest);
-    saveState(); renderGarden();
-  }));
-}
-
-// ---------- Agregar siembra ----------
-let addCropId = null;
-
-document.getElementById("btn-add-open").addEventListener("click", () => openAdd(null));
-document.getElementById("btn-track").addEventListener("click", () => openAdd(state.plantaActual));
-
-function openAdd(cropId) {
-  addCropId = cropId;
-  const pick = document.getElementById("add-step-pick");
-  const form = document.getElementById("add-step-form");
-  if (cropId) {
-    pick.hidden = true; form.hidden = false;
-    fillAddForm();
-  } else {
-    pick.hidden = false; form.hidden = true;
-    document.getElementById("add-search").value = "";
-    renderAddList("");
-  }
-  document.getElementById("add-date").value = new Date().toISOString().slice(0, 10);
-  show("screen-add");
-}
-
-function renderAddList(q) {
-  const cont = document.getElementById("add-list");
-  const lista = catalogoZona().filter(c => c.nombre.toLowerCase().includes(q.toLowerCase()));
-  cont.innerHTML = lista.map(c => plantCardHTML(c, catInfo(c.cat).nombre, true)).join("");
-  cont.querySelectorAll(".plant-card").forEach(card => {
-    card.addEventListener("click", () => {
-      addCropId = card.dataset.plant;
-      document.getElementById("add-step-pick").hidden = true;
-      document.getElementById("add-step-form").hidden = false;
-      fillAddForm();
-    });
-  });
-}
-
-document.getElementById("add-search").addEventListener("input", e => renderAddList(e.target.value));
-
-function fillAddForm() {
-  const c = getItem(addCropId);
-  const u = UNIDAD_INFO[c.unidad];
-  document.getElementById("add-selected").innerHTML =
-    `<span class="a-emoji">${c.emoji}</span> ${c.nombre}`;
-  document.getElementById("add-qty-label").textContent =
-    c.unidad === "m2" ? "¿Cuántos m² sembraste?" : `¿Cuántos ${u.plural}?`;
-  document.getElementById("add-qty").value = c.unidad === "m2" ? 10 : (c.unidad === "animal" ? 5 : 5);
-}
-
-document.getElementById("btn-add-save").addEventListener("click", () => {
-  const fecha = document.getElementById("add-date").value;
-  const cantidad = Math.max(1, +document.getElementById("add-qty").value || 1);
-  const nota = document.getElementById("add-note").value.trim();
-  if (!fecha || !addCropId) return;
-  state.siembras.unshift({
-    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-    cropId: addCropId, fecha, cantidad, nota
-  });
-  saveState();
-  document.getElementById("add-note").value = "";
-  renderGarden();
-  show("screen-garden");
-});
-
-// ---------- Explorar ----------
-let exploreCat = "todos";
-
-function renderExplore() {
-  const chips = document.getElementById("cat-chips");
-  chips.innerHTML = [`<button class="${exploreCat === "todos" ? "on" : ""}" data-cat="todos">Todos</button>`]
-    .concat(CATEGORIAS.map(c =>
-      `<button class="${exploreCat === c.id ? "on" : ""}" data-cat="${c.id}">${c.emoji} ${c.nombre}</button>`)).join("");
-  chips.querySelectorAll("button").forEach(b => {
-    b.addEventListener("click", () => { exploreCat = b.dataset.cat; renderExplore(); });
-  });
-  renderExploreList();
-}
-
-function renderExploreList() {
-  const q = document.getElementById("search-input").value.toLowerCase();
-  const soloZona = document.getElementById("zone-only").checked;
-  const cont = document.getElementById("explore-list");
-  const mes = new Date().getMonth() + 1;
-
-  const coincide = c => (exploreCat === "todos" || c.cat === exploreCat) && c.nombre.toLowerCase().includes(q);
-  const lista = CULTIVOS.filter(c => coincide(c) && (!soloZona || aptoZona(c)));
-
-  if (!lista.length) {
-    // Distingue "no existe" de "lo escondió el filtro de zona": lo segundo tiene salida.
-    const fueraZona = soloZona ? CULTIVOS.filter(coincide).length : 0;
-    cont.innerHTML = fueraZona
-      ? `<div class="empty-state">
-          <div class="e-emoji">🏔️</div>
-          <strong>Nada de esto crece en tu zona</strong>
-          Hay ${fueraZona} ${fueraZona === 1 ? "opción que no es apta" : "opciones que no son aptas"} para ${state.altitud} m de altitud.
-          <button class="btn-secondary mt" id="btn-show-all-zone">Ver de todas formas</button>
-        </div>`
-      : `<div class="empty-state">
-          <div class="e-emoji">🔍</div>
-          <strong>No encontramos nada</strong>
-          Prueba con otro nombre o cambia de categoría.
-        </div>`;
-    const btn = document.getElementById("btn-show-all-zone");
-    if (btn) btn.addEventListener("click", () => {
-      document.getElementById("zone-only").checked = false;
-      renderExploreList();
-    });
-    return;
-  }
-
-  cont.innerHTML = lista.map(c => {
-    if (!aptoZona(c)) return plantCardHTML(c, "No apto en tu zona", true);
-    if (c.cat === "animal") return plantCardHTML(c, "Todo el año");
-    return c.mesesSiembra.includes(mes)
-      ? plantCardHTML(c, "Sembrar ya")
-      : plantCardHTML(c, proximaSiembra(c), true);
-  }).join("");
-  bindPlantCards(cont, "screen-explore");
-}
-
-document.getElementById("search-input").addEventListener("input", renderExploreList);
-document.getElementById("zone-only").addEventListener("change", renderExploreList);
-
-// ---------- Mercado ----------
-// Libreta de precios de feria (localStorage) + referencia internacional (Banco Mundial, datos abiertos).
-const INTL_CACHE_KEY = "mihuerto.intl.v1";
-
-function prodNombre(prod) {
-  if (prod.startsWith("otro:")) {
-    const n = prod.slice(5);
-    return n.charAt(0).toUpperCase() + n.slice(1);
-  }
-  const c = getItem(prod);
-  return c ? c.nombre : prod;
-}
-function prodEmoji(prod) {
-  const c = getItem(prod);
-  return c ? c.emoji : "🏷️";
-}
-function prodUnidad(prod) {
-  const c = getItem(prod);
-  return c ? unidadPrecio(c.rendUnidad) : null;
-}
-
-function renderMercado() {
-  renderPriceList();
-  renderSellWindow();
-  renderIntlPrices();
-  renderSellTip();
-}
-
-// --- Formulario de la libreta ---
-function fillPriceProductSelect() {
-  const sel = document.getElementById("pf-prod");
-  const sigo = [...new Set(state.siembras.map(s => s.cropId))];
-  const anotados = [...new Set(state.precios.map(p => p.prod))]
-    .filter(p => !p.startsWith("otro:") && !sigo.includes(p) && getItem(p));
-  const zona = catalogoZona().map(c => c.id).filter(id => !sigo.includes(id) && !anotados.includes(id));
-  const grupo = (ids, label) => ids.length
-    ? `<optgroup label="${label}">` + ids.map(id => {
-        const c = getItem(id);
-        return c ? `<option value="${id}">${c.emoji} ${c.nombre}</option>` : "";
-      }).join("") + `</optgroup>`
-    : "";
-  sel.innerHTML = grupo(sigo, "Mi huerto") + grupo(anotados, "Ya anotados") + grupo(zona, "De mi zona") +
-    `<option value="__otro">✏️ Otro producto…</option>`;
-  syncPriceUnit();
-}
-
-function syncPriceUnit() {
-  const v = document.getElementById("pf-prod").value;
-  document.getElementById("pf-prod-otro").hidden = v !== "__otro";
-  const u = v && v !== "__otro" ? prodUnidad(v) : null;
-  document.getElementById("pf-precio-label").textContent = u ? `Precio por ${u} ($)` : "Precio que viste ($)";
-}
-
-document.getElementById("btn-price-add").addEventListener("click", () => {
-  const form = document.getElementById("price-form");
-  form.hidden = !form.hidden;
-  if (!form.hidden) {
-    fillPriceProductSelect();
-    document.getElementById("pf-precio").value = "";
-    document.getElementById("pf-precio").focus();
-  }
-});
-document.getElementById("pf-cancel").addEventListener("click", () => {
-  document.getElementById("price-form").hidden = true;
-});
-document.getElementById("pf-prod").addEventListener("change", syncPriceUnit);
-
-document.getElementById("pf-save").addEventListener("click", () => {
-  let prod = document.getElementById("pf-prod").value;
-  if (prod === "__otro") {
-    const n = document.getElementById("pf-prod-otro").value.trim().toLowerCase();
-    if (!n) { document.getElementById("pf-prod-otro").focus(); return; }
-    prod = "otro:" + n;
-  }
-  const precio = +document.getElementById("pf-precio").value;
-  if (!prod || !precio || precio <= 0) { document.getElementById("pf-precio").focus(); return; }
-  state.precios.unshift({
-    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
-    prod, precio,
-    lugar: document.getElementById("pf-lugar").value.trim(),
-    fecha: new Date().toISOString().slice(0, 10)
-  });
-  saveState();
-  document.getElementById("price-form").hidden = true;
-  document.getElementById("pf-prod-otro").value = "";
-  document.getElementById("pf-lugar").value = "";
-  renderPriceList();
-});
-
-// --- Mini-gráfica de tendencia ---
-function sparklineSVG(vals) {
-  if (vals.length < 2) {
-    return `<svg class="spark s-flat" viewBox="0 0 72 24"><line x1="4" y1="12" x2="68" y2="12" stroke-dasharray="2 4"/></svg>`;
-  }
-  const serie = vals.slice(-8);
-  const min = Math.min(...serie), max = Math.max(...serie);
-  const span = max - min || 1;
-  const pts = serie.map((v, i) => [
-    (4 + i / (serie.length - 1) * 64).toFixed(1),
-    (20 - (v - min) / span * 16).toFixed(1)
-  ]);
-  const dir = serie[serie.length - 1] > serie[0] ? "s-up" : serie[serie.length - 1] < serie[0] ? "s-down" : "s-flat";
-  const fin = pts[pts.length - 1];
-  return `<svg class="spark ${dir}" viewBox="0 0 72 24">
-    <polyline points="${pts.map(p => p.join(",")).join(" ")}"/>
-    <circle cx="${fin[0]}" cy="${fin[1]}" r="2.4"/></svg>`;
-}
-
-function renderPriceList() {
-  const cont = document.getElementById("price-list");
-  if (!state.precios.length) {
-    cont.innerHTML = `<div class="price-empty">📒 Tu libreta está vacía. Cada vez que vayas a la feria anota aquí a cuánto se vende lo tuyo: con el tiempo verás si sube o baja y cuándo conviene vender.</div>`;
-    return;
-  }
-  const grupos = {};
-  for (const p of state.precios) (grupos[p.prod] = grupos[p.prod] || []).push(p);
-
-  cont.innerHTML = Object.entries(grupos).map(([prod, regs]) => {
-    const serie = [...regs].reverse().map(r => r.precio); // cronológico
-    const ult = regs[0], prev = regs[1];
-    let trend = `<span class="trend flat">primer registro</span>`;
-    if (prev) {
-      const dif = ult.precio - prev.precio;
-      const pct = Math.abs(Math.round(dif / prev.precio * 100));
-      trend = dif > 0.001 ? `<span class="trend up">▲ subió ${pct}%</span>`
-        : dif < -0.001 ? `<span class="trend down">▼ bajó ${pct}%</span>`
-        : `<span class="trend flat">= sin cambio</span>`;
-    }
-    const c = getItem(prod);
-    const u = prodUnidad(prod);
-    const f = new Date(ult.fecha + "T12:00:00");
-    return `
-    <div class="price-card">
-      <div class="price-head">
-        <span class="plant-thumb t-${c ? c.cat : "hierba"}">${prodEmoji(prod)}</span>
-        <span class="price-info">
-          <strong>${prodNombre(prod)}</strong>
-          <small>${f.getDate()} de ${MESES[f.getMonth()].toLowerCase()}${ult.lugar ? " · " + ult.lugar : ""} · ${regs.length} ${regs.length === 1 ? "registro" : "registros"}</small>
-        </span>
-        <span class="price-now">$${fmt(ult.precio)}${u ? `<small>/${u}</small>` : ""}</span>
-      </div>
-      <div class="price-foot">
-        ${sparklineSVG(serie)}
-        <span class="price-meta">${trend}${c ? `<small>Referencia: $${fmt(c.precio)}/${unidadPrecio(c.rendUnidad)}</small>` : ""}</span>
-        <button class="price-del" data-delprice="${prod}" aria-label="Borrar historial">🗑</button>
-      </div>
-    </div>`;
-  }).join("");
-
-  cont.querySelectorAll("[data-delprice]").forEach(b => b.addEventListener("click", () => {
-    if (confirm(`¿Borrar el historial de precios de ${prodNombre(b.dataset.delprice).toLowerCase()}?`)) {
-      state.precios = state.precios.filter(p => p.prod !== b.dataset.delprice);
-      saveState();
-      renderPriceList();
-    }
-  }));
-}
-
-// --- ¿Cuándo vender mejor? ---
-function renderSellWindow() {
-  const cont = document.getElementById("sell-window");
-  const mes = new Date().getMonth() + 1;
-  const sigo = [...new Set(state.siembras.map(s => s.cropId))].map(getItem).filter(Boolean);
-  const conDato = sigo.filter(c => c.mesesPrecioAlto);
-  const otros = catalogoZona().filter(c => c.mesesPrecioAlto && !conDato.includes(c));
-  const lista = conDato.concat(otros).slice(0, 6);
-  if (!lista.length) {
-    cont.innerHTML = `<p class="sub">Los productos de tu zona mantienen un precio parecido todo el año.</p>`;
-    return;
-  }
-  cont.innerHTML = lista.map(c => {
-    const ahora = c.mesesPrecioAlto.includes(mes);
-    return `
-    <div class="sell-row ${ahora ? "now" : ""}" data-plant-link="${c.id}">
-      <span class="sell-emoji">${c.emoji}</span>
-      <span class="sell-info">
-        <strong>${c.nombre}${ahora ? ' <span class="sell-now-tag">¡buen precio ahora!</span>' : ""}</strong>
-        <span class="sell-months">${MESES.map((m, i) =>
-          `<i class="${c.mesesPrecioAlto.includes(i + 1) ? "hi" : ""}${i + 1 === mes ? " cur" : ""}" title="${m}">${m[0]}</i>`).join("")}</span>
-      </span>
-    </div>`;
-  }).join("");
-  cont.querySelectorAll("[data-plant-link]").forEach(r => r.addEventListener("click", () => {
-    state.plantaActual = r.dataset.plantLink;
-    state.backTo = "screen-market";
-    renderPlantDetail();
-    show("screen-plant");
-  }));
-}
-
-// --- Referencia internacional (Banco Mundial, sin key; caché 24 h y respaldo sin conexión) ---
-async function fetchIntlPrices() {
-  try {
-    const cached = JSON.parse(localStorage.getItem(INTL_CACHE_KEY) || "null");
-    if (cached && cached.series && Date.now() - cached.ts < 86400000) return cached.series;
-  } catch { /* caché corrupta: se ignora */ }
-
-  const inds = MERCADO_INTL.map(m => m.ind).join(";");
-  const r = await fetch(`https://api.worldbank.org/v2/country/wld/indicator/${inds}?source=15&format=json&per_page=300&mrv=8`);
-  const j = await r.json();
-  if (!Array.isArray(j) || !Array.isArray(j[1])) throw new Error("formato inesperado");
-  const series = {};
-  for (const row of j[1]) {
-    if (row.value == null || !row.indicator) continue;
-    (series[row.indicator.id] = series[row.indicator.id] || []).push({ fecha: row.date, valor: row.value });
-  }
-  for (const id in series) series[id].sort((a, b) => a.fecha.localeCompare(b.fecha));
-  if (!Object.keys(series).length) throw new Error("sin datos");
-  localStorage.setItem(INTL_CACHE_KEY, JSON.stringify({ ts: Date.now(), series }));
-  return series;
-}
-
-function fechaWB(s) {
-  const m = /^(\d{4})M(\d{2})$/.exec(s);
-  return m ? MESES[+m[2] - 1].slice(0, 3).toLowerCase() + " " + m[1] : s;
-}
-
-async function renderIntlPrices() {
-  const cont = document.getElementById("intl-prices");
-  const nota = document.getElementById("intl-note");
-  let series = null;
-  try { series = await fetchIntlPrices(); } catch { /* usamos valores de respaldo */ }
-
-  cont.innerHTML = MERCADO_INTL.map(m => {
-    const s = series && series[m.ind];
-    let valor = m.fallback, fechaTxt = m.fallbackFecha, trend = "";
-    if (s && s.length) {
-      valor = s[s.length - 1].valor;
-      fechaTxt = fechaWB(s[s.length - 1].fecha);
-      const base = s.length >= 4 ? s[s.length - 4].valor : (s.length >= 2 ? s[0].valor : null);
-      if (base) {
-        const pct = Math.round((valor - base) / base * 100);
-        trend = pct > 1 ? `<span class="trend up">▲ ${pct}%</span>`
-          : pct < -1 ? `<span class="trend down">▼ ${Math.abs(pct)}%</span>`
-          : `<span class="trend flat">estable</span>`;
-      }
-    }
-    // Traducción a la unidad de feria: quintal (45,4 kg) o saco de 50 kg
-    const mostrado = m.mostrar === "qq" ? `$${fmt(valor * 0.04536)}<small>/quintal</small>`
-      : m.mostrar === "saco" ? `$${fmt(valor * 0.05)}<small>/saco 50 kg</small>`
-      : `$${fmt(valor)}<small>/kg</small>`;
-    return `
-    <div class="intl-row">
-      <span class="sell-emoji">${m.emoji}</span>
-      <span class="intl-info"><strong>${m.nombre}</strong><small>${fechaTxt}</small></span>
-      ${trend}
-      <span class="intl-price">${mostrado}</span>
-    </div>`;
-  }).join("");
-
-  nota.textContent = series
-    ? "Referencia mundial (Banco Mundial). Tu precio local depende de la feria, pero sigue la misma corriente. Cambio: últimos 3 meses."
-    : "Sin conexión ahora: valores de referencia guardados. Se actualizan solos cuando haya internet.";
-}
-
-function renderSellTip() {
-  const dia = Math.floor(Date.now() / 86400000);
-  document.getElementById("sell-tip").innerHTML =
-    `<div class="tip-box">💡 <strong>Para vender mejor:</strong> ${CONSEJOS_VENTA[dia % CONSEJOS_VENTA.length]}</div>`;
-}
-
-// --- Resumen de mercado en la pantalla Hoy ---
-function renderMarketStrip() {
-  const cont = document.getElementById("market-strip");
-  if (!cont) return;
-  const mes = new Date().getMonth() + 1;
-  const sigo = [...new Set(state.siembras.map(s => s.cropId))].map(getItem).filter(Boolean);
-  const oportunos = sigo.filter(c => c.mesesPrecioAlto && c.mesesPrecioAlto.includes(mes));
-  const ult = state.precios[0];
-  let texto;
-  if (oportunos.length) {
-    texto = `<strong>${oportunos[0].emoji} ${oportunos[0].nombre}: buena época para vender</strong><small>En ${MESES[mes - 1].toLowerCase()} suele pagarse mejor. Mira el mercado.</small>`;
-  } else if (ult) {
-    const prev = state.precios.find(p => p.prod === ult.prod && p.id !== ult.id);
-    const dir = prev ? (ult.precio > prev.precio ? " ▲" : ult.precio < prev.precio ? " ▼" : "") : "";
-    texto = `<strong>Última anotación: ${prodNombre(ult.prod)} $${fmt(ult.precio)}${dir}</strong><small>Toca para ver tu libreta y las tendencias.</small>`;
-  } else {
-    texto = `<strong>Mercado y precios</strong><small>Anota los precios de tu feria y sabrás cuándo vender.</small>`;
-  }
-  cont.innerHTML = `
-    <div class="market-strip" id="market-strip-card">
-      <span class="m-emoji">💰</span>
-      <span class="m-text">${texto}</span>
-      <span class="chev">›</span>
-    </div>`;
-  document.getElementById("market-strip-card").addEventListener("click", () => {
-    renderMercado();
-    show("screen-market");
-  });
-}
-
-// ---------- Detalle ----------
-function renderPlantDetail() {
-  const c = getItem(state.plantaActual);
-  const esAnimal = c.cat === "animal";
-  const mes = new Date().getMonth() + 1;
-  const info = catInfo(c.cat);
-
-  let cuando;
-  if (esAnimal) {
-    cuando = c.modelo === "ciclo"
-      ? `Listo para la venta en ${formatDias(c.diasProduccion)}.`
-      : `Empieza a producir en ${formatDias(c.diasProduccion)}.${c.vida ? " " + c.vida + "." : ""}`;
-  } else if (c.modelo !== "ciclo") {
-    cuando = `Primera cosecha en ${formatDias(c.diasProduccion)}, luego produce cada ${c.modelo === "anual" ? "año" : "mes"}.${c.vida ? " " + c.vida + "." : ""}`;
-  } else {
-    const fechaCosecha = new Date(Date.now() + c.diasProduccion * 86400000);
-    cuando = c.mesesSiembra.includes(mes)
-      ? `Si siembras hoy, cosechas hacia ${MESES[fechaCosecha.getMonth()].toLowerCase()} (${formatDias(c.diasProduccion)}).`
-      : `Mejor espera: ${proximaSiembra(c).toLowerCase()} es su época de siembra.`;
-  }
-
-  const cal = esAnimal ? "" : `
-    <h3 class="list-title">Meses de siembra</h3>
-    <div class="calendar-row">${MESES.map((m, i) =>
-      `<div class="cal-month ${c.mesesSiembra.includes(i + 1) ? "on" : ""}">${m[0]}</div>`).join("")}</div>`;
-
-  const venta = c.mesesPrecioAlto ? `
-    <h3 class="list-title">Mejor época para vender</h3>
-    <div class="calendar-row">${MESES.map((m, i) =>
-      `<div class="cal-month sell ${c.mesesPrecioAlto.includes(i + 1) ? "on" : ""}">${m[0]}</div>`).join("")}</div>
-    <p class="sub">${c.mesesPrecioAlto.includes(mes) ? "¡Este mes suele pagarse mejor: buen momento para vender!" : "En esos meses escasea y suele pagarse mejor."}</p>` : "";
-
-  const pasos = c.pasos && c.pasos.length ? `
-    <h3 class="list-title">🚶 Cómo empezar</h3>
-    <ol class="step-list">${c.pasos.map(p => `<li>${p}</li>`).join("")}</ol>` : "";
-
-  const sist = !esAnimal && c.sistemas && c.sistemas.length > 1 ? `
-    <h3 class="list-title">Dónde puedes cultivarlo</h3>
-    <div class="sys-list">${c.sistemas.map(id => {
-      const s = SISTEMAS[id];
-      return `<div class="sys-item"><span class="sys-emoji">${s.emoji}</span>
-        <span><strong>${s.nombre}</strong><small>${s.desc}</small></span></div>`;
-    }).join("")}</div>` : "";
-
-  const rendTxt = c.modelo === "mensual" ? `${c.rendimiento} ${c.rendUnidad}/mes`
-    : c.modelo === "anual" ? `${c.rendimiento} ${c.rendUnidad}/año`
-    : `${c.rendimiento} ${c.rendUnidad}`;
-  const unidadBase = UNIDAD_INFO[c.unidad].singular;
-
-  document.getElementById("plant-detail").innerHTML = `
-    <div class="detail-hero">
-      <div class="d-emoji t-${c.cat}">${c.emoji}</div>
-      <div class="detail-cat">${info.nombre}</div>
-      <h2>${c.nombre}</h2>
-      <p class="sub">${cuando}</p>
+        <span class="cmp-val">${nf(f.regadoM3, 2)} <small>/ ${nf(f.pedidoM3, 2)} m³</small></span>
+      </div>`).join('')}
     </div>
-    <div class="tip-box">💡 ${c.tip}</div>
-    <div class="econ-strip">
-      <div><small>Inversión por ${unidadBase}</small><strong>$${fmt(c.inversion)}</strong></div>
-      <div><small>Produce por ${unidadBase}</small><strong>${rendTxt}</strong></div>
-      <div><small>Precio local</small><strong>$${fmt(c.precio)}/${unidadPrecio(c.rendUnidad)}</strong></div>
+    <div class="proy-pie">
+      <span><i class="proy-k"></i>regado (caudalímetro)</span>
+      <span><i class="proy-k proy-k--pedido"></i>pedido (modelo)</span>
     </div>
-    ${cal}
-    ${venta}
-    <div class="detail-grid">
-      <div class="detail-item"><small>${esAnimal ? "Manejo" : "Cómo se siembra"}</small><strong>${esAnimal ? c.tipo : (METODO_SIEMBRA[c.metodo] || c.tipo)}</strong></div>
-      <div class="detail-item"><small>${esAnimal ? "Espacio" : "Marco de siembra"}</small><strong>${c.distancia}</strong></div>
-      ${c.densidad ? `<div class="detail-item"><small>Plantas por m²</small><strong>${c.densidad >= 1 ? Math.round(c.densidad) : c.densidad.toFixed(2).replace(".", ",")}</strong></div>` : ""}
-      <div class="detail-item"><small>${esAnimal ? "Alimentación" : "Riego"}</small><strong>${c.riego}</strong></div>
-      <div class="detail-item"><small>${esAnimal ? "Tiempo a producción" : "Tiempo a cosecha"}</small><strong>${formatDias(c.diasProduccion)}</strong></div>
-      ${c.luna ? `<div class="detail-item"><small>Luna ideal</small><strong>${c.luna === "creciente" ? "🌒 Creciente" : "🌘 Menguante"}</strong></div>` : ""}
-      <div class="detail-item"><small>Altitud</small><strong>${c.altMin} – ${c.altMax} m</strong></div>
-    </div>
-    ${sist}
-    ${pasos}`;
-}
-
-document.getElementById("btn-calc").addEventListener("click", () => { setupCalc(); show("screen-calc"); });
-
-// ---------- Calculadora ----------
-const slider = document.getElementById("area-slider");
-let calcSistema = "suelo";
-
-function sistemasDe(c) { return (c.sistemas && c.sistemas.length ? c.sistemas : ["suelo"]); }
-
-// Reparte las plantas en hileras sobre un terreno aproximadamente cuadrado.
-function distribucion(area, marco, plantas) {
-  if (!marco || !area || plantas < 1) return null;
-  const entreHileras = marco[1] / 100;                    // m
-  const hileras = Math.max(1, Math.round(Math.sqrt(area) / entreHileras));
-  return { hileras, porHilera: Math.max(1, Math.round(plantas / hileras)) };
-}
-
-function fmtDist(cm) {
-  if (cm >= 100) return String(cm / 100).replace(".", ",") + " m";
-  return cm + " cm";
-}
-
-function renderSistemaChips(c) {
-  const cont = document.getElementById("calc-sistemas");
-  const disp = sistemasDe(c);
-  if (disp.length < 2) { cont.innerHTML = ""; return; }
-  cont.innerHTML = `
-    <label class="field-label">¿Cómo lo vas a cultivar?</label>
-    <div class="sys-chips">${disp.map(id => {
-      const s = SISTEMAS[id];
-      return `<button class="${id === calcSistema ? "on" : ""}" data-sys="${id}">
-        <span class="sys-emoji">${s.emoji}</span><span>${s.nombre}</span></button>`;
-    }).join("")}</div>
-    <p class="sys-desc">${SISTEMAS[calcSistema].desc}</p>`;
-  cont.querySelectorAll("[data-sys]").forEach(b => b.addEventListener("click", () => {
-    calcSistema = b.dataset.sys;
-    renderSistemaChips(c);
-    renderCalc();
-  }));
-}
-
-function setupCalc() {
-  const c = getItem(state.plantaActual);
-  const u = UNIDAD_INFO[c.unidad];
-  document.getElementById("calc-title").textContent = `${c.emoji} ${c.nombre}`;
-  document.getElementById("calc-question").textContent = u.pregunta;
-
-  // Arranca en el sistema que mejor calza con el espacio del usuario
-  const disp = sistemasDe(c);
-  calcSistema = (state.espacio === "maceta" && disp.includes("maceta")) ? "maceta" : disp[0];
-  renderSistemaChips(c);
-
-  let max, presets, def;
-  if (c.unidad === "m2") {
-    max = { maceta: 20, huerto: 500, parcela: 20000 }[state.espacio];
-    presets = { maceta: [2, 5, 10, 20], huerto: [25, 50, 100, 250, 500], parcela: [500, 1000, 5000, 10000, 20000] }[state.espacio];
-    def = Math.min(ESPACIOS.find(e => e.id === state.espacio).areaDefault, max);
-  } else if (c.unidad === "animal") {
-    // maxCalc acota el ganado que no cabe en 2 ha (una vaca necesita ~1 ha de pasto).
-    max = c.maxCalc || 100; presets = [1, 3, 5, 10, 25, 50]; def = Math.min(5, max);
-  } else if (c.unidad === "arbol") {
-    max = 100; presets = [1, 3, 5, 10, 25, 50]; def = 5;
-  } else {
-    max = 300; presets = [5, 10, 25, 50, 100]; def = 10;
-  }
-  presets = presets.filter(p => p <= max);
-  if (!presets.includes(max)) presets.push(max);
-  slider.min = 1; slider.max = max; slider.value = def;
-
-  const pc = document.getElementById("area-presets");
-  pc.innerHTML = presets.map(p =>
-    `<button data-area="${p}">${c.unidad === "m2" && p >= 10000 ? (p / 10000) + " ha" : p}</button>`).join("");
-  pc.querySelectorAll("button").forEach(b => {
-    b.addEventListener("click", () => { slider.value = b.dataset.area; renderCalc(); });
-  });
-
-  renderCalc();
-}
-
-slider.addEventListener("input", renderCalc);
-
-// Traduce el área (o el número de plantas) al plan de siembra concreto.
-function renderSiembra(c, n, area, plantas, S) {
-  const cont = document.getElementById("calc-siembra");
-  if (!c.marco) { cont.innerHTML = ""; return; }
-
-  const esArea = c.unidad === "m2";
-  const dist = distribucion(area, c.marco, plantas);
-  const semilla = { directa: "semillas", tuberculo: "tubérculos-semilla", esqueje: "esquejes",
-    estaca: "estacas", hijuelo: "hijuelos", mata: "matas", semillero: "plantas de semillero",
-    plantula: "plántulas", planta: "plantas", vivero: "plantas de vivero" }[c.metodo] || "plantas";
-
-  const filas = [
-    `<div><span>${c.metodo === "directa" ? "Semillas" : "Plantas"} necesarias</span><strong>${fmt(plantas)} ${semilla}</strong></div>`,
-    `<div><span>Marco de siembra</span><strong>${fmtDist(c.marco[0])} entre plantas · ${fmtDist(c.marco[1])} entre hileras</strong></div>`
-  ];
-  if (dist && dist.hileras > 1) {
-    filas.push(`<div><span>Cómo repartirlas</span><strong>≈ ${dist.hileras} hileras de ${dist.porHilera}</strong></div>`);
-  }
-  if (!esArea && area) {
-    filas.push(`<div><span>Terreno que ocupa</span><strong>${area >= 10000 ? fmt(area / 10000) + " ha" : fmt(area) + " m²"}</strong></div>`);
-  }
-  if (calcSistema === "maceta") {
-    filas.push(`<div><span>Macetas</span><strong>${fmt(plantas)} de 20 litros o más</strong></div>`);
-  }
-
-  const consejo = {
-    suelo: "Siémbralo en surcos (guachos) o camas, y deja un caminito cada 4-5 hileras para poder entrar a deshierbar y cosechar.",
-    maceta: "Una planta por maceta. Agrupa las macetas dejando pasillos para regar y cosechar sin pisar.",
-    invernadero: "Dentro del invernadero deja un pasillo central de 60-80 cm para entrar con carretilla.",
-    hidroponia: "Necesitas un sitio de cultivo por planta en los canales o mesas, con la misma separación."
-  }[S.id];
-
-  cont.innerHTML = `
-    <h3 class="list-title">Cómo queda sembrado</h3>
-    <div class="siembra-card">${filas.join("")}</div>
-    <p class="calc-note">${consejo}</p>`;
-}
-
-function renderCalc() {
-  const c = getItem(state.plantaActual);
-  const u = UNIDAD_INFO[c.unidad];
-  const n = +slider.value;
-
-  document.getElementById("area-unit").textContent = n === 1 ? u.singular : u.plural;
-  document.getElementById("area-num").textContent =
-    c.unidad === "m2" && n >= 10000 ? (n / 10000).toFixed(1).replace(".0", "") + " ha —" : n;
-  document.querySelectorAll("#area-presets button").forEach(b =>
-    b.classList.toggle("on", +b.dataset.area === n));
-
-  // Sistema de cultivo: cambia rendimiento, gastos y añade el costo de la instalación.
-  const S = SISTEMAS[calcSistema] || SISTEMAS.suelo;
-  const esArea = c.unidad === "m2";
-  // Se calcula desde el marco, no desde la densidad redondeada, para no arrastrar error.
-  const m2PorPlanta = c.marco ? (c.marco[0] / 100) * (c.marco[1] / 100) : null;
-  const area = esArea ? n : (m2PorPlanta ? n * m2PorPlanta : null);
-  const plantas = esArea ? (m2PorPlanta ? Math.max(1, Math.round(n / m2PorPlanta)) : n) : n;
-
-  renderSiembra(c, n, area, plantas, S);
-
-  const infra = area && S.infra ? area * S.infra : 0;
-  const inversion = c.inversion * n + infra;      // desembolso inicial total
-  const gasto = c.gastoCiclo * n * S.gasto;
-  const prod = c.rendimiento * n * S.rend;
-  const venta = prod * c.precio;
-  const rU = c.rendUnidad;
-
-  // La instalación dura años, así que a cada ciclo/año/mes le toca solo su parte.
-  // Cargarla entera a un ciclo haría ver como pérdida algo que sí es rentable.
-  const diasPeriodo = c.modelo === "ciclo" ? c.diasProduccion : c.modelo === "anual" ? 365 : 30;
-  const infraPeriodo = infra > 0 ? infra * (diasPeriodo / (S.vidaInfra * 365)) : 0;
-  const periodoTxt = c.modelo === "ciclo" ? "este ciclo" : c.modelo === "anual" ? "el año" : "el mes";
-  const filaInfra = infraPeriodo > 0
-    ? `<div class="calc-row"><span class="label">${S.emoji} ${S.nombre} <small>(parte que le toca a ${periodoTxt})</small></span><span>$${fmt(infraPeriodo)}</span></div>`
-    : "";
-  const notaInfra = infra > 0
-    ? ` La instalación cuesta $${fmt(infra)} una sola vez y dura unos ${S.vidaInfra} años: aquí se reparte entre todos los ${c.modelo === "ciclo" ? "ciclos" : c.modelo === "anual" ? "años" : "meses"} de ese tiempo.`
-    : "";
-  let rows, nota;
-
-  const etiquetaBase = c.cat === "animal" ? "Compra de animales" : "Semillas o plantas";
-
-  if (c.modelo === "ciclo") {
-    const ganancia = venta - c.inversion * n - gasto - infraPeriodo;
-    rows = `
-      <div class="calc-row"><span class="label">${etiquetaBase}</span><span>$${fmt(c.inversion * n)}</span></div>
-      ${filaInfra}
-      <div class="calc-row"><span class="label">Gastos del ciclo (${c.cat === "animal" ? "alimento" : "insumos"})</span><span>$${fmt(gasto)}</span></div>
-      <div class="calc-row"><span class="label">${c.cat === "animal" ? "Producción" : "Cosecha"} en ${formatDias(c.diasProduccion)}</span><span>${fmt(prod)} ${rU}</span></div>
-      <div class="calc-row"><span class="label">Venta estimada</span><span>$${fmt(venta)}</span></div>
-      <div class="calc-row total"><span class="label">Ganancia del ciclo</span><span>$${fmt(ganancia)}</span></div>`;
-    nota = `Ciclo de ${formatDias(c.diasProduccion)}.`;
-  } else if (c.modelo === "anual") {
-    const gananciaAnual = venta - gasto - infraPeriodo;
-    const payback = gananciaAnual > 0 ? Math.ceil(inversion / gananciaAnual) : null;
-    rows = `
-      <div class="calc-row"><span class="label">${etiquetaBase}</span><span>$${fmt(c.inversion * n)}</span></div>
-      ${filaInfra}
-      <div class="calc-row"><span class="label">Primera ${c.cat === "animal" ? "producción" : "cosecha"}</span><span>en ${formatDias(c.diasProduccion)}</span></div>
-      <div class="calc-row"><span class="label">Producción por año</span><span>${fmt(prod)} ${rU}</span></div>
-      <div class="calc-row"><span class="label">Gastos por año</span><span>$${fmt(gasto)}</span></div>
-      <div class="calc-row"><span class="label">Ingreso por año</span><span>$${fmt(venta)}</span></div>
-      <div class="calc-row total"><span class="label">Ganancia por año</span><span>$${fmt(gananciaAnual)}</span></div>`;
-    nota = payback ? `Recuperas la inversión en ~${payback} ${payback === 1 ? "año" : "años"} de producción.` : "";
-  } else {
-    const gananciaMes = venta - gasto - infraPeriodo;
-    const payback = gananciaMes > 0 ? Math.ceil(inversion / gananciaMes) : null;
-    rows = `
-      <div class="calc-row"><span class="label">${etiquetaBase}</span><span>$${fmt(c.inversion * n)}</span></div>
-      ${filaInfra}
-      <div class="calc-row"><span class="label">Producción por mes</span><span>${fmt(prod)} ${rU}</span></div>
-      <div class="calc-row"><span class="label">Gastos por mes (alimento)</span><span>$${fmt(gasto)}</span></div>
-      <div class="calc-row"><span class="label">Ingreso por mes</span><span>$${fmt(venta)}</span></div>
-      <div class="calc-row total"><span class="label">Ganancia por mes</span><span>$${fmt(gananciaMes)}</span></div>`;
-    nota = payback ? `Recuperas la inversión en ~${payback} ${payback === 1 ? "mes" : "meses"}.` : "";
-  }
-
-  document.getElementById("calc-results").innerHTML = `
-    <div class="calc-card">${rows}</div>
-    <p class="calc-note">${nota}${notaInfra} Precios referenciales: ${PRECIOS_META.fuente.toLowerCase()} de ${PRECIOS_META.pais} (${PRECIOS_META.actualizado}). No incluye tu mano de obra ni transporte.</p>`;
-}
-
-// ---------- PWA: offline e instalación ----------
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
-}
-
-let installPrompt = null;
-const INSTALL_DISMISSED = "mihuerto.installDismissed";
-
-window.addEventListener("beforeinstallprompt", e => {
-  e.preventDefault();
-  installPrompt = e;
-  renderInstallBanner();
-});
-
-window.addEventListener("appinstalled", () => {
-  installPrompt = null;
-  renderInstallBanner();
-});
-
-function renderInstallBanner() {
-  const cont = document.getElementById("install-banner");
-  if (!cont) return;
-  if (!installPrompt || localStorage.getItem(INSTALL_DISMISSED)) { cont.innerHTML = ""; return; }
-  cont.innerHTML = `
-    <div class="install-banner">
-      <span class="i-emoji">📲</span>
-      <span class="i-text"><strong>Instala Mi Huerto</strong><small>Úsala como app, incluso sin internet.</small></span>
-      <button class="i-btn" id="btn-install">Instalar</button>
-      <button class="i-close" id="btn-install-close" aria-label="Cerrar">✕</button>
-    </div>`;
-  document.getElementById("btn-install").addEventListener("click", async () => {
-    if (!installPrompt) return;
-    installPrompt.prompt();
-    await installPrompt.userChoice;
-    installPrompt = null;
-    renderInstallBanner();
-  });
-  document.getElementById("btn-install-close").addEventListener("click", () => {
-    localStorage.setItem(INSTALL_DISMISSED, "1");
-    renderInstallBanner();
-  });
-}
-
-// ---------- Notificaciones nativas ----------
-function checkAndSendNotifications() {
-  if (!('Notification' in window)) return;
-  if (Notification.permission !== 'granted') return;
-  if (!state.altitud || !state.espacio) return;
-
-  const lastNotifDate = localStorage.getItem('lastNotificationDate');
-  const today = new Date().toISOString().split('T')[0];
-  if (lastNotifDate === today) return;
-
-  const data = {
-    siembras: state.siembras,
-    altitud: state.altitud,
-    espacio: state.espacio
-  };
-
-  const notifs = computeNotifications(CULTIVOS, data, state.forecast);
-  notifs.forEach(notif => {
-    new Notification(notif.title, {
-      body: notif.body,
-      tag: notif.key,
-      requireInteraction: false
-    });
-  });
-
-  localStorage.setItem('lastNotificationDate', today);
-}
-
-function requestNotificationPermission() {
-  if (!('Notification' in window) || Notification.permission === 'granted') return;
-  if (Notification.permission === 'default') {
-    Notification.requestPermission();
-  }
-}
-
-// Solicitar permiso al cargar
-requestNotificationPermission();
-
-// ---------- Swipe navigation ----------
-let touchStartX = 0, touchStartY = 0, touchStartBlocked = false;
-const minSwipeDistance = 50;
-const maxVerticalDelta = 100;
-// Elementos con su propio scroll horizontal: el swipe de página no debe robárselo.
-const SWIPE_EXCLUDE = '.cat-chips, .month-chips, .sell-months, input[type="range"]';
-
-document.addEventListener('touchstart', (e) => {
-  touchStartX = e.touches[0].clientX;
-  touchStartY = e.touches[0].clientY;
-  touchStartBlocked = !!e.target.closest(SWIPE_EXCLUDE);
-}, false);
-
-document.addEventListener('touchend', (e) => {
-  if (touchStartBlocked) return;
-  // Solo cambia de pestaña si la pantalla activa es una de las 5 con tabbar visible.
-  if (tabbar.hidden) return;
-
-  const touchEndX = e.changedTouches[0].clientX;
-  const touchEndY = e.changedTouches[0].clientY;
-  const dx = touchEndX - touchStartX;
-  const dy = Math.abs(touchEndY - touchStartY);
-
-  if (dy > maxVerticalDelta) return;
-
-  const tabs = Array.from(tabbar.querySelectorAll('.tab'));
-  const currentIdx = tabs.findIndex(t => t.classList.contains('on'));
-
-  if (dx > minSwipeDistance && currentIdx > 0) {
-    tabs[currentIdx - 1].click();
-  } else if (dx < -minSwipeDistance && currentIdx < tabs.length - 1) {
-    tabs[currentIdx + 1].click();
-  }
-}, false);
-
-// ---------- Ajustes / inicio ----------
-document.getElementById("btn-settings").addEventListener("click", () => show("screen-location"));
-document.getElementById("btn-start").addEventListener("click", () => show("screen-location"));
-
-renderManualZones();
-renderSpaceOptions();
-
-if (loadState()) {
-  renderHome();
-  show("screen-home");
+  </div>`;
 }

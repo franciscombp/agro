@@ -5,6 +5,7 @@
 import { SPECIES } from './db.js';
 import { areaM2 } from './geo.js';
 import { ET0_REF, RESERVA_SUELO_MM, lluviaEfectiva, contexto } from './clima.js';
+import { hoy, enDias } from './fechas.js';
 
 /* ── Cuánta agua pide cada planta ───────────────────────────────────────────
    Antes era un número fijo por especie. El problema no era que fuera burdo
@@ -167,7 +168,7 @@ export function currentVolumeM3(events, config, dailyM3) {
     byDay.get(e.date).push(e);
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = hoy();
   const totalDays = Math.min(daysBetween(first.date, today), 3650);
 
   let volume = 0;
@@ -260,12 +261,12 @@ export function demandaPasada({ plants, sectors = [], clima, reservaMax = RESERV
  */
 export function regadoVsPedido({ water, plants, sectors, clima, reservaMax, dias = 7 }) {
   const pedido = demandaPasada({ plants, sectors, clima, reservaMax });
-  const hoy = new Date().toISOString().slice(0, 10);
-  const desde = new Date(Date.now() - dias * 86400000).toISOString().slice(0, 10);
+  const hoyD = hoy();
+  const desde = enDias(-dias);
   const regado = {};
   for (const e of water) {
     if (e.type !== 'riego' || e.origen !== 'sensor' || typeof e.volumeM3 !== 'number') continue;
-    if (e.date < desde || e.date >= hoy) continue;      // hoy todavía no terminó
+    if (e.date < desde || e.date >= hoyD) continue;      // hoy todavía no terminó
     regado[e.date] = (regado[e.date] || 0) + e.volumeM3;
   }
   const filas = Object.keys(regado).filter(d => pedido[d] != null).sort()
@@ -362,7 +363,7 @@ export function upcomingTurns(config, count = 4) {
   const out = [];
   if (!config.proximoTurno) return out;
   let d = new Date(config.proximoTurno + 'T00:00:00Z');
-  const today = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00Z');
+  const today = new Date(hoy() + 'T00:00:00Z');
   while (d < today) d = new Date(d.getTime() + cycle * 86400000);
   for (let i = 0; i < count; i++) {
     out.push({

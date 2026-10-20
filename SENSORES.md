@@ -91,7 +91,7 @@ Es `receptor/worker.js`, un Cloudflare Worker. El plan gratuito alcanza de sobra
 unos pocos sensores. Desde la raíz del repositorio:
 
 ```bash
-cd mulalillo/receptor
+cd receptor
 npx wrangler login
 npx wrangler kv namespace create LECTURAS      # copia el id en wrangler.toml
 npx wrangler secret put TOKEN_ESCRITURA         # inventa uno largo; va en TTN
@@ -105,8 +105,8 @@ el repositorio es público.
 ### Probarlo en tu máquina, sin cuenta
 
 ```bash
-node mulalillo/receptor/local.mjs        # receptor en http://localhost:8787
-node mulalillo/receptor/simular.mjs      # una semana de mensajes TTN y HA
+node receptor/local.mjs        # receptor en http://localhost:8787
+node receptor/simular.mjs      # una semana de mensajes TTN y HA
 ```
 
 Usa el mismo `worker.js` que se despliega; sólo cambia dónde guarda las lecturas. En la

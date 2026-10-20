@@ -1,4 +1,6 @@
-// Mi Huerto — catálogo para agricultura de subsistencia y huertos urbanos (Ecuador).
+// Catálogo del huerto: cultivos y crianza para la sierra y la costa de Ecuador.
+// Era el data.js de Mi Huerto; ahora es un módulo que la app integrada importa.
+// Los datos no cambian: sólo se exportan.
 // Precios referenciales de mercados mayoristas y ferias locales de Ecuador.
 // unidad: base de cálculo → "m2" | "planta" | "arbol" | "animal"
 // modelo: "ciclo" (una cosecha) | "anual" (produce cada año) | "mensual" (produce cada mes)
@@ -777,3 +779,9 @@ function zonaPorAltitud(alt) {
   if (alt < 3200) return { nombre: "Sierra andina", emoji: "⛰️" };
   return { nombre: "Sierra alta", emoji: "🏔️" };
 }
+
+
+export {
+  PRECIOS_META, MERCADO_INTL, CONSEJOS_VENTA, SISTEMAS, METODO_SIEMBRA, CATEGORIAS,
+  CULTIVOS, MESES, DIAS_SEM, ESPACIOS, UNIDAD_INFO, zonaPorAltitud
+};

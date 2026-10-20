@@ -1,6 +1,6 @@
 // Sensores de mentira que mandan lo mismo que mandarán los de verdad.
 //
-//   node mulalillo/receptor/simular.mjs [url] [token-escritura] [días]
+//   node receptor/simular.mjs [url] [token-escritura] [días]
 //
 // Por defecto apunta al receptor local. Genera una semana de:
 //   · reservorio — un ultrasónico tipo Dragino LDDS75 por TTN, cada hora,

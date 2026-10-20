@@ -22,7 +22,10 @@ export default defineConfig({
       name: 'copy-assets',
       apply: 'build',
       generateBundle() {
-        const filesToCopy = ['index.html', 'styles.css', 'app.js', 'data.js', 'clima.js', 'notify.js', 'sw.js', 'manifest.webmanifest'];
+        // La app son módulos ES sin empaquetar: se copian tal cual.
+        const filesToCopy = ['index.html', 'styles.css', 'app.js', 'estado.js', 'ui.js', 'fechas.js',
+          'db.js', 'geo.js', 'map2d.js', 'water.js', 'clima.js', 'sensores.js', 'normaliza.js',
+          'hydraulics.js', 'planting.js', 'view3d.js', 'sw.js', 'manifest.webmanifest', 'diagnostico.html'];
         filesToCopy.forEach(file => {
           const src = path.join(process.cwd(), file);
           if (fs.existsSync(src)) {
@@ -37,11 +40,12 @@ export default defineConfig({
       }
     },
     {
-      name: 'copy-design-system',
+      name: 'copy-dirs',
       apply: 'build',
       writeBundle() {
-        // mal-ds vendorizado (ds/) y los tokens heredados de Mi Huerto (styles/).
-        for (const dir of ['ds', 'styles']) {
+        // mal-ds vendorizado, librerías del mapa y del 3D, el huerto, las vistas,
+        // y la redirección de la dirección vieja de la finca.
+        for (const dir of ['ds', 'lib', 'huerto', 'vistas', 'mulalillo']) {
           const src = path.join(process.cwd(), dir)
           if (fs.existsSync(src)) copyDir(src, path.join(process.cwd(), 'dist', dir))
         }
@@ -53,19 +57,8 @@ export default defineConfig({
       writeBundle() {
         // Sin este archivo, GitHub Pages pasa el sitio por Jekyll, que descarta
         // directorios de su lista de exclusión (vendor/, node_modules/…). Por eso
-        // mulalillo/vendor/ devolvía 404 aunque estuviera en la rama publicada.
+        // lib/ o vendor/ podían devolver 404 aunque estuvieran en la rama publicada.
         fs.writeFileSync(path.join(process.cwd(), 'dist', '.nojekyll'), '')
-      }
-    },
-    {
-      name: 'copy-mulalillo',
-      apply: 'build',
-      writeBundle() {
-        // PoC en subdirectorio: se copia tal cual, sin empaquetar (usa módulos ES y CDN).
-        const src = path.join(process.cwd(), 'mulalillo');
-        const dest = path.join(process.cwd(), 'dist', 'mulalillo');
-        if (!fs.existsSync(src)) return;
-        copyDir(src, dest);
       }
     },
     {

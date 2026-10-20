@@ -1,6 +1,6 @@
 // El receptor corriendo en tu máquina, sin Cloudflare.
 //
-//   node mulalillo/receptor/local.mjs           → http://localhost:8787
+//   node receptor/local.mjs           → http://localhost:8787
 //
 // Usa EXACTAMENTE el mismo worker.js que se despliega; sólo cambia dónde se
 // guardan las lecturas (en memoria en vez de KV). Sirve para probar la app y
@@ -62,5 +62,5 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log('Receptor local en http://localhost:8787');
   console.log(`  token de escritura: ${entorno.TOKEN_ESCRITURA}`);
   console.log(`  token de lectura:   ${entorno.TOKEN_LECTURA}`);
-  console.log('Prueba: node mulalillo/receptor/simular.mjs');
+  console.log('Prueba: node receptor/simular.mjs');
 }

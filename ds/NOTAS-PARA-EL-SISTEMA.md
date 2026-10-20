@@ -54,3 +54,36 @@ reescribir las declaraciones en `styles/fonts.css`, apuntando a los mismos archi
 Publicar el bloque de fuentes aparte (`mal/fuentes.css`) permitiría adoptar la
 tipografía sin adoptar la paleta, que es justo el paso intermedio que una migración
 real necesita.
+
+*(Actualización, v17: Mi Huerto ya no tiene hoja propia de fuentes. Al unirse con la
+finca pasó entero a mal-ds, así que `styles/fonts.css` y `styles/design-system.css`
+desaparecieron. La sugerencia sigue valiendo para la próxima app que migre por partes.)*
+
+## 5. Lo que dejó la unión con Mi Huerto
+
+Mi Huerto y la finca eran dos apps con dos estéticas, y la que mandó al unirlas fue la de
+Mi Huerto: fondo cálido liso, tarjetas blancas con sombra suave y difusa, esquinas de
+12 px en controles y 16 px en tarjetas, recuadros con emoji teñidos por tipo de cultivo y
+pastillas de estado en tono suave. Entró como **valores en los roles del sistema**
+(`--app-bg`, `--app-surface`, `--app-sombra-1`…), sin reglas de color sueltas, y el
+oscuro lo siguió resolviendo el sistema. Tres cosas que salieron de hacerlo:
+
+- **Candidato para `apps`: la sombra suave.** La elevación del sistema es nítida y se lee
+  «técnica»; la del huerto es dos capas muy difusas (`0 1px 2px` + `0 6px 20px`, tinte
+  verde al 5–6 %). En una app de campo, con mucha tarjeta seguida, es la que hace que la
+  pantalla respire. También los **tintes de categoría** (hortaliza, grano, fruta, hierba,
+  animal, agua): son identidad del contenido, no estados, y hoy cada app tendría que
+  inventarlos.
+- **El secundario y el campo se leen como deshabilitados junto a tarjetas blancas.** El
+  `.btn` sin modificador y los `input` traen relleno de tono (`--mal-campo`,
+  `--mal-relleno`) con `--mal-borde-fuerte`. Sobre el papel del periódico funciona; en
+  una pantalla de tarjetas blancas parecían apagados. Hubo que pasarlos a blanco con
+  borde fino y foco con halo del color de marca. Un token `--mal-campo` propio del tema
+  `apps`, o un modificador `.btn--claro`, lo resolvería en el sistema.
+- **Los nombres de componente del sistema son globales y chocan.** `.cifras` del
+  sistema (píldoras en mono, mayúsculas, con espaciado) se aplicó a una rejilla de cifras
+  de lluvia de la app que se llamaba igual, y las cifras salieron en JetBrains Mono sin
+  que nada fallara. Otros que coinciden y conviene saber: `.opcion`, `.opciones`,
+  `.tabla`, `.buscar`, `.panel`. Un prefijo para componentes que no son de base
+  (`.mal-cifras`) o una lista publicada de nombres reservados evitaría el susto; mientras
+  tanto, la app usa nombres más específicos.

@@ -1,10 +1,10 @@
-// Copia las librerías del mapa y del 3D a mulalillo/lib/.
+// Copia las librerías del mapa y del 3D a lib/.
 // La PoC no carga nada de un CDN: debe abrir sin señal desde la primera visita.
 import fs from 'fs';
 import path from 'path';
 
 const root = process.cwd();
-const dest = path.join(root, 'mulalillo', 'lib');
+const dest = path.join(root, 'lib');
 
 const FILES = [
   ['node_modules/maplibre-gl/dist/maplibre-gl.js', 'maplibre-gl.js'],
@@ -19,7 +19,7 @@ let missing = 0;
 for (const [src, name] of FILES) {
   const from = path.join(root, src);
   if (!fs.existsSync(from)) {
-    console.error(`[vendor-mulalillo] falta ${src} — ejecuta npm install`);
+    console.error(`[vendor-lib] falta ${src} — ejecuta npm install`);
     missing++;
     continue;
   }
@@ -32,4 +32,4 @@ for (const [src, name] of FILES) {
 }
 
 if (missing) process.exit(1);
-console.log(`[vendor-mulalillo] ${FILES.length} archivos copiados a mulalillo/lib/`);
+console.log(`[vendor-lib] ${FILES.length} archivos copiados a lib/`);

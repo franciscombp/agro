@@ -3,10 +3,14 @@
 "use strict";
 
 const DB_NAME = 'mulalillo';
-// v2 añade `lecturas`: lo que mandan los sensores. Subir la versión es lo que
-// hace que el navegador cree el almacén nuevo sin tocar los que ya existen.
-const DB_VERSION = 2;
-const STORES = ['parcels', 'sectors', 'plants', 'infra', 'tasks', 'water', 'elevations', 'outbox', 'meta', 'lecturas'];
+// Subir la versión es lo que hace que el navegador cree los almacenes nuevos
+// sin tocar los que ya existen:
+//   v2 añade `lecturas`, lo que mandan los sensores;
+//   v3 añade `siembras` y `precios`, que vivían en el localStorage de Mi Huerto
+//      y ahora son datos de la finca como los demás.
+const DB_VERSION = 3;
+const STORES = ['parcels', 'sectors', 'plants', 'infra', 'tasks', 'water', 'elevations', 'outbox', 'meta', 'lecturas',
+  'siembras', 'precios'];
 
 let dbPromise = null;
 
@@ -270,14 +274,14 @@ const SEED_TASKS = [
  * recién sembrado no bebe como uno de cuatro años.
  */
 export const SPECIES = {
-  aguacate: { label: 'Aguacate', lppd: 30, kc: 0.85, maduraAnios: 8, color: '#2f9e44' },
-  peral: { label: 'Peral', lppd: 25, kc: 0.90, maduraAnios: 7, color: '#f08c00' },
-  arandano: { label: 'Arándano', lppd: 4, kc: 0.85, maduraAnios: 4, color: '#4c6ef5' },
-  mora: { label: 'Mora', lppd: 5, kc: 0.90, maduraAnios: 3, color: '#862e9c' },
-  lavanda: { label: 'Lavanda', lppd: 1.5, kc: 0.55, maduraAnios: 3, color: '#7048e8' },
-  hortaliza: { label: 'Hortaliza (huerto)', lppd: 3, kc: 0.95, maduraAnios: 0.4, color: '#e8590c' },
-  pasto: { label: 'Pasto', lppd: 0, kc: 0.85, maduraAnios: 1, color: '#66a80f' },
-  otro: { label: 'Otro', lppd: 5, kc: 0.80, maduraAnios: 5, color: '#868e96' }
+  aguacate: { label: 'Aguacate', emoji: '🥑', lppd: 30, kc: 0.85, maduraAnios: 8, color: '#2f9e44' },
+  peral: { label: 'Peral', emoji: '🍐', lppd: 25, kc: 0.90, maduraAnios: 7, color: '#f08c00' },
+  arandano: { label: 'Arándano', emoji: '🫐', lppd: 4, kc: 0.85, maduraAnios: 4, color: '#4c6ef5' },
+  mora: { label: 'Mora', emoji: '🍇', lppd: 5, kc: 0.90, maduraAnios: 3, color: '#862e9c' },
+  lavanda: { label: 'Lavanda', emoji: '🪻', lppd: 1.5, kc: 0.55, maduraAnios: 3, color: '#7048e8' },
+  hortaliza: { label: 'Hortaliza (huerto)', emoji: '🥬', lppd: 3, kc: 0.95, maduraAnios: 0.4, color: '#e8590c' },
+  pasto: { label: 'Pasto', emoji: '🌾', lppd: 0, kc: 0.85, maduraAnios: 1, color: '#66a80f' },
+  otro: { label: 'Otro', emoji: '🌱', lppd: 5, kc: 0.80, maduraAnios: 5, color: '#868e96' }
 };
 
 export const STATUS_COLORS = {
