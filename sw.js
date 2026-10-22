@@ -2,7 +2,7 @@
 // Debe funcionar sin señal en el campo: shell precacheado, librerías y tiles en caché.
 "use strict";
 
-const VERSION = "v19";
+const VERSION = "v20";
 const SHELL = "mihuerto-shell-" + VERSION;
 // El nombre viejo se queda: así no se pierden los tiles ya bajados en el campo.
 const TILES = "mulalillo-tiles";
@@ -23,6 +23,7 @@ const ASSETS = [
   "./db.js",
   "./carencia.js",
   "./hongos.js",
+  "./abono.js",
   "./geo.js",
   "./map2d.js",
   "./water.js",

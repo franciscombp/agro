@@ -24,7 +24,7 @@ export default defineConfig({
       generateBundle() {
         // La app son módulos ES sin empaquetar: se copian tal cual.
         const filesToCopy = ['index.html', 'styles.css', 'app.js', 'estado.js', 'ui.js', 'fechas.js',
-          'db.js', 'carencia.js', 'hongos.js', 'geo.js', 'map2d.js', 'water.js', 'clima.js', 'sensores.js', 'normaliza.js',
+          'db.js', 'carencia.js', 'hongos.js', 'abono.js', 'geo.js', 'map2d.js', 'water.js', 'clima.js', 'sensores.js', 'normaliza.js',
           'hydraulics.js', 'planting.js', 'view3d.js', 'sw.js', 'manifest.webmanifest', 'diagnostico.html'];
         filesToCopy.forEach(file => {
           const src = path.join(process.cwd(), file);

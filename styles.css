@@ -575,6 +575,9 @@ input[type="number"]::-webkit-inner-spin-button, input[type="number"]::-webkit-o
 .aviso--peligro { border-left-color: var(--app-danger); background: var(--app-danger-soft); margin: 0; }
 [data-espera]:not([hidden]) { display: flex; flex-direction: column; gap: 10px; }
 .confirma { gap: 10px !important; }
+.abono-etapa { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin: 0 0 16px;
+  padding: 12px 14px; border-radius: var(--r-control); background: var(--app-surface-2); }
+.abono-etapa small { font-size: .86rem; color: var(--app-ink-2); line-height: 1.4; }
 
 /* ── 6b. Cuentas ─────────────────────────────────────────────────────── */
 .cuentas-total { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }

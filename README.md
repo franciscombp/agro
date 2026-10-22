@@ -87,6 +87,12 @@ dos columnas que se leen cada una entera.
   ese tiempo (con las plantas en plena producción: es un techo). Los gastos son los
   anotados más el costo de las tareas hechas. «Ya coseché» en una siembra pide cuánto
   salió y la saca de la lista sin borrarla, para que siga contando en las cuentas.
+- **Abono por etapa.** La etapa que cada sector declara para el riego dice también qué
+  abonar: orgánico en reposo, nitrógeno en brotación, fósforo, calcio y boro en flor,
+  potasio en llenado, nada en cosecha y reponer en poscosecha, con notas propias para
+  arándano, aguacate y mora. Al cambiar la etapa se ofrece la tarea de abonar, ya
+  marcada, y la ficha del sector la explica. **Sin dosis**: la cantidad depende del suelo
+  y del producto, y la tarea dice de dónde sacarla.
 - **Riesgo de hongos.** Un día húmedo (humedad media ≥ 85 % y lluvia o 3 h de llovizna)
   y templado (media de 10 a 25 °C) es bueno para el hongo. Si 3 de los 6 días entre
   anteayer y dentro de tres lo son, y alguno está por venir, Hoy avisa con qué revisar:
@@ -153,6 +159,7 @@ worker, descarga de cada archivo), y `?sw=off` la abre sin service worker.
 | `huerto/catalogo.js` | ~45 cultivos y animales con altitud, meses, riego, costos y precios |
 | `huerto/cuentas.js` | Sumas de lo cosechado, vendido y gastado, y lo esperado por sector |
 | `huerto/libreta.js` | Anotar cosecha, venta y gasto, y el panel Cuentas |
+| `abono.js` | Qué abonar en cada etapa del cultivo, sin dosis |
 | `hongos.js` | Riesgo de hongos según la humedad y la temperatura de estos días |
 | `carencia.js` | Días de espera después de fumigar: dónde no se cosecha todavía y hasta cuándo |
 | `huerto/nino.js` | Estado hídrico, El Niño / La Niña por región, consejo por cultivo |

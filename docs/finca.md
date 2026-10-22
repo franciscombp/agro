@@ -305,6 +305,10 @@ en el punto, «Fijar con mi GPS» las corrige y el modelo de terreno se recalcul
   sale del catálogo con plantas adultas: una planta que recién empieza a dar parece rendir
   poco cuando sólo está creciendo. Las plantas de la finca entran en lo esperado sólo si su
   especie está en el catálogo del huerto (aguacate, arándano, mora; el peral no).
+- **El abono por etapa no trae dosis.** Dice qué nutriente toca en cada etapa, que es
+  general, pero no cuánto, que depende del análisis de suelo y del producto. Con un
+  análisis de la finca se podría agregar la cantidad por sector. Al cambiar de etapa,
+  una tarea de abono de la etapa anterior que siga pendiente no se borra sola.
 - **El aviso de hongos es una regla de dedo.** Usa la humedad media del día de
   Open-Meteo, no horas de hoja mojada medidas, y no sabe si el hongo ya está en el lote.
   Avisa para revisar, no para fumigar. Si la API dejara de dar la humedad, el clima se

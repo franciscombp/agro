@@ -24,6 +24,7 @@ import { enDias } from './fechas.js';
 import * as huerto from './huerto/huerto.js';
 import * as libreta from './huerto/libreta.js';
 import * as carencia from './carencia.js';
+import * as abono from './abono.js';
 import { renderHoy, tareasDeHoy, notificacionesDisponibles, NOTIF_DIA, riesgoDeHongos } from './vistas/hoy.js';
 
 const INFRA_TYPES = ['reservorio', 'casa', 'establo', 'cuyera', 'bomba', 'filtro', 'válvula'];
@@ -38,7 +39,7 @@ const WATER_LABELS = {
   'medición_nivel': 'Medí el nivel del reservorio'
 };
 const STATUSES = ['sano', 'atención', 'enfermo', 'muerto'];
-const BUILD = 'v19';
+const BUILD = 'v20';
 
 let farmMap = null;
 let terrain = null;       // vista 3D, se carga bajo demanda
@@ -930,6 +931,7 @@ function openSector(id) {
   const tasks = state.tasks.filter(t => t.targetType === 'sector' && t.targetId === s.id).sort(byDateDesc);
   const elevs = s.polygon.map(p => interpolateElevation(p, measuredPoints()));
   const espera = libreta.esperaEn({ sectorId: s.id });
+  const abonoEtapa = abono.ABONO_ETAPA[s.etapa];
 
   openSheet(s.name, `
     ${espera ? `<p class="aviso aviso--atencion"><span>🧴</span><span><b>${espera.parcial ? 'Parte del sector' : 'El sector'} todavía no se cosecha.</b>
@@ -947,6 +949,10 @@ function openSector(id) {
         : '<span class="muted">sin declarar</span>'}</dd>
     </dl>
     ${s.etapa ? `<p class="hint">${water.ETAPAS[s.etapa].dice}</p>` : ''}
+    ${abonoEtapa ? `<div class="abono-etapa"><strong>🧪 Abono en esta etapa: ${abonoEtapa.que.toLowerCase()}</strong>
+      <small>${abonoEtapa.detalle}</small>
+      ${abono.yaHayAbono(state.tasks, s.id, s.etapa) ? '<small class="muted">✓ Ya hay una tarea pendiente para esto.</small>'
+        : '<button class="btn btn--sm" data-act="abono">Crear la tarea de abonar</button>'}</div>` : ''}
     ${etapaVieja(s) ? `<p class="aviso aviso--atencion">La etapa se declaró hace ${etapaVieja(s)} días.
       Si el bloque ya pasó a otra, el riego calculado se está quedando corto o largo.</p>` : ''}
     <h4>Plantas por especie</h4>
@@ -968,6 +974,11 @@ function openSector(id) {
     body.querySelector('[data-act="plant"]').onclick = () => openPlantingForm(s);
     body.querySelector('[data-act="water"]').onclick = () => openHydraulics(s);
     body.querySelector('[data-act="task"]').onclick = () => openTaskForm({ targetType: 'sector', targetId: s.id });
+    body.querySelector('[data-act="abono"]')?.addEventListener('click', async () => {
+      await crearAbono(s);
+      toast('Tarea de abonar creada para dentro de 3 días');
+      openSector(s.id);
+    });
     body.querySelector('[data-act="shape"]').onclick = () => {
       if (!farmMap) return toast('El mapa no está disponible.');
       closeSheet();
@@ -984,6 +995,15 @@ function openSector(id) {
       await reload(); renderAll(); closeSheet(); toast('Sector eliminado');
     };
   });
+}
+
+/** La tarea de abonar la etapa del sector, para dentro de unos días. */
+async function crearAbono(sector) {
+  const especies = state.plants.filter(p => p.sectorId === sector.id && p.status !== 'muerto').map(p => p.species);
+  const t = abono.tareaAbono(sector, especies);
+  if (!t || abono.yaHayAbono(state.tasks, sector.id, sector.etapa)) return false;
+  await persist('tasks', { ...t, dueAt: enDias(3) });
+  return true;
 }
 
 /** Días desde que se declaró la etapa, si ya lleva demasiados. */
@@ -1011,12 +1031,26 @@ function openSectorForm(s) {
       <p class="hint">Cambia cuánta agua pide el sector. Nadie puede deducirla de la fecha
       de siembra —en la sierra no hay una estación que la fije—, así que se declara aquí y
       la app avisa cuando lleva mucho sin tocarse.</p>
+      <label class="row confirma" data-abono hidden><input type="checkbox" class="chk" name="crearAbono" checked />
+        <span></span></label>
       <button class="btn btn--rojo btn-block" type="submit">Guardar</button>
     </form>
   `, body => {
-    body.querySelector('#f').onsubmit = async ev => {
+    // Una etapa nueva trae su abono: se ofrece la tarea, ya marcada.
+    const form = body.querySelector('#f');
+    const syncAbono = () => {
+      const e = form.etapa.value;
+      const a = abono.ABONO_ETAPA[e];
+      const ofrecer = !!(s.id && a && e !== s.etapa && !abono.yaHayAbono(state.tasks, s.id, e));
+      body.querySelector('[data-abono]').hidden = !ofrecer;
+      if (ofrecer) body.querySelector('[data-abono] span').textContent = `Crear la tarea de abonar: ${a.que.toLowerCase()}`;
+    };
+    form.etapa.addEventListener('change', syncAbono);
+    syncAbono();
+    form.onsubmit = async ev => {
       ev.preventDefault();
       const f = new FormData(ev.target);
+      const conAbono = !body.querySelector('[data-abono]').hidden && f.get('crearAbono');
       await persist('sectors', {
         ...s,
         parcelId: state.parcel.id,
@@ -1028,8 +1062,9 @@ function openSectorForm(s) {
         etapaDesde: f.get('etapa') && f.get('etapa') !== s.etapa ? today() : s.etapaDesde,
         areaM2: round(areaM2(s.polygon), 1)
       });
+      if (conAbono) await crearAbono(state.sectors.find(x => x.id === s.id));
       closeSheet();
-      toast(isNew ? 'Sector creado' : 'Sector actualizado');
+      toast(isNew ? 'Sector creado' : conAbono ? 'Sector actualizado, con la tarea de abonar' : 'Sector actualizado');
     };
   });
 }
