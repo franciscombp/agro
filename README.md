@@ -18,7 +18,7 @@ Cinco secciones, cada una con una pregunta:
 
 | Sección | Pregunta | Qué hay |
 |---|---|---|
-| **Hoy** | ¿Qué hago hoy? | Avisos (no cosechar todavía, helada, agua que no alcanza, sensor callado, cosecha lista), el tiempo en una frase, el agua en una frase, las tareas de estos días con casilla para marcarlas, y ocho botones para anotar lo del día |
+| **Hoy** | ¿Qué hago hoy? | Avisos (no cosechar todavía, helada, riesgo de hongos, agua que no alcanza, sensor callado, cosecha lista), el tiempo en una frase, el agua en una frase, las tareas de estos días con casilla para marcarlas, y ocho botones para anotar lo del día |
 | **Finca** | ¿Qué hay y dónde? | Mapa satelital, sectores y plantas (segmentado arriba). Desde el mapa se entra al relieve 3D |
 | **Tareas** | ¿Qué falta? | Por hacer / hechas, agrupadas por cuándo, y «Mandar el plan» por WhatsApp |
 | **Agua** | ¿Llega el agua al turno? | El veredicto primero, la curva del reservorio, cómo viene el año (El Niño) y lo anotado |
@@ -87,6 +87,12 @@ dos columnas que se leen cada una entera.
   ese tiempo (con las plantas en plena producción: es un techo). Los gastos son los
   anotados más el costo de las tareas hechas. «Ya coseché» en una siembra pide cuánto
   salió y la saca de la lista sin borrarla, para que siga contando en las cuentas.
+- **Riesgo de hongos.** Un día húmedo (humedad media ≥ 85 % y lluvia o 3 h de llovizna)
+  y templado (media de 10 a 25 °C) es bueno para el hongo. Si 3 de los 6 días entre
+  anteayer y dentro de tres lo son, y alguno está por venir, Hoy avisa con qué revisar:
+  botrytis en arándano, mora, fresa y tomate; lancha en papa y tomate. Sólo de lo que
+  hay en la finca, y también va en el plan por WhatsApp. Es una regla de campo, no un
+  modelo de la enfermedad.
 - **Fumigaciones con días de espera.** Al anotar una fumigación se pone el producto y los
   días que pide la etiqueta antes de cosechar («período de carencia»). Mientras corren,
   Hoy avisa arriba de todo, la planta y el sector lo dicen en su ficha, el plan por
@@ -147,6 +153,7 @@ worker, descarga de cada archivo), y `?sw=off` la abre sin service worker.
 | `huerto/catalogo.js` | ~45 cultivos y animales con altitud, meses, riego, costos y precios |
 | `huerto/cuentas.js` | Sumas de lo cosechado, vendido y gastado, y lo esperado por sector |
 | `huerto/libreta.js` | Anotar cosecha, venta y gasto, y el panel Cuentas |
+| `hongos.js` | Riesgo de hongos según la humedad y la temperatura de estos días |
 | `carencia.js` | Días de espera después de fumigar: dónde no se cosecha todavía y hasta cuándo |
 | `huerto/nino.js` | Estado hídrico, El Niño / La Niña por región, consejo por cultivo |
 | `huerto/luna.js` | Fases lunares, tiempo en palabras, valor de cada día para sembrar |

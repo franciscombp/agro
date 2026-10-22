@@ -24,7 +24,7 @@ import { enDias } from './fechas.js';
 import * as huerto from './huerto/huerto.js';
 import * as libreta from './huerto/libreta.js';
 import * as carencia from './carencia.js';
-import { renderHoy, tareasDeHoy, notificacionesDisponibles, NOTIF_DIA } from './vistas/hoy.js';
+import { renderHoy, tareasDeHoy, notificacionesDisponibles, NOTIF_DIA, riesgoDeHongos } from './vistas/hoy.js';
 
 const INFRA_TYPES = ['reservorio', 'casa', 'establo', 'cuyera', 'bomba', 'filtro', 'válvula'];
 const TASK_TYPES = ['riego', 'poda', 'fertilización', 'fumigación', 'cosecha', 'siembra', 'otro'];
@@ -38,7 +38,7 @@ const WATER_LABELS = {
   'medición_nivel': 'Medí el nivel del reservorio'
 };
 const STATUSES = ['sano', 'atención', 'enfermo', 'muerto'];
-const BUILD = 'v18';
+const BUILD = 'v19';
 
 let farmMap = null;
 let terrain = null;       // vista 3D, se carga bajo demanda
@@ -1700,6 +1700,11 @@ function buildPlan() {
     lineas.push(`• Clima: hoy evapora ${nf(w.clima.et0Hoy, 1)} mm` +
       (w.clima.lluviaHoy > 0.5 ? ` y llueve ${nf(w.clima.lluviaHoy, 1)} mm` : ', sin lluvia') +
       `. Pronóstico de 7 días: ${nf(w.clima.lluviaFutura, 0)} mm de lluvia.`);
+    const hongos = riesgoDeHongos(w.clima);
+    if (hongos) {
+      lineas.push(`• HONGOS: días húmedos y templados. Revisar ${hongos.enfermedades.map(e =>
+        `${e.cultivos.map(c => huerto.getItem(c)?.nombre.toLowerCase() || c).join(' y ')} (${e.nombre})`).join(', ')}.`);
+    }
   }
   if (w.turns[0]) {
     lineas.push(`• Próximo turno de la junta: ${fmtDate(w.turns[0].date)} (en ${w.turns[0].inDays} días)`);

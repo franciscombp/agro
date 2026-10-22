@@ -19,6 +19,8 @@ import { state } from '../estado.js';
 import { faseLunar, CONSEJO_LUNA, tiempo } from '../huerto/luna.js';
 import { resumenHuerto } from '../huerto/huerto.js';
 import { esperasDeHoy, lugarDeTarea, resumenCuentasHoy } from '../huerto/libreta.js';
+import { riesgoHongos } from '../hongos.js';
+import { getItem } from '../huerto/huerto.js';
 import { $, escapeHtml, nf, num, fechaLarga, fechaCorta, formatDias, haceTexto, today } from '../ui.js';
 import { enDias } from '../fechas.js';
 import { MESES } from '../huerto/catalogo.js';
@@ -155,6 +157,13 @@ function juntarAvisos({ agua, sensores, tareas, huerto }) {
     out.push({ tono: 'frio', emoji: '❄️', titulo: `Puede helar ${helada.date === today() ? 'esta noche' : 'el ' + fechaCorta(helada.date)}.`,
       texto: 'Cubre lo tierno al atardecer y riega antes: la tierra húmeda guarda calor.' });
   }
+  const hongos = riesgoDeHongos(agua.clima);
+  if (hongos) {
+    const que = hongos.enfermedades.map(e =>
+      `${e.cultivos.map(c => getItem(c)?.nombre.toLowerCase() || c).join(' y ')} (${e.nombre}): ${e.que}`).join('; ');
+    out.push({ tono: 'atencion', emoji: '🍄', titulo: 'Días húmedos y templados: el hongo lo tiene fácil.',
+      texto: `Revisa ${que}. Si fumigas, anota los días de espera.` });
+  }
   const aguacero = pron.slice(0, 3).find(d => d.lluvia >= 25);
   if (aguacero) {
     out.push({ tono: 'atencion', emoji: '🌧️', titulo: `Lluvia fuerte ${aguacero.date === today() ? 'hoy' : 'el ' + fechaCorta(aguacero.date)}.`,
@@ -175,6 +184,14 @@ function juntarAvisos({ agua, sensores, tareas, huerto }) {
       titulo: huerto.listas.length === 1 ? `${huerto.listas[0].c.nombre}: lista para cosechar.` : `${huerto.listas.length} siembras listas para cosechar.` });
   }
   return out;
+}
+
+/** Lo sembrado y plantado en la finca, como ids del catálogo, contra el tiempo. */
+export function riesgoDeHongos(c) {
+  if (!c?.conocido) return null;
+  const cultivos = [...state.plants.filter(p => p.status !== 'muerto').map(p => p.species),
+    ...state.siembras.map(s => s.cropId)];
+  return riesgoHongos([...(c.pasados || []), ...(c.pronostico || [])], today(), cultivos);
 }
 
 /* ── El tiempo ─────────────────────────────────────────────────────────── */

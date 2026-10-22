@@ -305,6 +305,10 @@ en el punto, «Fijar con mi GPS» las corrige y el modelo de terreno se recalcul
   sale del catálogo con plantas adultas: una planta que recién empieza a dar parece rendir
   poco cuando sólo está creciendo. Las plantas de la finca entran en lo esperado sólo si su
   especie está en el catálogo del huerto (aguacate, arándano, mora; el peral no).
+- **El aviso de hongos es una regla de dedo.** Usa la humedad media del día de
+  Open-Meteo, no horas de hoja mojada medidas, y no sabe si el hongo ya está en el lote.
+  Avisa para revisar, no para fumigar. Si la API dejara de dar la humedad, el clima se
+  pide sin ella y el aviso simplemente no sale.
 - **Los días de espera los pone quien fumiga**, de la etiqueta. La app no tiene una tabla
   de productos y no la inventa; tampoco sabe del tiempo de reingreso al lote.
 
