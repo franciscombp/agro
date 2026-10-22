@@ -111,7 +111,11 @@ dos columnas que se leen cada una entera.
 - **Avisos en el teléfono.** Si se activan en Ajustes, al abrir la app (una vez al día)
   llegan como notificación los avisos importantes de Hoy.
 - **Sin señal.** Service worker con la app, las librerías y las teselas de la finca en
-  caché; todo lo anotado se guarda en el teléfono y entra en una cola para sincronizar.
+  caché; todo lo anotado se guarda en el teléfono y entra en una cola.
+- **Varios teléfonos.** Con el receptor, la cola sube y cada teléfono baja lo que
+  anotaron los demás; si dos cambian lo mismo, gana lo más nuevo. Un teléfono se
+  conecta con una invitación por WhatsApp. Pasos en
+  [`SENSORES.md`](SENSORES.md#8-compartir-la-finca-entre-teléfonos-opcional).
 
 ## Datos
 
@@ -169,7 +173,8 @@ worker, descarga de cada archivo), y `?sw=off` la abre sin service worker.
 | `water.js` | Demanda, volumen del reservorio, proyección hasta el turno |
 | `sensores.js`, `normaliza.js` | Lecturas del receptor traducidas a lo que el modelo entiende |
 | `geo.js`, `map2d.js`, `planting.js`, `hydraulics.js`, `view3d.js` | Geometría, mapa, marco de siembra, riego por gravedad, relieve 3D |
-| `receptor/` | Receptor de sensores (Cloudflare Worker), alertas por Telegram, simulador |
+| `sync.js` | Subir la cola local y bajar lo que cambiaron los demás teléfonos; invitaciones |
+| `receptor/` | Receptor de sensores y de la finca compartida (Cloudflare Worker), alertas por Telegram, simulador |
 | `sw.js` | Caché sin señal, teselas y notificaciones |
 | `mulalillo/` | Redirección de la dirección vieja y retiro de su service worker |
 | `ds/` | mal-ds vendorizado y fijado a una versión |

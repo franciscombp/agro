@@ -105,7 +105,10 @@ input:focus, select:focus, textarea:focus {
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--app-brand) 16%, transparent);
 }
 .btn-block { width: 100%; }
-.btn-danger { margin-top: 10px; }
+/* La piel pone fondo blanco a .btn y se comía el rojo del sistema: quedaba
+   letra blanca sobre blanco. Rojo suave con letra roja: se ve, sin gritar. */
+.btn.btn-danger { margin-top: 10px; background: var(--app-danger-soft); color: var(--app-danger);
+  border-color: color-mix(in oklab, var(--app-danger) 35%, transparent); }
 .enlace {
   border: 0; background: none; color: var(--app-brand); font: inherit; font-weight: 700;
   font-size: .9rem; padding: 10px 4px; margin: -10px -4px; cursor: pointer; min-height: 0;

@@ -25,6 +25,7 @@ import * as huerto from './huerto/huerto.js';
 import * as libreta from './huerto/libreta.js';
 import * as carencia from './carencia.js';
 import * as abono from './abono.js';
+import * as sync from './sync.js';
 import { renderHoy, tareasDeHoy, notificacionesDisponibles, NOTIF_DIA, riesgoDeHongos } from './vistas/hoy.js';
 
 const INFRA_TYPES = ['reservorio', 'casa', 'establo', 'cuyera', 'bomba', 'filtro', 'válvula'];
@@ -39,7 +40,7 @@ const WATER_LABELS = {
   'medición_nivel': 'Medí el nivel del reservorio'
 };
 const STATUSES = ['sano', 'atención', 'enfermo', 'muerto'];
-const BUILD = 'v20';
+const BUILD = 'v21';
 
 let farmMap = null;
 let terrain = null;       // vista 3D, se carga bajo demanda
@@ -63,6 +64,8 @@ async function boot() {
   alCambiar(async () => { await reload(); renderAll(); });
   wireChrome();
   renderAll();
+  // Un enlace de invitación (#unir=…) conecta este teléfono a la finca compartida.
+  await aceptarInvitacion();
   // Se entra a la sección que se pida en la dirección (#agua, #huerto…):
   // así un enlace compartido por WhatsApp abre donde tiene que abrir.
   const pedida = { '#finca': 'view-finca', '#tareas': 'view-tasks', '#agua': 'view-water', '#huerto': 'view-huerto',
@@ -72,12 +75,13 @@ async function boot() {
   watchConnectivity();
   refrescarClima().then(() => huerto.cargarHidrico()).then(() => { renderHoyAhora(); if (vistaActual === 'view-huerto') renderHuertoAhora(); });
   sincronizarSensores();
+  sincronizarFinca();
   // Mientras la app está abierta y a la vista, cada 15 minutos. Un sensor
   // LoRa manda cada 20–60: preguntar más seguido sólo gasta batería del
   // teléfono y datos móviles.
-  setInterval(() => { if (document.visibilityState === 'visible') sincronizarSensores(); }, 15 * 60000);
+  setInterval(() => { if (document.visibilityState === 'visible') { sincronizarSensores(); sincronizarFinca(); } }, 15 * 60000);
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') sincronizarSensores();
+    if (document.visibilityState === 'visible') { sincronizarSensores(); sincronizarFinca(); }
   });
 }
 
@@ -110,6 +114,60 @@ async function sincronizarSensores({ avisar = false } = {}) {
     return r;
   })();
   try { return await sincronizando; } finally { sincronizando = null; }
+}
+
+/* ── La finca compartida entre teléfonos ────────────────────────────────
+   Sube la cola local y baja lo que cambiaron los demás (sync.js). Corre al
+   abrir, al volver a la app, cada 15 minutos, al recuperar la señal y unos
+   segundos después de anotar algo. En silencio, salvo que se pida. */
+
+function cfgFinca() {
+  return state.config.finca || {};
+}
+
+let sincronizandoFinca = null;
+async function sincronizarFinca({ avisar = false } = {}) {
+  const cfg = cfgFinca();
+  if (!cfg.url || !cfg.token) { if (avisar) toast('Falta conectar este teléfono a la finca compartida'); return null; }
+  if (sincronizandoFinca) return sincronizandoFinca;
+  sincronizandoFinca = (async () => {
+    const r = await sync.sincronizar(cfg);
+    // Lo que el receptor rechazó (una planta con demasiadas fotos) se queda
+    // dicho en Ajustes aunque la sincronización haya sido en silencio.
+    const problema = !r.ok ? r.motivo
+      : r.rechazados.length ? `${r.rechazados.length} cambios no subieron (${r.rechazados[0].motivo})` : null;
+    state.config = await db.saveConfig({ finca: { ...cfgFinca(), ultimoError: problema } });
+    if (r.ok && r.bajados) { await reload(); renderAll(); }
+    else updateOutboxChip();
+    if (avisar) {
+      toast(!r.ok ? `No se sincronizó: ${r.motivo}`
+        : r.rechazados.length ? `${r.rechazados.length} cambios no se pudieron subir (${r.rechazados[0].motivo})`
+        : r.subidos || r.bajados ? `Listo: ${r.subidos} subidos, ${r.bajados} bajados` : 'Todo al día', 4000);
+    }
+    return r;
+  })();
+  try { return await sincronizandoFinca; } finally { sincronizandoFinca = null; }
+}
+
+/* Unos segundos después del último cambio, no en cada uno: anotar una
+   cosecha son tres o cuatro guardados seguidos. */
+let syncProgramado = null;
+function programarSyncFinca() {
+  if (!cfgFinca().url || !cfgFinca().token || !navigator.onLine) return;
+  clearTimeout(syncProgramado);
+  syncProgramado = setTimeout(() => sincronizarFinca(), 4000);
+}
+
+async function aceptarInvitacion() {
+  const inv = sync.leerInvitacion(location.hash);
+  if (!inv) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  const host = new URL(inv.url).host;
+  if (!confirm(`¿Conectar este teléfono a la finca compartida (${host})?\n\nLo que anotes aquí lo verán los demás teléfonos, y lo de ellos aparecerá aquí.`)) return;
+  state.config = await db.saveConfig({ finca: { url: inv.url, token: inv.token } });
+  await sync.olvidarCursor();
+  const r = await sincronizarFinca();
+  toast(r?.ok ? 'Conectado a la finca compartida' : `Conectado, pero no se sincronizó: ${r?.motivo}`, 4000);
 }
 
 /**
@@ -2114,6 +2172,76 @@ function pintarAjusteNotificaciones(cont) {
   });
 }
 
+/* Conectar este teléfono a la finca compartida, o invitar a otro. */
+async function pintarAjusteFinca(cont) {
+  const cfg = cfgFinca();
+  const conectada = !!(cfg.url && cfg.token);
+  const est = await sync.estado();
+  const pendientes = await db.outboxCount();
+  if (!cont.isConnected) return;
+  cont.innerHTML = conectada ? `
+      <p class="hint">${cfg.ultimoError ? `⚠︎ La última vez no se pudo: ${escapeHtml(cfg.ultimoError)}.`
+        : est.ultima ? `✓ Al día ${haceTexto((Date.now() - new Date(est.ultima)) / 3600000)}.` : 'Todavía sin sincronizar.'}
+        ${pendientes ? ` ${pendientes} cambios esperan para subir.` : ''}</p>
+      <div class="sheet-actions">
+        <button class="btn btn--rojo" type="button" data-fin="ahora">Sincronizar ahora</button>
+        <button class="btn" type="button" data-fin="invitar">Invitar a otro teléfono</button>
+      </div>
+      <details class="mas-campos"><summary>Opciones</summary>
+        <p class="hint">Receptor: ${escapeHtml(new URL(cfg.url).host)}</p>
+        <div class="sheet-actions">
+          <button class="btn" type="button" data-fin="todo">Volver a bajar todo</button>
+          <button class="btn btn-danger" type="button" data-fin="salir">Desconectar este teléfono</button>
+        </div>
+      </details>`
+    : `<p class="hint">Para que lo que anota una persona lo vean las demás. Hace falta el receptor
+        (el mismo de los sensores, ver SENSORES.md) con la base de la finca. Lo más fácil: pide a
+        quien ya está conectado que te mande la invitación por WhatsApp y ábrela en este teléfono.</p>
+      <form id="f-finca">
+        <label>Dirección del receptor <input name="url" type="url" required value="${attr(cfg.url || state.config.sensores?.url || '')}" placeholder="https://mulalillo-receptor….workers.dev" /></label>
+        <label>Clave de la finca <input name="token" required autocomplete="off" value="${attr(cfg.token)}" /></label>
+        <button class="btn btn--rojo btn-block" type="submit">Conectar y sincronizar</button>
+      </form>`;
+
+  cont.querySelector('#f-finca')?.addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const f = new FormData(ev.target);
+    state.config = await db.saveConfig({ finca: { url: f.get('url').trim(), token: f.get('token').trim() } });
+    await sync.olvidarCursor();
+    await sincronizarFinca({ avisar: true });
+    pintarAjusteFinca(cont);
+  });
+  cont.querySelector('[data-fin="ahora"]')?.addEventListener('click', async () => {
+    await sincronizarFinca({ avisar: true });
+    pintarAjusteFinca(cont);
+  });
+  cont.querySelector('[data-fin="invitar"]')?.addEventListener('click', async () => {
+    const enlace = sync.enlaceInvitacion(cfg, location.origin + location.pathname);
+    const texto = `Para anotar en la Finca Mulalillo desde tu teléfono, abre este enlace:\n${enlace}`;
+    if (!confirm('Quien tenga la invitación puede ver y cambiar los datos de la finca. Mándala sólo a gente de confianza.\n\n¿Seguir?')) return;
+    try {
+      if (navigator.share) { await navigator.share({ title: 'Finca Mulalillo', text: texto }); return; }
+      await navigator.clipboard.writeText(texto);
+      toast('Invitación copiada: pégala en WhatsApp', 3500);
+    } catch (err) {
+      if (err?.name === 'AbortError') return;
+      openSheet('Invitación', `<p class="hint">Copia este texto y mándalo por WhatsApp.</p>
+        <textarea id="inv-text" rows="6" readonly></textarea>`, b => { b.querySelector('#inv-text').value = texto; });
+    }
+  });
+  cont.querySelector('[data-fin="todo"]')?.addEventListener('click', async () => {
+    await sync.olvidarCursor();
+    await sincronizarFinca({ avisar: true });
+    pintarAjusteFinca(cont);
+  });
+  cont.querySelector('[data-fin="salir"]')?.addEventListener('click', async () => {
+    if (!confirm('Este teléfono deja de compartir. Lo anotado aquí se queda aquí. ¿Seguir?')) return;
+    state.config = await db.saveConfig({ finca: {} });
+    renderAll();
+    pintarAjusteFinca(cont);
+  });
+}
+
 function openSettings() {
   const c = state.config;
   openSheet('Ajustes', `
@@ -2145,17 +2273,15 @@ function openSettings() {
         <h4>Sensores</h4>
         <p class="hint">${(state.config.sensores?.url) ? 'Conectados a un receptor.' : 'Sin conectar.'}
           <button class="btn btn--fantasma btn--sm" type="button" data-act="sensores">Abrir sensores</button></p>
-        <h4>Sincronización</h4>
-        <label>Endpoint de sincronización <input name="syncEndpoint" value="${attr(c.syncEndpoint)}" placeholder="https://…/sync" /></label>
-        <p class="hint">Sin endpoint, los cambios quedan en la cola local y se pueden trasladar con el respaldo JSON.</p>
       </details>
       <button class="btn btn--rojo btn-block" type="submit">Guardar ajustes</button>
     </form>
+    <h4>Compartir la finca entre teléfonos</h4>
+    <div id="ajuste-finca"></div>
     <h4>Respaldo y arreglos</h4>
     <div class="sheet-actions">
       <button class="btn" data-act="export">Exportar respaldo</button>
       <button class="btn" data-act="import">Importar respaldo</button>
-      <button class="btn" data-act="sync">Sincronizar ahora</button>
       <button class="btn" data-act="tiles">Descargar mapa del terreno</button>
       <button class="btn" data-act="reinstall">Reinstalar la app</button>
       <button class="btn" data-act="diag">Diagnóstico</button>
@@ -2177,8 +2303,7 @@ function openSettings() {
         alertaAutonomiaDias: num('alertaAutonomiaDias'),
         reservaSueloMm: num('reservaSueloMm'),
         proximoTurno: f.get('proximoTurno') || null,
-        cicloTurnoDias: num('cicloTurnoDias'),
-        syncEndpoint: f.get('syncEndpoint') || ''
+        cicloTurnoDias: num('cicloTurnoDias')
       });
       renderAll();
       toast('Ajustes guardados');
@@ -2208,15 +2333,7 @@ function openSettings() {
       } catch (err) { toast('No se pudo importar: ' + err.message); }
     };
 
-    body.querySelector('[data-act="sync"]').onclick = async () => {
-      try {
-        const res = await db.flushOutbox(state.config.syncEndpoint);
-        updateOutboxChip();
-        toast(res.reason === 'sin-backend'
-          ? `${res.pending} cambios en cola (sin endpoint configurado)`
-          : `${res.sent} cambios sincronizados`);
-      } catch (err) { toast('Sincronización fallida: ' + err.message); }
-    };
+    pintarAjusteFinca(body.querySelector('#ajuste-finca'));
 
     body.querySelector('[data-act="tiles"]').onclick = () => prefetchTiles();
     body.querySelector('[data-act="sensores"]').onclick = () => openSensores();
@@ -2249,17 +2366,23 @@ function openSettings() {
   });
 }
 
+/* Después de cada repintado: si hay algo en la cola y la finca es compartida,
+   se programa la subida. (El chip con la cuenta ya no está en la pantalla;
+   si vuelve, se pinta aquí.) */
 async function updateOutboxChip() {
+  const n = await db.outboxCount();
+  // Sin finca compartida, la cola no va a ningún lado: contarla sólo asusta.
+  const compartida = !!(cfgFinca().url && cfgFinca().token);
+  if (n && compartida) programarSyncFinca();
   const chip = $('#chip-outbox');
   if (!chip) return;
-  const n = await db.outboxCount();
-  chip.hidden = n === 0;
-  chip.textContent = `${n} sin sincronizar`;
+  chip.hidden = n === 0 || !compartida;
+  chip.textContent = `${n} sin subir`;
 }
 
 function watchConnectivity() {
   const paint = () => { $('#chip-offline').hidden = navigator.onLine; };
-  addEventListener('online', () => { paint(); toast('Conexión recuperada'); });
+  addEventListener('online', () => { paint(); toast('Conexión recuperada'); sincronizarFinca(); });
   addEventListener('offline', paint);
   paint();
 }

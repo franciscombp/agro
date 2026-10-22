@@ -25,7 +25,7 @@ commitea el resultado.
 | 3. Tareas e historial | ✅ |
 | 4. Módulo de agua | ✅ |
 | 5. Vista 3D | ✅ |
-| 6. Offline/PWA | ✅ caché y cola local; sincronización con servidor pendiente (ver *Límites*) |
+| 6. Offline/PWA | ✅ caché y cola local, que sube al receptor y comparte la finca entre teléfonos (ver *Límites*) |
 
 **Mapa (Finca → Mapa).** Imagen satelital de Esri World Imagery, zoom hasta nivel de
 árbol. Límite del terreno con vértices arrastrables; sectores dibujables toque a toque
@@ -316,13 +316,14 @@ en el punto, «Fijar con mi GPS» las corrige y el modelo de terreno se recalcul
 - **Los días de espera los pone quien fumiga**, de la etiqueta. La app no tiene una tabla
   de productos y no la inventa; tampoco sabe del tiempo de reingreso al lote.
 
-- **La sincronización real falta.** La cola local está lista y `db.flushOutbox(endpoint)`
-  hace el POST por lote, pero no hay servidor al otro lado: en Ajustes se configura el
-  endpoint y, sin él, los cambios quedan encolados. Para un manejo remoto de verdad
-  (varias personas, celular y escritorio a la vez) hace falta ese servicio con
-  autenticación y resolución de conflictos.
+- **Sincronización: gana lo más nuevo, por la hora de cada teléfono.** Si un teléfono
+  tiene la hora mal puesta, sus cambios pueden ganar o perder cuando no deberían. No se
+  mezclan campos: si dos personas editan la misma planta, queda entera la versión más
+  nueva. Los ajustes (turno, reservorio) no se comparten, y un respaldo importado no
+  sube solo: se queda en ese teléfono hasta que se edite.
 - Las fotos se guardan como data URL dentro de IndexedDB. Sirve para decenas de fotos,
-  no para cientos: con sincronización deberían ir a almacenamiento de objetos.
+  no para cientos. Al sincronizar viajan con su planta, y una planta de más de ~1,9 MB
+  (muchas fotos) no sube: la app lo dice. Lo bueno sería mandarlas a R2 aparte.
 - La etapa del cultivo hay que **declararla y mantenerla al día**. La app avisa a los 90
   días, pero una etapa mal puesta desvía el riego en un ±15 % sin que nada chille. Las
   etapas que trae sembradas son de ejemplo, como el resto de los datos de arranque.

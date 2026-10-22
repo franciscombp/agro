@@ -5,6 +5,11 @@
 #   npx wrangler secret put TOKEN_ESCRITURA      → el que va en TTN / Home Assistant
 #   npx wrangler secret put TOKEN_LECTURA        → el que va en la app
 #   npx wrangler secret put TELEGRAM_TOKEN       → el que da @BotFather (opcional)
+#
+# Para compartir la finca entre teléfonos (opcional):
+#   npx wrangler d1 create mulalillo-finca       → pega el database_id abajo
+#   npx wrangler secret put TOKEN_FINCA          → la clave que va en cada teléfono
+#
 #   npx wrangler deploy
 #
 # Los tokens NUNCA van en este archivo: este repositorio es público.
@@ -16,6 +21,13 @@ compatibility_date = "2026-09-01"
 [[kv_namespaces]]
 binding = "LECTURAS"
 id = "PEGA_AQUI_EL_ID_DEL_NAMESPACE"
+
+# Los datos de la finca compartidos entre teléfonos. La tabla se crea sola.
+# Quita los # de las cuatro líneas siguientes cuando tengas el id.
+# [[d1_databases]]
+# binding = "FINCA"
+# database_name = "mulalillo-finca"
+# database_id = "PEGA_AQUI_EL_ID_DE_LA_BASE"
 
 # Revisión de alertas cada 30 minutos.
 [triggers]
