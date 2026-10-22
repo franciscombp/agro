@@ -2208,7 +2208,10 @@ async function pintarAjusteFinca(cont) {
     const f = new FormData(ev.target);
     state.config = await db.saveConfig({ finca: { url: f.get('url').trim(), token: f.get('token').trim() } });
     await sync.olvidarCursor();
-    await sincronizarFinca({ avisar: true });
+    const r = await sincronizarFinca({ avisar: true });
+    // El primer teléfono que se conecta pone los ajustes de la finca. Los que
+    // llegan después toman los que ya hay, y no los pisan con los suyos.
+    if (r?.ok && !r.ajustes) { await db.encolarAjustes(state.config); await sincronizarFinca(); }
     pintarAjusteFinca(cont);
   });
   cont.querySelector('[data-fin="ahora"]')?.addEventListener('click', async () => {
@@ -2304,7 +2307,7 @@ function openSettings() {
         reservaSueloMm: num('reservaSueloMm'),
         proximoTurno: f.get('proximoTurno') || null,
         cicloTurnoDias: num('cicloTurnoDias')
-      });
+      }, { compartir: true });
       renderAll();
       toast('Ajustes guardados');
     };

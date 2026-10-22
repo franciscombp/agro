@@ -20,9 +20,10 @@
 "use strict";
 
 /* Lo que se comparte. `meta` (ajustes de cada teléfono, cachés) y `lecturas`
-   (que ya vienen del receptor) no. */
+   (que ya vienen del receptor) no; `ajustes` es la parte de la configuración
+   que es de la finca (db.js, AJUSTES_COMPARTIDOS). */
 export const ALMACENES = ['parcels', 'sectors', 'plants', 'infra', 'tasks', 'water', 'elevations',
-  'siembras', 'precios', 'cosechas', 'ventas', 'gastos'];
+  'siembras', 'precios', 'cosechas', 'ventas', 'gastos', 'ajustes'];
 
 const MAX_CAMBIOS = 500;           // por envío; el teléfono manda en lotes
 const MAX_PAGINA = 500;            // por respuesta; el teléfono pide hasta que no hay más

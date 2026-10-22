@@ -328,11 +328,36 @@ export async function config() {
   return (await get('meta', 'config')) || {};
 }
 
-export async function saveConfig(patch) {
+export async function saveConfig(patch, { compartir = false } = {}) {
   const current = await config();
   const next = { ...current, ...patch, id: 'config' };
   await putRaw('meta', next);
+  if (compartir) await encolarAjustes(next);
   return next;
+}
+
+/*
+ * Los ajustes que son de la finca y no del teléfono: el turno de la junta, el
+ * reservorio, el suelo y el huerto (la fase de El Niño, si hay riego). Si un
+ * teléfono corre el turno y otro no, cada uno calcula el agua distinta. Lo del
+ * aparato —claves, la conexión, la exageración del 3D— se queda en cada uno.
+ */
+export const AJUSTES_COMPARTIDOS = ['proximoTurno', 'cicloTurnoDias', 'reservorioVolumenM3', 'reservorioAlturaUtilM',
+  'alertaAutonomiaDias', 'demandaDiariaM3', 'reservaSueloMm', 'huerto'];
+
+export function ajustesDeFinca(cfg) {
+  return Object.fromEntries(AJUSTES_COMPARTIDOS.filter(k => k in cfg).map(k => [k, cfg[k]]));
+}
+
+/** Encola los ajustes de la finca como un registro más (`ajustes/finca`). */
+export async function encolarAjustes(cfg) {
+  const rec = { id: 'finca', ...ajustesDeFinca(cfg), updatedAt: new Date().toISOString() };
+  await enqueue('put', 'ajustes', rec);
+}
+
+/** Los ajustes que bajan de otro teléfono: a la configuración, sin volver a la cola. */
+export async function aplicarAjustesRemotos(rec) {
+  return saveConfig(ajustesDeFinca(rec || {}));
 }
 
 function isoDaysAgo(n) {

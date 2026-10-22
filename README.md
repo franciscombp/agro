@@ -113,7 +113,8 @@ dos columnas que se leen cada una entera.
 - **Sin señal.** Service worker con la app, las librerías y las teselas de la finca en
   caché; todo lo anotado se guarda en el teléfono y entra en una cola.
 - **Varios teléfonos.** Con el receptor, la cola sube y cada teléfono baja lo que
-  anotaron los demás; si dos cambian lo mismo, gana lo más nuevo. Un teléfono se
+  anotaron los demás, ajustes de la finca incluidos (el turno, el reservorio); si dos
+  cambian lo mismo, gana lo más nuevo. Un teléfono se
   conecta con una invitación por WhatsApp. Pasos en
   [`SENSORES.md`](SENSORES.md#8-compartir-la-finca-entre-teléfonos-opcional).
 

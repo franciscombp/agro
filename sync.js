@@ -20,7 +20,7 @@ import * as db from './db.js';
 /* Lo mismo que acepta el receptor (receptor/finca.js). Una prueba comprueba
    que las dos listas no se separen. */
 export const COMPARTIDOS = ['parcels', 'sectors', 'plants', 'infra', 'tasks', 'water', 'elevations',
-  'siembras', 'precios', 'cosechas', 'ventas', 'gastos'];
+  'siembras', 'precios', 'cosechas', 'ventas', 'gastos', 'ajustes'];
 
 const LOTE = 200;
 const META = 'sync-finca';
@@ -79,7 +79,7 @@ export async function sincronizar(cfg, { fetch: pedir = globalThis.fetch } = {})
 
     // 2. Bajar.
     let { cursor = 0 } = await estado();
-    let bajados = 0, hayMas = true;
+    let bajados = 0, hayMas = true, ajustes = false;
     while (hayMas) {
       const r = await pedir(`${base}/finca/cambios?desde=${cursor}`, { headers });
       if (!r.ok) return { ok: false, motivo: await fallo(r), subidos };
@@ -89,6 +89,11 @@ export async function sincronizar(cfg, { fetch: pedir = globalThis.fetch } = {})
       const porAlmacen = new Map();
       for (const c of j.cambios || []) {
         if (!COMPARTIDOS.includes(c.store) || enCola.has(c.store + '|' + c.id)) continue;
+        // Los ajustes no tienen almacén propio: van a la configuración.
+        if (c.store === 'ajustes') {
+          if (c.datos) { await db.aplicarAjustesRemotos(c.datos); ajustes = true; bajados++; }
+          continue;
+        }
         if (!porAlmacen.has(c.store)) porAlmacen.set(c.store, { poner: [], borrar: [] });
         const g = porAlmacen.get(c.store);
         if (c.borrado) g.borrar.push(c.id); else if (c.datos) g.poner.push(c.datos);
@@ -103,7 +108,7 @@ export async function sincronizar(cfg, { fetch: pedir = globalThis.fetch } = {})
       // Se guarda por página: si se corta la señal a medias, sigue desde aquí.
       await db.saveMeta({ id: META, cursor, ultima: new Date().toISOString() });
     }
-    return { ok: true, subidos, bajados, rechazados };
+    return { ok: true, subidos, bajados, rechazados, ajustes };
   } catch {
     return { ok: false, motivo: 'no se pudo hablar con el receptor' };
   }

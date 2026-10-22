@@ -100,3 +100,10 @@ test('la invitación lleva la dirección y la clave, también con tildes', () =>
   assert.equal(leerInvitacion('#unir=basura'), null);
   assert.equal(leerInvitacion('#agua'), null);
 });
+
+test('de la configuración sólo viaja lo que es de la finca, no lo del teléfono', async () => {
+  const { ajustesDeFinca } = await import('../db.js');
+  const cfg = { id: 'config', proximoTurno: '2026-11-01', cicloTurnoDias: 15, huerto: { fase: 'nino' },
+    finca: { url: 'https://x', token: 'secreto' }, sensores: { token: 'otro' }, exageracion3D: 3 };
+  assert.deepEqual(ajustesDeFinca(cfg), { proximoTurno: '2026-11-01', cicloTurnoDias: 15, huerto: { fase: 'nino' } });
+});

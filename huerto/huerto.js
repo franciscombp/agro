@@ -39,7 +39,7 @@ function cfgHuerto() {
 }
 
 async function guardarCfgHuerto(patch) {
-  state.config = await db.saveConfig({ huerto: { ...cfgHuerto(), ...patch } });
+  state.config = await db.saveConfig({ huerto: { ...cfgHuerto(), ...patch } }, { compartir: true });
 }
 
 export function aptoZona(c) {

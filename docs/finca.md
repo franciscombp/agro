@@ -319,8 +319,9 @@ en el punto, «Fijar con mi GPS» las corrige y el modelo de terreno se recalcul
 - **Sincronización: gana lo más nuevo, por la hora de cada teléfono.** Si un teléfono
   tiene la hora mal puesta, sus cambios pueden ganar o perder cuando no deberían. No se
   mezclan campos: si dos personas editan la misma planta, queda entera la versión más
-  nueva. Los ajustes (turno, reservorio) no se comparten, y un respaldo importado no
-  sube solo: se queda en ese teléfono hasta que se edite.
+  nueva. Los ajustes de la finca (turno, reservorio, suelo, huerto) viajan juntos como un
+  solo registro; la asignación de los sensores no, y un respaldo importado no sube solo:
+  se queda en ese teléfono hasta que se edite.
 - Las fotos se guardan como data URL dentro de IndexedDB. Sirve para decenas de fotos,
   no para cientos. Al sincronizar viajan con su planta, y una planta de más de ~1,9 MB
   (muchas fotos) no sube: la app lo dice. Lo bueno sería mandarlas a R2 aparte.

@@ -261,6 +261,9 @@ Cómo se porta:
 - Se sincroniza al abrir la app, al volver a ella, cada 15 minutos, al recuperar la
   señal y unos segundos después de anotar algo. Sin señal, lo anotado espera en el
   teléfono y sube después.
+- También viajan los ajustes de la finca: el turno de la junta, el reservorio, el suelo y
+  lo del huerto. El primer teléfono que se conecta pone los suyos; los que llegan después
+  los toman. Las claves y la conexión de cada teléfono no viajan.
 - Si dos personas cambian **lo mismo**, gana el cambio más nuevo, registro por registro.
   Una tarea marcada en un teléfono no pisa una planta editada en otro.
 - **Si se pierde un teléfono**, cambia la clave (`wrangler secret put TOKEN_FINCA`) y
@@ -276,8 +279,6 @@ Cómo se porta:
 - **Calibración de la sonda.** Las sondas capacitivas baratas leen distinto según el
   suelo. Los valores de capacidad de campo y marchitez se cambian en la app, pero lo
   bueno es calibrarlos una vez contra una muestra de suelo pesada en seco y en húmedo.
-- **Ajustes compartidos.** El turno de la junta y el tamaño del reservorio se ponen en
-  cada teléfono; no viajan con los datos de la finca.
 - **Riego por sector con varios caudalímetros.** Hoy un caudalímetro mide una línea
   entera. Con uno por sector se podría comparar regado y pedido sector a sector; el
   modelo ya calcula lo pedido por sector, falta atarlo.
