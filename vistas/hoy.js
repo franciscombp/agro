@@ -18,7 +18,7 @@
 import { state } from '../estado.js';
 import { faseLunar, CONSEJO_LUNA, tiempo } from '../huerto/luna.js';
 import { resumenHuerto } from '../huerto/huerto.js';
-import { $, escapeHtml, nf, num, fechaLarga, fechaCorta, formatDias, haceTexto, today } from '../ui.js';
+import { $, escapeHtml, nf, num, dinero, fechaLarga, fechaCorta, formatDias, haceTexto, today } from '../ui.js';
 import { enDias } from '../fechas.js';
 import { MESES } from '../huerto/catalogo.js';
 
@@ -191,7 +191,7 @@ function tarjetaTiempo(c) {
     <span class="tarjeta-tiempo__emoji">${emoji}</span>
     <span class="tarjeta-tiempo__txt">
       <strong>${temp != null ? Math.round(temp) + '°C' : desc}</strong>
-      <small>${desc}${c.actual?.humedad != null ? ` · humedad ${Math.round(c.actual.humedad)} %` : ''}</small>
+      <small>${desc}${c.actual?.humedad != null ? ` · humedad ${Math.round(c.actual.humedad)} %` : ''}</small>
       <small class="tarjeta-tiempo__frase">${frase}</small>
     </span>
     ${hoyD.tmax != null ? `<span class="tarjeta-tiempo__mm">↑ ${Math.round(hoyD.tmax)}°<br>↓ ${Math.round(hoyD.tmin)}°</span>` : ''}
@@ -212,7 +212,7 @@ function tarjetaAgua(s) {
     <span class="tarjeta-agua__txt">
       <strong>${titulo}</strong>
       <span class="barra barra--agua"><span style="width:${pct.toFixed(0)}%"></span></span>
-      <small>${Math.round(pct)} % del reservorio${t ? ` · turno ${t.inDays === 0 ? 'hoy' : t.inDays === 1 ? 'mañana' : 'el ' + fechaCorta(t.date)}` : ''}</small>
+      <small>${Math.round(pct)} % del reservorio${t ? ` · turno ${t.inDays === 0 ? 'hoy' : t.inDays === 1 ? 'mañana' : 'el ' + fechaCorta(t.date)}` : ''}</small>
       ${t ? `<small class="${s.llegaAlTurno ? 'si' : 'no'}">${s.llegaAlTurno ? '✓ Llega al turno con agua' : '✗ No llega al turno'}</small>` : ''}
     </span>
     <span class="chev">›</span>
@@ -253,7 +253,7 @@ function tiraMercado(h) {
     titulo = `${h.oportunos[0].nombre}: buena época para vender`;
     texto = `En ${MESES[mes - 1].toLowerCase()} suele pagarse mejor.`;
   } else if (h.ultimoPrecio) {
-    titulo = `Última anotación: ${h.prodNombre(h.ultimoPrecio.prod)} $${num(h.ultimoPrecio.precio)}`;
+    titulo = `Última anotación: ${h.prodNombre(h.ultimoPrecio.prod)} $${dinero(h.ultimoPrecio.precio)}`;
     texto = 'Toca para ver tu libreta y las tendencias.';
   } else {
     titulo = 'Mercado y precios';
