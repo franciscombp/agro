@@ -36,7 +36,7 @@ const WATER_LABELS = {
   'medición_nivel': 'Medí el nivel del reservorio'
 };
 const STATUSES = ['sano', 'atención', 'enfermo', 'muerto'];
-const BUILD = 'v17';
+const BUILD = 'v18';
 
 let farmMap = null;
 let terrain = null;       // vista 3D, se carga bajo demanda
@@ -192,6 +192,7 @@ async function initMap() {
  * de dejar el mapa muerto hasta recargar la página.
  */
 async function ensureMapLibre(attempts = 2) {
+  cargarCssMapa();
   if (typeof maplibregl !== 'undefined') return;
   const diag = window.__mapLib || {};
   if (diag.exec) throw new Error(`el navegador no pudo ejecutar la librería (${diag.exec})`);
@@ -208,6 +209,16 @@ async function ensureMapLibre(attempts = 2) {
     reason = 'el archivo llegó pero el navegador no pudo ejecutarlo';
   }
   throw new Error(reason);
+}
+
+/* La hoja de estilos de MapLibre baja junto con la librería, no al abrir la app. */
+function cargarCssMapa() {
+  if (document.querySelector('link[data-maplibre]')) return;
+  const l = document.createElement('link');
+  l.rel = 'stylesheet';
+  l.href = './lib/maplibre-gl.css';
+  l.dataset.maplibre = '';
+  document.head.appendChild(l);
 }
 
 function loadScript(src) {
@@ -332,8 +343,7 @@ function wireChrome() {
   $('#btn-new-sector').addEventListener('click', startDrawSector);
   $('#btn-new-plant').addEventListener('click', () => promptPlacement('plant'));
   $('#btn-new-task').addEventListener('click', () => openTaskForm({}));
-  $('#btn-share-plan').addEventListener('click', sharePlan);
-  $('#btn-new-water').addEventListener('click', () => openWaterForm({}));
+  $('#btn-new-water').addEventListener('click', () => openAnotarAgua());
   $('#plant-search').addEventListener('input', renderPlants);
 
   $$('#task-seg button').forEach(btn => btn.addEventListener('click', () => {
@@ -626,26 +636,31 @@ function openPlant(id) {
     .sort(byDateDesc);
 
   openSheet(`${SPECIES[p.species]?.label || p.species}${p.variety ? ' · ' + p.variety : ''}`, `
-    <div class="chips">
+    <div class="ficha-pastillas">
       ${estadoPastilla(p.status)}
-      ${sector ? `<span class="badge">${escapeHtml(sector.name)}</span>` : '<span class="badge">Sin sector</span>'}
+      <span class="pastilla pastilla--off">${sector ? escapeHtml(sector.name) : 'Sin sector'}</span>
     </div>
     <dl class="hechos">
-      <dt>Sembrada</dt><dd>${p.plantedAt ? fmtDate(p.plantedAt) + ' · ' + ageLabel(p.plantedAt) : '—'}</dd>
-      <dt>Elevación</dt><dd>${p.elevationM ? nf(p.elevationM, 2) + ' msnm' : '—'}</dd>
-      <dt>Coordenadas</dt><dd>${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}</dd>
-      <dt>Riego hoy</dt><dd>${nf(water.litrosPlantaDia(p, diaDeHoy()), 1)} L${
-        SPECIES[p.species] ? ` <small class="muted">· adulta en día normal: ${SPECIES[p.species].lppd} L</small>` : ''}</dd>
+      <dt>Sembrada</dt><dd>${p.plantedAt ? `${fmtDate(p.plantedAt)}<small>hace ${ageLabel(p.plantedAt)}</small>` : '—'}</dd>
+      <dt>Agua hoy</dt><dd>${nf(water.litrosPlantaDia(p, diaDeHoy()), 1)} litros${
+        SPECIES[p.species] ? `<small>adulta, en un día normal: ${SPECIES[p.species].lppd} litros</small>` : ''}</dd>
     </dl>
+    <details class="mas-campos">
+      <summary>Datos técnicos</summary>
+      <dl class="hechos">
+        <dt>Altura</dt><dd>${p.elevationM ? nf(p.elevationM, 1) + ' msnm' : '—'}</dd>
+        <dt>Coordenadas</dt><dd>${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}</dd>
+      </dl>
+    </details>
     ${p.notes ? `<p class="aviso aviso--ok">${escapeHtml(p.notes)}</p>` : ''}
     ${p.photos?.length ? `<div class="photos">${p.photos.map(src => `<img src="${src}" alt="" />`).join('')}</div>` : ''}
     <h4>Historial y tareas (${tasks.length})</h4>
     ${tasks.length ? `<ul class="mini-list">${tasks.map(taskLine).join('')}</ul>` : '<p class="hint">Sin tareas registradas.</p>'}
     <div class="sheet-actions">
-      <button class="btn btn--rojo btn-block" data-act="task">Nueva tarea</button>
-      <button class="btn" data-act="edit">Editar</button>
-      <button class="btn" data-act="center">Ver en mapa</button>
-      <button class="btn btn-danger" data-act="del">Eliminar</button>
+      <button class="btn btn--rojo" data-act="task">Nueva tarea para esta planta</button>
+      <button class="btn" data-act="edit">Editar datos</button>
+      <button class="btn" data-act="center">Ver en el mapa</button>
+      <button class="btn btn-danger" data-act="del">Eliminar la planta</button>
     </div>
   `, body => {
     body.querySelector('[data-act="edit"]').onclick = () => openPlantForm(p);
@@ -917,20 +932,25 @@ function openSector(id) {
 
   openSheet(s.name, `
     <dl class="hechos">
-      <dt>Área</dt><dd>${fmtArea(area)}</dd>
-      <dt>Perímetro</dt><dd>${fmtM(perimeterM(s.polygon))}</dd>
+      <dt>Tamaño</dt><dd>${fmtArea(area)}</dd>
       <dt>Plantas</dt><dd>${plants.length}</dd>
-      <dt>Riego hoy</dt><dd>${Math.round(dailyL).toLocaleString('es-EC')} L/día${
-        dailyAdultoL > dailyL * 1.05 ? ` <small class="muted">· ${Math.round(dailyAdultoL).toLocaleString('es-EC')} adultas</small>` : ''}</dd>
-      <dt>Elevación</dt><dd>${nf(Math.min(...elevs))}–${nf(Math.max(...elevs))} msnm</dd>
-      ${s.irrigationZone ? `<dt>Zona de riego</dt><dd>${escapeHtml(s.irrigationZone)}</dd>` : ''}
+      <dt>Agua hoy</dt><dd>${Math.round(dailyL).toLocaleString('es-EC')} litros${
+        dailyAdultoL > dailyL * 1.05 ? `<small>cuando sean adultas: ${Math.round(dailyAdultoL).toLocaleString('es-EC')}</small>` : ''}</dd>
       <dt>Etapa</dt><dd>${s.etapa
-        ? `${water.ETAPAS[s.etapa].label} <small class="muted">· riego ×${water.ETAPAS[s.etapa].kc}</small>`
+        ? `${water.ETAPAS[s.etapa].label}<small>riega ×${nf(water.ETAPAS[s.etapa].kc, 2)} de lo normal</small>`
         : '<span class="muted">sin declarar</span>'}</dd>
     </dl>
     ${s.etapa ? `<p class="hint">${water.ETAPAS[s.etapa].dice}</p>` : ''}
     ${etapaVieja(s) ? `<p class="aviso aviso--atencion">La etapa se declaró hace ${etapaVieja(s)} días.
       Si el bloque ya pasó a otra, el riego calculado se está quedando corto o largo.</p>` : ''}
+    <details class="mas-campos">
+      <summary>Datos técnicos</summary>
+      <dl class="hechos">
+        <dt>Perímetro</dt><dd>${fmtM(perimeterM(s.polygon))}</dd>
+        <dt>Altura</dt><dd>${nf(Math.min(...elevs))}–${nf(Math.max(...elevs))} msnm</dd>
+        ${s.irrigationZone ? `<dt>Zona de riego</dt><dd>${escapeHtml(s.irrigationZone)}</dd>` : ''}
+      </dl>
+    </details>
     <h4>Plantas por especie</h4>
     ${bySpecies.size ? `<ul class="mini-list">${[...bySpecies].map(([sp, n]) =>
       `<li><span class="punto" style="background:${SPECIES[sp]?.color}"></span>${SPECIES[sp]?.label || sp}<b>${n}</b></li>`).join('')}</ul>`
@@ -938,12 +958,12 @@ function openSector(id) {
     <h4>Tareas del sector (${tasks.length})</h4>
     ${tasks.length ? `<ul class="mini-list">${tasks.map(taskLine).join('')}</ul>` : '<p class="hint">Sin tareas.</p>'}
     <div class="sheet-actions">
-      <button class="btn btn--rojo btn-block" data-act="plant">Sembrar en marco</button>
-      <button class="btn" data-act="water">Riego por gravedad</button>
-      <button class="btn" data-act="task">Tarea del sector</button>
+      <button class="btn btn--rojo" data-act="task">Nueva tarea para este sector</button>
+      <button class="btn" data-act="plant">Sembrar en hileras</button>
+      <button class="btn" data-act="water">¿Llega la presión?</button>
       <button class="btn" data-act="edit">Editar datos</button>
-      <button class="btn" data-act="shape">Editar forma</button>
-      <button class="btn btn-danger" data-act="del">Eliminar</button>
+      <button class="btn" data-act="shape">Mover los bordes</button>
+      <button class="btn btn-danger" data-act="del">Eliminar el sector</button>
     </div>
   `, body => {
     body.querySelector('[data-act="edit"]').onclick = () => openSectorForm(s);
@@ -1293,6 +1313,17 @@ const GRUPOS = [
   { id: 'despues', titulo: 'Más adelante', test: () => true }
 ];
 
+/* Lista vacía: dice por qué está vacía y qué se puede hacer, como el huerto. */
+function vacioTareas() {
+  const [emoji, titulo, texto] = {
+    pendientes: ['🎉', 'Nada pendiente', 'Lo que haya que hacer en la finca aparece aquí, ordenado por cuándo.'],
+    hechas: ['📋', 'Todavía no hay tareas hechas', 'Marca la casilla de una tarea cuando la termines y queda guardada aquí.'],
+    todas: ['📋', 'Todavía no hay tareas', 'Anota la primera y la app te recuerda cuándo toca.']
+  }[taskFilter] || ['📋', 'Sin tareas', ''];
+  return `<div class="vacio"><div class="vacio__emoji">${emoji}</div><strong>${titulo}</strong><p>${texto}</p>
+    ${taskFilter === 'hechas' ? '' : '<button class="btn btn--rojo" data-act="nueva-tarea">+ Nueva tarea</button>'}</div>`;
+}
+
 function renderTasks() {
   const rows = state.tasks
     .filter(t => taskFilter === 'todas' || (taskFilter === 'hechas' ? t.doneAt : !t.doneAt))
@@ -1304,7 +1335,8 @@ function renderTasks() {
     const c = !t.doneAt && t.dueAt ? cuando(t.dueAt) : null;
     return `
       <div class="list-row ${c?.tono === 'atrasada' ? 'atrasada' : ''}">
-        <input type="checkbox" class="chk" data-done="${t.id}" ${t.doneAt ? 'checked' : ''} />
+        <label class="chk-zona"><input type="checkbox" class="chk" data-done="${t.id}" ${t.doneAt ? 'checked' : ''}
+          aria-label="${t.doneAt ? 'Hecha' : 'Marcar como hecha'}" /></label>
         <button class="fila-main" data-task="${t.id}">
           <strong>${TASK_EMOJI[t.type] || ''} ${cap(t.type)} · ${escapeHtml(targetName(t))}</strong>
           <small>${t.doneAt
@@ -1345,7 +1377,11 @@ function renderTasks() {
       ? `<p class="aviso aviso--atencion">${overdue} tarea${overdue > 1 ? 's' : ''} atrasada${overdue > 1 ? 's' : ''}.</p>`
       : ''}
     ${cuerpo}
-    ${rows.length ? '' : '<p class="hint">Nada por aquí.</p>'}
+    ${rows.length ? '' : vacioTareas()}
+    ${/* Después de repasar la lista, mandarla a quien está en la finca. */
+      taskFilter === 'pendientes' && rows.length ? `
+      <button class="btn btn-block compartir-plan" data-act="plan">
+        <svg class="icono icono--s" aria-hidden="true"><use href="#i-compartir"/></svg>Mandar el plan por WhatsApp</button>` : ''}
   `;
   $('#tasks-list').querySelectorAll('[data-done]').forEach(el => el.addEventListener('change', async () => {
     const t = state.tasks.find(x => x.id === el.dataset.done);
@@ -1354,6 +1390,8 @@ function renderTasks() {
   }));
   $('#tasks-list').querySelectorAll('[data-task]').forEach(el =>
     el.addEventListener('click', () => openTaskForm(state.tasks.find(x => x.id === el.dataset.task))));
+  $('#tasks-list').querySelector('[data-act="nueva-tarea"]')?.addEventListener('click', () => openTaskForm({}));
+  $('#tasks-list').querySelector('[data-act="plan"]')?.addEventListener('click', sharePlan);
 }
 
 /* Un emoji por tipo de tarea: se reconoce de un vistazo, también para quien
@@ -1487,7 +1525,7 @@ function openMedicionRapida() {
       const m3 = Math.min(capM3, (cm / 100 / alto) * capM3);
       out.innerHTML = cm > alto * 100
         ? `<b>Más de lo que cabe</b> (${Math.round(alto * 100)} cm): revisa la medida.`
-        : `= <b>${nf(m3, 0)} m³</b> de ${nf(capM3, 0)} · ${Math.round(m3 / capM3 * 100)} % del reservorio`;
+        : `= <b>${nf(m3, 0)} m³</b> de ${nf(capM3, 0)} · ${Math.round(m3 / capM3 * 100)} % del reservorio`;
     });
     f.onsubmit = async ev => {
       ev.preventDefault();
@@ -1495,6 +1533,68 @@ function openMedicionRapida() {
       await persist('water', { type: 'medición_nivel', date: f.date.value, levelM: Math.min(alto, cm / 100) });
       closeSheet();
       toast('Medición guardada: el cálculo del agua parte de aquí.');
+    };
+  });
+}
+
+/* «Anotar» en Agua: las cuatro cosas que pasan con el agua, en palabras, y
+   cada una con su formulario corto. El formulario técnico queda sólo para
+   corregir algo ya anotado. */
+function openAnotarAgua() {
+  openSheet('¿Qué pasó con el agua?', `
+    <div class="acciones-rapidas acciones-rapidas--hoja">
+      <button data-agua="riego"><span class="tile tile--agua">💧</span>Regué</button>
+      <button data-agua="medi"><span class="tile tile--agua">📏</span>Medí el reservorio</button>
+      <button data-agua="llenado_acequia"><span class="tile t-hierba">🚰</span>Llegó el turno de la acequia</button>
+      <button data-agua="tanquero"><span class="tile t-grano">🚚</span>Llegó un tanquero</button>
+    </div>`, body => {
+    body.querySelectorAll('[data-agua]').forEach(b => b.addEventListener('click', () => {
+      const q = b.dataset.agua;
+      if (q === 'riego') openRiegoRapido();
+      else if (q === 'medi') openMedicionRapida();
+      else openLlegadaAgua(q);
+    }));
+  });
+}
+
+/** Entró agua: el turno de la junta o un tanquero. */
+function openLlegadaAgua(tipo) {
+  const acequia = tipo === 'llenado_acequia';
+  const alto = state.config.reservorioAlturaUtilM || 2;
+  openSheet(acequia ? 'Llegó el turno de la acequia' : 'Llegó un tanquero', `
+    <form id="f">
+      <label>¿Cuándo? <input type="date" name="date" value="${today()}" max="${today()}" required /></label>
+      <fieldset class="elige">
+        <legend>¿Cuánta agua entró?</legend>
+        <label><input type="radio" name="cuanto" value="lleno" ${acequia ? 'checked' : ''} /><span>🌊 Se llenó</span></label>
+        <label><input type="radio" name="cuanto" value="m3" ${acequia ? '' : 'checked'} /><span>🔢 Sé cuánto</span></label>
+        <label><input type="radio" name="cuanto" value="nose" /><span>🤷 No sé</span></label>
+      </fieldset>
+      <label id="m3-wrap" ${acequia ? 'hidden' : ''}>Metros cúbicos
+        <span class="con-unidad con-unidad--grande"><input type="number" name="m3" min="0" step="0.5" inputmode="decimal" placeholder="${acequia ? '' : '10'}" /><i>m³</i></span></label>
+      <p class="hint" id="nose-hint" hidden>Anótalo igual. Cuando termine, mide el reservorio con la vara: con esa medida el cálculo queda bien.</p>
+      <label>Nota (opcional) <input name="notes" placeholder="${acequia ? 'Ej.: llegó con poca fuerza' : 'Ej.: tanquero de don Luis, $25'}" /></label>
+      <button class="btn btn--rojo btn-block" type="submit">Guardar</button>
+    </form>`, body => {
+    const f = body.querySelector('#f');
+    const sync = () => {
+      const v = f.cuanto.value;
+      body.querySelector('#m3-wrap').hidden = v !== 'm3';
+      body.querySelector('#nose-hint').hidden = v !== 'nose';
+      f.m3.required = v === 'm3';
+    };
+    f.querySelectorAll('[name="cuanto"]').forEach(r => r.addEventListener('change', sync));
+    sync();
+    f.onsubmit = async ev => {
+      ev.preventDefault();
+      const v = f.cuanto.value;
+      const base = { type: tipo, date: f.date.value, notes: f.notes.value || undefined };
+      if (v === 'm3') await persist('water', { ...base, volumeM3: Number(f.m3.value) });
+      else await persist('water', base);
+      // «Se llenó» es una medición: el reservorio queda a su altura útil.
+      if (v === 'lleno') await persist('water', { type: 'medición_nivel', date: f.date.value, levelM: alto, notes: 'Lleno al terminar' });
+      closeSheet();
+      toast(v === 'nose' ? 'Anotado. Mide el reservorio cuando termine.' : 'Anotado: el cálculo del agua ya lo cuenta.');
     };
   });
 }
@@ -1709,11 +1809,11 @@ function renderClimaAgua(s) {
         : Math.abs(delta) < 8
           ? 'La demanda de hoy está en lo normal de la zona.'
           : delta < 0
-            ? `Hoy se pide <b>${Math.abs(delta)} % menos</b> que en un día normal de la zona, ${
+            ? `Hoy se pide <b>${Math.abs(delta)} % menos</b> que en un día normal de la zona, ${
                 lluviaHoy > 2 ? 'porque está lloviendo'
                 : c.reservaMm > 3 ? 'porque el suelo todavía tiene reserva'
                 : 'porque evapora menos'}.`
-            : `Hoy se pide <b>${delta} % más</b> que en un día normal: evapora más de lo habitual.`
+            : `Hoy se pide <b>${delta} % más</b> que en un día normal: evapora más de lo habitual.`
     } ${c.diasPasados ? `En los últimos ${c.diasPasados} días llovieron ${nf(c.lluviaPasada, 0)} mm, de los que aprovechó la planta unos ${nf(c.lluviaEfectivaPasada, 0)} mm.` : ''}</p>
     <p class="pie-accion hint muted">
       <span>Open-Meteo · ${c.horas < 1 ? 'recién bajado' : 'hace ' + Math.round(c.horas) + ' h'}</span>
@@ -1751,7 +1851,7 @@ function renderWater() {
       </div>
       <div class="barra barra--agua barra--l"><span style="width:${pct.toFixed(1)}%"></span></div>
       <div class="veredicto__pie">
-        <span><b>${nf(s.volume.volumeM3, 0)} m³</b> de ${nf(capacityM3, 0)} · ${Math.round(pct)} %</span>
+        <span><b>${nf(s.volume.volumeM3, 0)} m³</b> de ${nf(capacityM3, 0)} · ${Math.round(pct)} %</span>
         <span>Hoy se gastan unos ${nf(s.dailyM3, 2)} m³</span>
       </div>
       <p class="hint">${fuente}.</p>
@@ -1773,7 +1873,7 @@ function renderWater() {
       <h4>Próximos turnos de la junta</h4>
       <p class="hint">5 horas cada ${state.config.cicloTurnoDias || 15} días.</p>
       <ul class="mini-list">
-        ${s.turns.map(t => `<li><span class="punto punto--agua"></span>${fmtDate(t.date)}<b>${t.inDays === 0 ? 'hoy' : 'en ' + t.inDays + ' d'}</b></li>`).join('')}
+        ${s.turns.map(t => `<li><span class="punto punto--agua"></span>${fmtDate(t.date)}<b>${t.inDays === 0 ? 'hoy' : t.inDays === 1 ? 'mañana' : 'en ' + t.inDays + ' días'}</b></li>`).join('')}
       </ul>
     </section>
 
@@ -1803,7 +1903,7 @@ function renderWater() {
       if (!niveles.length && !riegos.length) return '';
       const ult = [...niveles].sort(byDateDesc)[0];
       const partes = [];
-      if (niveles.length) partes.push(`<b>${niveles.length} niveles del sensor</b> (el último, ${fmtDate(ult.date)}: ${nf(ult.levelM, 2)} m)`);
+      if (niveles.length) partes.push(`<b>${niveles.length} niveles del sensor</b> (el último, ${fmtDate(ult.date)}: ${nf(ult.levelM * 100, 0)} cm)`);
       if (riegos.length) partes.push(`<b>${riegos.length} riegos del caudalímetro</b> (${nf(riegos.reduce((s, r) => s + r.volumeM3, 0), 2)} m³)`);
       return `<p class="hint">Además, ${partes.join(' y ')}. No se listan: son uno por día y
         taparían lo anotado a mano.</p>`;
@@ -1813,7 +1913,7 @@ function renderWater() {
         <span class="franja franja--${e.type === 'tanquero' ? 'tanquero' : 'agua'}"></span>
         <span class="fila-main">
           <strong>${cap2(e.type)}</strong>
-          <small>${fmtDate(e.date)}${e.volumeM3 != null ? ` · ${e.volumeM3} m³` : ''}${e.levelM != null ? ` · nivel ${e.levelM} m` : ''}</small>
+          <small>${fmtDate(e.date)}${e.volumeM3 != null ? ` · ${nf(e.volumeM3, e.volumeM3 % 1 ? 1 : 0)} m³` : ''}${e.levelM != null ? ` · ${nf(e.levelM * 100, 0)} cm de agua` : ''}</small>
           ${e.notes ? `<small class="muted">${escapeHtml(e.notes)}</small>` : ''}
         </span>
         <span class="fila-go"><svg class="icono icono--s" aria-hidden="true"><use href="#i-chevron-der"/></svg></span>
@@ -1836,16 +1936,16 @@ function renderWater() {
 }
 
 function openWaterForm(e = {}) {
-  openSheet(e.id ? 'Evento de agua' : 'Registrar evento', `
+  openSheet(e.id ? 'Corregir lo anotado' : 'Anotar agua', `
     <form id="f">
-      <label>Tipo
+      <label>Qué fue
         <select name="type">${WATER_TYPES.map(t =>
           `<option value="${t}" ${e.type === t ? 'selected' : ''}>${cap2(t)}</option>`).join('')}</select>
       </label>
       <label>Fecha <input type="date" name="date" value="${attr(e.date || today())}" required /></label>
-      <label>Volumen (m³) <input type="number" step="0.1" name="volumeM3" value="${attr(e.volumeM3)}" /></label>
-      <label>Nivel medido en el reservorio (m) <input type="number" step="0.01" name="levelM" value="${attr(e.levelM)}" /></label>
-      <label>Notas <textarea name="notes" rows="2">${escapeHtml(e.notes || '')}</textarea></label>
+      <label>Agua (m³) <input type="number" step="0.1" name="volumeM3" inputmode="decimal" value="${attr(e.volumeM3)}" /></label>
+      <label>Nivel medido (m) <input type="number" step="0.01" name="levelM" inputmode="decimal" value="${attr(e.levelM)}" /></label>
+      <label>Nota <textarea name="notes" rows="2">${escapeHtml(e.notes || '')}</textarea></label>
       <button class="btn btn--rojo btn-block" type="submit">Guardar</button>
       ${e.id ? '<button class="btn btn-danger" type="button" data-act="del">Eliminar</button>' : ''}
     </form>
@@ -1862,10 +1962,10 @@ function openWaterForm(e = {}) {
         notes: f.get('notes') || undefined
       });
       closeSheet();
-      toast('Evento guardado');
+      toast('Guardado');
     };
     body.querySelector('[data-act="del"]')?.addEventListener('click', async () => {
-      if (!confirm('¿Eliminar el evento?')) return;
+      if (!confirm('¿Borrar lo anotado?')) return;
       await db.remove('water', e.id);
       await reload(); renderAll(); closeSheet();
     });
@@ -2645,13 +2745,13 @@ function renderComparacion(s) {
   const veredicto = c.desvio == null
     ? `Las plantas casi no pedían agua (lluvia o reserva en el suelo) y se regaron ${nf(c.regadoM3, 2)} m³.`
     : Math.abs(c.desvio) < 15
-      ? `El riego va acorde con lo que piden las plantas (${c.desvio > 0 ? '+' : ''}${c.desvio} %).`
+      ? `El riego va acorde con lo que piden las plantas (${c.desvio > 0 ? '+' : ''}${c.desvio} %).`
       : c.desvio > 0
-        ? `Se regó <b>${c.desvio} % más</b> de lo que pedían las plantas: ${nf(dif, 2)} m³ de más en ${c.filas.length} días.${
+        ? `Se regó <b>${c.desvio} % más</b> de lo que pedían las plantas: ${nf(dif, 2)} m³ de más en ${c.filas.length} días.${
             c.sinNecesidad
               ? ` <b>${c.sinNecesidad === 1 ? 'Un día' : c.sinNecesidad + ' días'} se regó sin que hiciera falta</b> —llovió o el suelo estaba cargado—, ${nf(c.sinNecesidadM3, 2)} m³ en total: si el riego va con temporizador, conviene cortarlo después de una lluvia.`
               : ' Con el agua contada por turnos, es agua que falta al final del ciclo.'}`
-        : `Se regó <b>${Math.abs(c.desvio)} % menos</b> de lo que pedían las plantas: faltaron ${nf(-dif, 2)} m³ en ${c.filas.length} días.`;
+        : `Se regó <b>${Math.abs(c.desvio)} % menos</b> de lo que pedían las plantas: faltaron ${nf(-dif, 2)} m³ en ${c.filas.length} días.`;
 
   return `<div class="card bloque--ancho comparacion">
     <div class="proy-head"><strong>Regado y pedido</strong><small>últimos ${c.filas.length} días con caudalímetro</small></div>

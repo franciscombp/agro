@@ -57,6 +57,21 @@ en esos roles y los componentes propios. Lo aprendido de esa convivencia —incl
 choques de nombres de clase con el sistema— está en
 [`ds/NOTAS-PARA-EL-SISTEMA.md`](ds/NOTAS-PARA-EL-SISTEMA.md).
 
+Reglas que se cumplen en toda la app (y que una auditoría automática verificó en cada
+pantalla y hoja, en claro y oscuro):
+
+- **Una escala de letra de diez pasos** (`--fs-micro` 12 px … `--fs-h1` 32 px) y ningún
+  tamaño suelto; abajo de 13 px sólo van rótulos cortos. Pesos 400, 600, 700 y 800.
+- **Radios de tres clases:** 16 px tarjetas, 12 px controles y recuadros, píldora para
+  chips, botones redondos y barras.
+- **Contraste de 4,5:1 o más** en todo texto, también el gris secundario sobre fondos
+  teñidos (por eso `--app-ink-3` y `--app-warn` son algo más oscuros que en el huerto viejo).
+- **Objetivos táctiles de 44 px** como mínimo, incluidas las casillas (por su etiqueta).
+- **Un dato se muestra igual en todas partes:** fichas y calculadora usan la misma tarjeta
+  de renglones; el dinero lleva siempre centavos bajo 100 dólares ($0,50, $3,00); las
+  cantidades usan coma decimal; lo técnico va plegado en «Datos técnicos».
+- **Borrar se dice en rojo, pero no es un bloque rojo**, y va al final de la hoja.
+
 Tres escalones de pantalla: barra inferior en el teléfono, rail compacto en tablet
 (desde 700 px) y rail con rótulos en computadora (desde 1100 px), donde Hoy se reparte en
 dos columnas que se leen cada una entera.
@@ -88,6 +103,9 @@ dos columnas que se leen cada una entera.
   llegan como notificación los avisos importantes de Hoy.
 - **Sin señal.** Service worker con la app, las librerías y las teselas de la finca en
   caché; todo lo anotado se guarda en el teléfono y entra en una cola para sincronizar.
+- **Liviana al abrir.** MapLibre (800 kB) baja recién al abrir Finca y los módulos se piden
+  en paralelo: en 3G y comprimido como lo sirve Pages, Hoy aparece en unos 2 s y la primera
+  visita baja unos 250 kB (antes 3,1 s y 450 kB).
 
 ## Datos
 

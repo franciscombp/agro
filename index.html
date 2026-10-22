@@ -18,13 +18,36 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="Mi Huerto" />
 
-  <link rel="stylesheet" href="./lib/maplibre-gl.css" />
   <link rel="stylesheet" href="./ds/mal/mal.css" />
   <link rel="stylesheet" href="./styles.css" />
+  <link rel="preload" href="./ds/fonts/inter.woff2" as="font" type="font/woff2" crossorigin />
 
-  <!-- Librerías servidas por la propia app: sin CDN, funciona sin señal desde la primera visita. -->
+  <!-- Los módulos de la app se piden todos a la vez y no en cascada (cada
+       import descubierto tarde cuesta un viaje de ida y vuelta, y en el campo
+       eso es medio segundo). El mapa y el 3D no: bajan al abrir Finca. -->
+  <link rel="modulepreload" href="./app.js" />
+  <link rel="modulepreload" href="./estado.js" />
+  <link rel="modulepreload" href="./ui.js" />
+  <link rel="modulepreload" href="./fechas.js" />
+  <link rel="modulepreload" href="./db.js" />
+  <link rel="modulepreload" href="./geo.js" />
+  <link rel="modulepreload" href="./water.js" />
+  <link rel="modulepreload" href="./clima.js" />
+  <link rel="modulepreload" href="./sensores.js" />
+  <link rel="modulepreload" href="./normaliza.js" />
+  <link rel="modulepreload" href="./map2d.js" />
+  <link rel="modulepreload" href="./planting.js" />
+  <link rel="modulepreload" href="./hydraulics.js" />
+  <link rel="modulepreload" href="./huerto/huerto.js" />
+  <link rel="modulepreload" href="./huerto/catalogo.js" />
+  <link rel="modulepreload" href="./huerto/nino.js" />
+  <link rel="modulepreload" href="./huerto/luna.js" />
+  <link rel="modulepreload" href="./vistas/hoy.js" />
+
   <script>
-    // Distingue "no se pudo descargar" de "el navegador no pudo ejecutarlo".
+    // MapLibre (800 kB) ya no se carga aquí: bloqueaba la primera pantalla
+    // aunque Hoy no lo usa. Lo pide app.js al abrir Finca. Esto sólo distingue
+    // "no se pudo descargar" de "el navegador no pudo ejecutarlo".
     window.__mapLib = {};
     addEventListener('error', e => {
       if (e.filename && e.filename.indexOf('maplibre-gl') !== -1) {
@@ -32,7 +55,6 @@
       }
     }, true);
   </script>
-  <script src="./lib/maplibre-gl.js" onerror="window.__mapLib.network = true"></script>
 </head>
 <body>
 
@@ -103,7 +125,8 @@
     <div class="contenido">
       <div class="seccion-cab seccion-cab--accion">
         <p class="sub">Toca un sector para ver sus plantas, su riego y sus tareas.</p>
-        <button class="btn btn--sm btn--rojo" id="btn-new-sector">Dibujar sector</button>
+        <button class="btn btn--sm btn--rojo" id="btn-new-sector">
+          <svg class="icono icono--s" aria-hidden="true"><use href="#i-mas"/></svg>Sector</button>
       </div>
       <div id="sectors-list" class="list"></div>
     </div>
@@ -113,7 +136,8 @@
     <div class="contenido">
       <div class="seccion-cab seccion-cab--accion">
         <input type="search" class="buscar" id="plant-search" placeholder="Buscar planta…" aria-label="Buscar plantas" />
-        <button class="btn btn--sm btn--rojo" id="btn-new-plant">Nueva planta</button>
+        <button class="btn btn--sm btn--rojo" id="btn-new-plant">
+          <svg class="icono icono--s" aria-hidden="true"><use href="#i-mas"/></svg>Planta</button>
       </div>
       <div id="plants-list" class="list"></div>
     </div>
@@ -148,12 +172,11 @@
     <div class="cabecera">
       <h1>Tareas</h1>
       <div class="cabecera__acciones">
-        <button class="btn btn--sm" id="btn-share-plan">
-          <svg class="icono icono--s" aria-hidden="true"><use href="#i-compartir"/></svg>Mandar el plan</button>
-        <button class="btn btn--sm btn--rojo" id="btn-new-task">Nueva tarea</button>
+        <button class="btn btn--sm btn--rojo" id="btn-new-task">
+          <svg class="icono icono--s" aria-hidden="true"><use href="#i-mas"/></svg>Nueva</button>
       </div>
     </div>
-    <div class="seg" id="task-seg" role="tablist">
+    <div class="seg seg--ancho" id="task-seg" role="tablist" aria-label="Qué tareas ver">
       <button role="tab" aria-selected="true" data-filter="pendientes">Por hacer</button>
       <button role="tab" aria-selected="false" data-filter="hechas">Hechas</button>
       <button role="tab" aria-selected="false" data-filter="todas">Todas</button>
@@ -168,7 +191,8 @@
     <div class="cabecera">
       <h1>Agua</h1>
       <div class="cabecera__acciones">
-        <button class="btn btn--sm btn--rojo" id="btn-new-water">Anotar</button>
+        <button class="btn btn--sm btn--rojo" id="btn-new-water">
+          <svg class="icono icono--s" aria-hidden="true"><use href="#i-mas"/></svg>Anotar</button>
       </div>
     </div>
     <div id="water-body"></div>

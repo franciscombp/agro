@@ -21,7 +21,7 @@ import {
   PRECIOS_META, MERCADO_INTL, CONSEJOS_VENTA
 } from './catalogo.js';
 import { faseLunar, CONSEJO_LUNA, valorarDia, tiempo } from './luna.js';
-import { $, toast, openSheet, closeSheet, escapeHtml, attr, num, formatDias, fechaCorta, today } from '../ui.js';
+import { $, toast, openSheet, closeSheet, escapeHtml, attr, num, dinero, formatDias, fechaCorta, today } from '../ui.js';
 import { enDias } from '../fechas.js';
 
 /* ── Ubicación: la de la finca ─────────────────────────────────────────── */
@@ -179,8 +179,8 @@ export async function tarjetaAnio(cont) {
       ${e.normal90 != null ? `<div><small>Lo normal</small><strong>${e.normal90}<i>mm</i></strong></div>` : ''}
     </div>
     ${e.desvio != null ? `<p class="lectura">${e.desvio < 0
-      ? `Llovió <b>${Math.abs(e.desvio)} % menos</b> que lo habitual en estas fechas`
-      : `Llovió <b>${e.desvio} % más</b> que lo habitual en estas fechas`}${e.anios ? `, comparado con los últimos ${e.anios} años aquí mismo` : ''}.</p>` : ''}`
+      ? `Llovió <b>${Math.abs(e.desvio)} % menos</b> que lo habitual en estas fechas`
+      : `Llovió <b>${e.desvio} % más</b> que lo habitual en estas fechas`}${e.anios ? `, comparado con los últimos ${e.anios} años aquí mismo` : ''}.</p>` : ''}`
     : `<p class="lectura">Todavía no hay datos de lluvia de este punto. Se completan solos cuando haya señal.</p>`;
 
   cont.innerHTML = `
@@ -412,9 +412,9 @@ export function abrirCultivo(id) {
     </div>
     <div class="tip">💡 ${c.tip}</div>
     <div class="econ">
-      <div><small>Inversión por ${unidadBase}</small><strong>$${num(c.inversion)}</strong></div>
+      <div><small>Inversión por ${unidadBase}</small><strong>$${dinero(c.inversion)}</strong></div>
       <div><small>Produce por ${unidadBase}</small><strong>${rendTxt}</strong></div>
-      <div><small>Precio local</small><strong>$${num(c.precio)}/${unidadPrecio(c.rendUnidad)}</strong></div>
+      <div><small>Precio local</small><strong>$${dinero(c.precio)}/${unidadPrecio(c.rendUnidad)}</strong></div>
     </div>
     ${esAnimal ? '' : `<h4>Meses de siembra</h4>${fila(c.mesesSiembra, 'on')}`}
     ${c.mesesPrecioAlto ? `<h4>Cuándo se vende mejor</h4>${fila(c.mesesPrecioAlto, 'venta')}
@@ -551,27 +551,27 @@ function resultados(c, n, sistema) {
   const infraPeriodo = infra > 0 ? infra * (diasPeriodo / (S.vidaInfra * 365)) : 0;
   const periodo = c.modelo === 'ciclo' ? 'este ciclo' : c.modelo === 'anual' ? 'el año' : 'el mes';
   const base = c.cat === 'animal' ? 'Compra de animales' : 'Semillas o plantas';
-  const filas = [[base, `$${num(c.inversion * n)}`]];
-  if (infraPeriodo > 0) filas.push([`${S.emoji} ${S.nombre} (parte de ${periodo})`, `$${num(infraPeriodo)}`]);
+  const filas = [[base, `$${dinero(c.inversion * n)}`]];
+  if (infraPeriodo > 0) filas.push([`${S.emoji} ${S.nombre} (parte de ${periodo})`, `$${dinero(infraPeriodo)}`]);
   let total, totalTxt, nota = '';
   if (c.modelo === 'ciclo') {
-    filas.push([`Gastos del ciclo (${c.cat === 'animal' ? 'alimento' : 'insumos'})`, `$${num(gasto)}`]);
+    filas.push([`Gastos del ciclo (${c.cat === 'animal' ? 'alimento' : 'insumos'})`, `$${dinero(gasto)}`]);
     filas.push([`${c.cat === 'animal' ? 'Producción' : 'Cosecha'} en ${formatDias(c.diasProduccion)}`, `${num(prod)} ${rU}`]);
-    filas.push(['Venta estimada', `$${num(venta)}`]);
+    filas.push(['Venta estimada', `$${dinero(venta)}`]);
     total = venta - c.inversion * n - gasto - infraPeriodo; totalTxt = 'Ganancia del ciclo';
   } else {
     const anual = c.modelo === 'anual';
     filas.push([`Producción por ${anual ? 'año' : 'mes'}`, `${num(prod)} ${rU}`]);
-    filas.push([`Gastos por ${anual ? 'año' : 'mes'}`, `$${num(gasto)}`]);
-    filas.push([`Ingreso por ${anual ? 'año' : 'mes'}`, `$${num(venta)}`]);
+    filas.push([`Gastos por ${anual ? 'año' : 'mes'}`, `$${dinero(gasto)}`]);
+    filas.push([`Ingreso por ${anual ? 'año' : 'mes'}`, `$${dinero(venta)}`]);
     total = venta - gasto - infraPeriodo; totalTxt = `Ganancia por ${anual ? 'año' : 'mes'}`;
     const payback = total > 0 ? Math.ceil(inversion / total) : null;
     if (payback) nota = `Recuperas la inversión en unos ${payback} ${anual ? (payback === 1 ? 'año' : 'años') : (payback === 1 ? 'mes' : 'meses')}. `;
   }
   return `<h4>Lo que deja</h4>
     <div class="tabla">${filas.map(([a, b]) => `<div><span>${a}</span><strong>${b}</strong></div>`).join('')}
-      <div class="tabla__total ${total < 0 ? 'neg' : ''}"><span>${totalTxt}</span><strong>$${num(total)}</strong></div></div>
-    <p class="hint">${nota}${infra > 0 ? `La instalación cuesta $${num(infra)} una vez y dura unos ${S.vidaInfra} años. ` : ''}Precios de referencia de ${PRECIOS_META.pais} (${PRECIOS_META.actualizado}). No incluye tu mano de obra ni el transporte.</p>`;
+      <div class="tabla__total ${total < 0 ? 'neg' : ''}"><span>${totalTxt}</span><strong>$${dinero(total)}</strong></div></div>
+    <p class="hint">${nota}${infra > 0 ? `La instalación cuesta $${dinero(infra)} una vez y dura unos ${S.vidaInfra} años. ` : ''}Precios de referencia de ${PRECIOS_META.pais} (${PRECIOS_META.actualizado}). No incluye tu mano de obra ni el transporte.</p>`;
 }
 
 /* ── Panel: mis siembras ───────────────────────────────────────────────── */
@@ -636,7 +636,7 @@ function tarjetaSiembra(s) {
         ${estado}
       </div>
       <div class="barra"><span style="width:${pct}%"></span></div>
-      <div class="tarjeta-siembra__meta"><span>${meta}</span><span>${pct} %</span></div>
+      <div class="tarjeta-siembra__meta"><span>${meta}</span><span>${pct} %</span></div>
       ${s.nota ? `<p class="nota-siembra">📝 ${escapeHtml(s.nota)}</p>` : ''}
       <div class="acciones-2">
         <button class="btn btn--sm" data-ver="${c.id}">Ver guía</button>
@@ -751,8 +751,8 @@ function pintarPrecios(cont) {
     let trend = '<span class="tendencia">primer registro</span>';
     if (prev) {
       const dif = ult.precio - prev.precio, pct = Math.abs(Math.round(dif / prev.precio * 100));
-      trend = dif > 0.001 ? `<span class="tendencia sube">▲ subió ${pct} %</span>`
-        : dif < -0.001 ? `<span class="tendencia baja">▼ bajó ${pct} %</span>` : '<span class="tendencia">= igual</span>';
+      trend = dif > 0.001 ? `<span class="tendencia sube">▲ subió ${pct} %</span>`
+        : dif < -0.001 ? `<span class="tendencia baja">▼ bajó ${pct} %</span>` : '<span class="tendencia">= igual</span>';
     }
     const c = getItem(prod), u = prodUnidad(prod);
     const f = new Date(ult.fecha + 'T12:00:00');
@@ -762,11 +762,11 @@ function pintarPrecios(cont) {
           <span class="tile t-${c ? c.cat : 'hierba'}">${prodEmoji(prod)}</span>
           <span class="tarjeta-precio__txt"><strong>${escapeHtml(prodNombre(prod))}</strong>
             <small>${f.getDate()} de ${MESES[f.getMonth()].toLowerCase()}${ult.lugar ? ' · ' + escapeHtml(ult.lugar) : ''} · ${regs.length} ${regs.length === 1 ? 'registro' : 'registros'}</small></span>
-          <span class="precio">$${num(ult.precio)}${u ? `<small>/${u}</small>` : ''}</span>
+          <span class="precio">$${dinero(ult.precio)}${u ? `<small>/${u}</small>` : ''}</span>
         </div>
         <div class="tarjeta-precio__pie">
           ${sparkline([...regs].reverse().map(r => r.precio))}
-          <span>${trend}${c ? `<small>Referencia: $${num(c.precio)}/${unidadPrecio(c.rendUnidad)}</small>` : ''}</span>
+          <span>${trend}${c ? `<small>Referencia: $${dinero(c.precio)}/${unidadPrecio(c.rendUnidad)}</small>` : ''}</span>
           <button class="btn btn--icono btn--fantasma" data-borrar="${attr(prod)}" aria-label="Borrar historial">
             <svg class="icono icono--s" aria-hidden="true"><use href="#i-papelera"/></svg></button>
         </div>
@@ -829,11 +829,11 @@ async function pintarIntl(cont, nota) {
       const base = s.length >= 4 ? s.at(-4).valor : s.length >= 2 ? s[0].valor : null;
       if (base) {
         const pct = Math.round((valor - base) / base * 100);
-        trend = pct > 1 ? `<span class="tendencia sube">▲ ${pct} %</span>` : pct < -1 ? `<span class="tendencia baja">▼ ${Math.abs(pct)} %</span>` : '<span class="tendencia">estable</span>';
+        trend = pct > 1 ? `<span class="tendencia sube">▲ ${pct} %</span>` : pct < -1 ? `<span class="tendencia baja">▼ ${Math.abs(pct)} %</span>` : '<span class="tendencia">estable</span>';
       }
     }
-    const mostrado = m.mostrar === 'qq' ? `$${num(valor * 0.04536)}<small>/quintal</small>`
-      : m.mostrar === 'saco' ? `$${num(valor * 0.05)}<small>/saco 50 kg</small>` : `$${num(valor)}<small>/kg</small>`;
+    const mostrado = m.mostrar === 'qq' ? `$${dinero(valor * 0.04536)}<small>/quintal</small>`
+      : m.mostrar === 'saco' ? `$${dinero(valor * 0.05)}<small>/saco 50 kg</small>` : `$${dinero(valor)}<small>/kg</small>`;
     return `<div class="fila-intl"><span class="tile tile--s">${m.emoji}</span>
       <span class="fila-intl__txt"><strong>${m.nombre}</strong><small>${fecha}</small></span>${trend}
       <span class="precio precio--s">${mostrado}</span></div>`;
