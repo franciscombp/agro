@@ -18,19 +18,20 @@ Cinco secciones, cada una con una pregunta:
 
 | Sección | Pregunta | Qué hay |
 |---|---|---|
-| **Hoy** | ¿Qué hago hoy? | Avisos (helada, agua que no alcanza, sensor callado, cosecha lista), el tiempo en una frase, el agua en una frase, las tareas de estos días con casilla para marcarlas, y seis botones para anotar lo del día |
+| **Hoy** | ¿Qué hago hoy? | Avisos (no cosechar todavía, helada, agua que no alcanza, sensor callado, cosecha lista), el tiempo en una frase, el agua en una frase, las tareas de estos días con casilla para marcarlas, y ocho botones para anotar lo del día |
 | **Finca** | ¿Qué hay y dónde? | Mapa satelital, sectores y plantas (segmentado arriba). Desde el mapa se entra al relieve 3D |
 | **Tareas** | ¿Qué falta? | Por hacer / hechas, agrupadas por cuándo, y «Mandar el plan» por WhatsApp |
 | **Agua** | ¿Llega el agua al turno? | El veredicto primero, la curva del reservorio, cómo viene el año (El Niño) y lo anotado |
-| **Huerto** | ¿Qué siembro y cuánto gano? | Qué sembrar (ordenado por el agua de este año), mis siembras y el mercado |
+| **Huerto** | ¿Qué siembro y cuánto gano? | Qué sembrar (ordenado por el agua de este año), mis siembras, el mercado y las cuentas |
 
 Lo que guió el orden:
 
 - **Hoy es la entrada, no el mapa.** El mapa pesa 800 kB y teselas satelitales; con mala
   señal, abrir la app para anotar un riego no tiene por qué esperarlo. Se carga la primera
   vez que se abre Finca.
-- **Anotar está a un toque.** Regué · Medí el reservorio · Una tarea · Sembré algo ·
-  Planta con problema · Un precio de feria. Cada uno es una hoja corta con preguntas
+- **Anotar está a un toque.** Regué · Medí el reservorio · Sembré algo · Fumigué ·
+  Coseché · Vendí · Planta con problema · Una tarea. (El precio de feria sin venta se
+  anota en Huerto → Mercado, y un gasto suelto en Huerto → Cuentas.) Cada uno es una hoja corta con preguntas
   («¿Cuándo?», «¿Qué regaste?») y lo opcional dicho como opcional. «Medí el reservorio»
   pide centímetros de una vara, no metros cúbicos, y muestra el volumen mientras se
   escribe. «Planta con problema» cambia el estado de la planta y crea la tarea de
@@ -79,7 +80,18 @@ dos columnas que se leen cada una entera.
 - **Luna y días buenos.** El calendario lunar de siembra, como costumbre y no como
   ciencia, cruzado con lo que sí se mide: si va a helar, ninguna luna hace bueno el día.
 - **Mercado.** Libreta de precios de feria con tendencia, meses de mejor precio por
-  producto y referencias internacionales del Banco Mundial.
+  producto y referencias internacionales del Banco Mundial. Cada venta anotada deja su
+  precio en la libreta, solo.
+- **Cuentas.** Lo cosechado, lo vendido y lo gastado de verdad en los últimos 12 meses,
+  en total y por sector, con lo cosechado al lado de lo que el catálogo esperaba para
+  ese tiempo (con las plantas en plena producción: es un techo). Los gastos son los
+  anotados más el costo de las tareas hechas. «Ya coseché» en una siembra pide cuánto
+  salió y la saca de la lista sin borrarla, para que siga contando en las cuentas.
+- **Fumigaciones con días de espera.** Al anotar una fumigación se pone el producto y los
+  días que pide la etiqueta antes de cosechar («período de carencia»). Mientras corren,
+  Hoy avisa arriba de todo, la planta y el sector lo dicen en su ficha, el plan por
+  WhatsApp abre con «NO COSECHAR TODAVÍA», y anotar una cosecha ahí pide confirmarlo.
+  La app no adivina los días: sin el dato de la etiqueta, no bloquea nada.
 - **Sensores.** Nivel del reservorio, pluviómetro, humedad de suelo y caudalímetro por
   LoRaWAN → The Things Network → un receptor en Cloudflare Workers, con avisos por
   Telegram aunque la app esté cerrada. Qué comprar y cómo montarlo:
@@ -95,6 +107,8 @@ Todo vive en IndexedDB, en la base `mulalillo` (el nombre se conservó para no p
 anotado en la app de la finca). La primera vez que se abre la versión integrada, copia
 las siembras y los precios del *Mi Huerto* viejo (`localStorage` `mihuerto.v2`) al
 sector Huerto, junto con la fase de El Niño declarada; **el original no se borra**.
+Desde la v18 (base v4) hay además `cosechas`, `ventas` y `gastos`; entran en el respaldo
+JSON como el resto.
 
 Las fechas se calculan en hora local: antes, después de las 19:00 en Ecuador la app ya
 creía que era el día siguiente (tomaba el día de Greenwich).
@@ -131,6 +145,9 @@ worker, descarga de cada archivo), y `?sw=off` la abre sin service worker.
 | `vistas/hoy.js` | La pantalla Hoy, sus avisos y las notificaciones |
 | `huerto/huerto.js` | Qué sembrar, ficha y calculadora, mis siembras, mercado, migración desde Mi Huerto |
 | `huerto/catalogo.js` | ~45 cultivos y animales con altitud, meses, riego, costos y precios |
+| `huerto/cuentas.js` | Sumas de lo cosechado, vendido y gastado, y lo esperado por sector |
+| `huerto/libreta.js` | Anotar cosecha, venta y gasto, y el panel Cuentas |
+| `carencia.js` | Días de espera después de fumigar: dónde no se cosecha todavía y hasta cuándo |
 | `huerto/nino.js` | Estado hídrico, El Niño / La Niña por región, consejo por cultivo |
 | `huerto/luna.js` | Fases lunares, tiempo en palabras, valor de cada día para sembrar |
 | `db.js` | IndexedDB, cola de sincronización, datos medidos de la finca, especies |

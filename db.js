@@ -7,10 +7,12 @@ const DB_NAME = 'mulalillo';
 // sin tocar los que ya existen:
 //   v2 añade `lecturas`, lo que mandan los sensores;
 //   v3 añade `siembras` y `precios`, que vivían en el localStorage de Mi Huerto
-//      y ahora son datos de la finca como los demás.
-const DB_VERSION = 3;
+//      y ahora son datos de la finca como los demás;
+//   v4 añade `cosechas`, `ventas` y `gastos`: las cuentas de verdad, frente a
+//      lo que estima la calculadora.
+const DB_VERSION = 4;
 const STORES = ['parcels', 'sectors', 'plants', 'infra', 'tasks', 'water', 'elevations', 'outbox', 'meta', 'lecturas',
-  'siembras', 'precios'];
+  'siembras', 'precios', 'cosechas', 'ventas', 'gastos'];
 
 let dbPromise = null;
 

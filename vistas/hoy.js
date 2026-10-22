@@ -7,8 +7,8 @@
 //   1. ¿Hay algo urgente?            → avisos, sólo si los hay
 //   2. ¿Cómo está el día y el agua?  → el tiempo y una frase sobre el agua
 //   3. ¿Qué tengo que hacer?         → las tareas de hoy y atrasadas
-//   4. Anotar lo que pasó            → seis botones grandes, con palabras
-//   5. El huerto                     → luna, siembras y mercado
+//   4. Anotar lo que pasó            → ocho botones grandes, con palabras
+//   5. El huerto                     → luna, siembras, mercado y cuentas
 //
 // Cada bloque es una tarjeta que lleva a su sección. Nada de cifras técnicas
 // aquí: los milímetros, los Kc y los bares están en sus pantallas, para quien
@@ -18,6 +18,7 @@
 import { state } from '../estado.js';
 import { faseLunar, CONSEJO_LUNA, tiempo } from '../huerto/luna.js';
 import { resumenHuerto } from '../huerto/huerto.js';
+import { esperasDeHoy, lugarDeTarea, resumenCuentasHoy } from '../huerto/libreta.js';
 import { $, escapeHtml, nf, num, fechaLarga, fechaCorta, formatDias, haceTexto, today } from '../ui.js';
 import { enDias } from '../fechas.js';
 import { MESES } from '../huerto/catalogo.js';
@@ -71,16 +72,19 @@ export function renderHoy({ agua, sensores, tareas, acciones, irA, altitud }) {
     <div class="acciones-rapidas">
       <button data-accion="regue"><span class="tile tile--agua">💧</span>Regué</button>
       <button data-accion="medi"><span class="tile tile--agua">📏</span>Medí el reservorio</button>
-      <button data-accion="tarea"><span class="tile t-hortaliza">✅</span>Una tarea</button>
       <button data-accion="siembra"><span class="tile t-hortaliza">🌱</span>Sembré algo</button>
+      <button data-accion="fumigue"><span class="tile t-hierba">🧴</span>Fumigué</button>
+      <button data-accion="cosecha"><span class="tile t-hortaliza">🧺</span>Coseché</button>
+      <button data-accion="venta"><span class="tile t-grano">💵</span>Vendí</button>
       <button data-accion="problema"><span class="tile t-fruta">🩺</span>Planta con problema</button>
-      <button data-accion="precio"><span class="tile t-grano">💰</span>Un precio de feria</button>
+      <button data-accion="tarea"><span class="tile t-hortaliza">✅</span>Una tarea</button>
     </div>
 
     <h3>Huerto</h3>
     ${tiraLuna()}
     ${tiraSiembras(huerto)}
     ${tiraMercado(huerto)}
+    ${tiraCuentas()}
     </div>
     </div>
   `;
@@ -136,6 +140,13 @@ function juntarAvisos({ agua, sensores, tareas, huerto }) {
       texto: `Faltarían unos ${nf(agua.deficitM3, 0)} m³: conviene pedir un tanquero o regar menos.` });
   } else if (agua.alert) {
     out.push({ tono: 'atencion', emoji: '💧', ir: 'view-water', titulo: `Queda agua para menos de ${agua.alertDays} días.` });
+  }
+
+  // Lo único de esta lista que puede hacerle daño a alguien: va arriba.
+  for (const c of esperasDeHoy()) {
+    out.unshift({ tono: 'mal', emoji: '🧴',
+      titulo: `${escapeHtml(lugarDeTarea(c.task))}: no cosechar todavía.`,
+      texto: `Se fumigó${c.task.producto ? ' con ' + escapeHtml(c.task.producto) : ''} el ${fechaCorta(c.task.doneAt)}. Se puede cosechar desde el ${fechaCorta(c.desde)}.` });
   }
 
   const pron = agua.clima?.pronostico || [];
@@ -262,6 +273,19 @@ function tiraMercado(h) {
   return `<button class="tira tira--ambar" data-ir="view-huerto" data-pane="mercado">
     <span class="tira__emoji">💰</span>
     <span class="tira__txt"><strong>${escapeHtml(titulo)}</strong><small>${texto}</small></span>
+    <span class="chev">›</span></button>`;
+}
+
+/* Las cuentas sólo aparecen cuando hay algo anotado: una tira de ceros no
+   dice nada y ocupa el sitio de lo que sí. */
+function tiraCuentas() {
+  const r = resumenCuentasHoy();
+  if (!r) return '';
+  const dinero = n => (n < 0 ? '−$' : '$') + num(Math.abs(n));
+  return `<button class="tira" data-ir="view-huerto" data-pane="cuentas">
+    <span class="tira__emoji">📒</span>
+    <span class="tira__txt"><strong>${r.queda < 0 ? 'Perdí' : 'Me quedan'} ${dinero(Math.abs(r.queda))} en 12 meses</strong>
+      <small>Vendí ${dinero(r.vendido)} · gasté ${dinero(r.gastado)}</small></span>
     <span class="chev">›</span></button>`;
 }
 

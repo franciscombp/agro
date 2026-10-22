@@ -301,6 +301,13 @@ en el punto, «Fijar con mi GPS» las corrige y el modelo de terreno se recalcul
 
 ## Límites
 
+- **Las cuentas son lo anotado.** Lo que no se anota no existe para ellas, y lo esperado
+  sale del catálogo con plantas adultas: una planta que recién empieza a dar parece rendir
+  poco cuando sólo está creciendo. Las plantas de la finca entran en lo esperado sólo si su
+  especie está en el catálogo del huerto (aguacate, arándano, mora; el peral no).
+- **Los días de espera los pone quien fumiga**, de la etiqueta. La app no tiene una tabla
+  de productos y no la inventa; tampoco sabe del tiempo de reingreso al lote.
+
 - **La sincronización real falta.** La cola local está lista y `db.flushOutbox(endpoint)`
   hace el POST por lote, pero no hay servidor al otro lado: en Ajustes se configura el
   endpoint y, sin él, los cambios quedan encolados. Para un manejo remoto de verdad

@@ -22,6 +22,8 @@ import {
 } from './ui.js';
 import { enDias } from './fechas.js';
 import * as huerto from './huerto/huerto.js';
+import * as libreta from './huerto/libreta.js';
+import * as carencia from './carencia.js';
 import { renderHoy, tareasDeHoy, notificacionesDisponibles, NOTIF_DIA } from './vistas/hoy.js';
 
 const INFRA_TYPES = ['reservorio', 'casa', 'establo', 'cuyera', 'bomba', 'filtro', 'válvula'];
@@ -36,7 +38,7 @@ const WATER_LABELS = {
   'medición_nivel': 'Medí el nivel del reservorio'
 };
 const STATUSES = ['sano', 'atención', 'enfermo', 'muerto'];
-const BUILD = 'v17';
+const BUILD = 'v18';
 
 let farmMap = null;
 let terrain = null;       // vista 3D, se carga bajo demanda
@@ -62,8 +64,9 @@ async function boot() {
   renderAll();
   // Se entra a la sección que se pida en la dirección (#agua, #huerto…):
   // así un enlace compartido por WhatsApp abre donde tiene que abrir.
-  const pedida = { '#finca': 'view-finca', '#tareas': 'view-tasks', '#agua': 'view-water', '#huerto': 'view-huerto' }[location.hash];
-  if (pedida) showView(pedida);
+  const pedida = { '#finca': 'view-finca', '#tareas': 'view-tasks', '#agua': 'view-water', '#huerto': 'view-huerto',
+    '#cuentas': ['view-huerto', 'cuentas'] }[location.hash];
+  if (pedida) showView(...[pedida].flat());
   registerServiceWorker();
   watchConnectivity();
   refrescarClima().then(() => huerto.cargarHidrico()).then(() => { renderHoyAhora(); if (vistaActual === 'view-huerto') renderHuertoAhora(); });
@@ -258,7 +261,13 @@ async function reload() {
   if (parcels[0]) state.parcel = parcels[0];
   state.clima = await clima.leerCache();
   state.lecturas = await db.all('lecturas');
-  [state.siembras, state.precios] = await Promise.all([db.all('siembras'), db.all('precios')]);
+  const [siembras, precios, cosechas, ventas, gastos] = await Promise.all(
+    ['siembras', 'precios', 'cosechas', 'ventas', 'gastos'].map(n => db.all(n)));
+  // Una siembra cosechada no se borra: deja de estar en la tierra, pero lo
+  // que se esperaba de ella sigue contando frente a lo que se cosechó.
+  state.siembras = siembras.filter(s => !s.cosechadaEl);
+  state.siembrasHechas = siembras.filter(s => s.cosechadaEl);
+  Object.assign(state, { precios, cosechas, ventas, gastos });
 }
 
 /** Recalcula todo lo derivado y repinta las vistas activas. */
@@ -399,7 +408,7 @@ function mostrarPanelFinca(p) {
 function mostrarPanelHuerto(p) {
   panelHuerto = p;
   $$('#huerto-seg button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.pane === p)));
-  for (const n of ['sembrar', 'siembras', 'mercado']) $('#huerto-' + n).hidden = n !== p;
+  for (const n of ['sembrar', 'siembras', 'mercado', 'cuentas']) $('#huerto-' + n).hidden = n !== p;
   renderHuertoAhora();
 }
 
@@ -428,7 +437,9 @@ function renderHoyAhora() {
       tarea: () => openTaskForm({}),
       siembra: () => huerto.abrirNuevaSiembra(),
       problema: () => openProblema(),
-      precio: () => huerto.abrirNuevoPrecio(),
+      fumigue: () => openFumigacion(),
+      cosecha: () => libreta.abrirCosecha(),
+      venta: () => libreta.abrirVenta(),
       ajustes: () => openSettings(),
       hecha: async (id, el) => {
         const t = state.tasks.find(x => x.id === id);
@@ -443,6 +454,7 @@ function renderHoyAhora() {
 function renderHuertoAhora() {
   if (panelHuerto === 'sembrar') huerto.renderSembrar();
   else if (panelHuerto === 'siembras') huerto.renderSiembras();
+  else if (panelHuerto === 'cuentas') libreta.renderCuentas();
   else huerto.renderMercado();
 }
 
@@ -620,6 +632,7 @@ function openPlant(id) {
   const p = state.plants.find(x => x.id === id);
   if (!p) return;
   const sector = state.sectors.find(s => s.id === p.sectorId);
+  const espera = libreta.esperaEn({ plantId: p.id });
   const tasks = state.tasks
     .filter(t => (t.targetType === 'plant' && t.targetId === p.id) ||
                  (t.targetType === 'sector' && p.sectorId && t.targetId === p.sectorId))
@@ -629,7 +642,9 @@ function openPlant(id) {
     <div class="chips">
       ${estadoPastilla(p.status)}
       ${sector ? `<span class="badge">${escapeHtml(sector.name)}</span>` : '<span class="badge">Sin sector</span>'}
+      ${espera ? `<span class="pastilla pastilla--ambar">🧴 Cosechar desde el ${fechaCorta(espera.desde)}</span>` : ''}
     </div>
+    ${espera ? `<p class="aviso aviso--atencion">${libreta.fraseEspera(espera)}</p>` : ''}
     <dl class="hechos">
       <dt>Sembrada</dt><dd>${p.plantedAt ? fmtDate(p.plantedAt) + ' · ' + ageLabel(p.plantedAt) : '—'}</dd>
       <dt>Elevación</dt><dd>${p.elevationM ? nf(p.elevationM, 2) + ' msnm' : '—'}</dd>
@@ -914,8 +929,11 @@ function openSector(id) {
   const dailyAdultoL = plants.reduce((sum, p) => sum + (SPECIES[p.species]?.lppd ?? 0), 0);
   const tasks = state.tasks.filter(t => t.targetType === 'sector' && t.targetId === s.id).sort(byDateDesc);
   const elevs = s.polygon.map(p => interpolateElevation(p, measuredPoints()));
+  const espera = libreta.esperaEn({ sectorId: s.id });
 
   openSheet(s.name, `
+    ${espera ? `<p class="aviso aviso--atencion"><span>🧴</span><span><b>${espera.parcial ? 'Parte del sector' : 'El sector'} todavía no se cosecha.</b>
+      ${libreta.fraseEspera(espera)}</span></p>` : ''}
     <dl class="hechos">
       <dt>Área</dt><dd>${fmtArea(area)}</dd>
       <dt>Perímetro</dt><dd>${fmtM(perimeterM(s.polygon))}</dd>
@@ -1238,6 +1256,7 @@ function renderPlants() {
   for (const p of state.plants) counts.set(p.species, (counts.get(p.species) || 0) + 1);
   if (filtroEspecie !== 'todas' && !counts.has(filtroEspecie)) filtroEspecie = 'todas';
   const visibles = rows.filter(p => filtroEspecie === 'todas' || p.species === filtroEspecie);
+  const esperas = libreta.esperasDeHoy();
 
   $('#plants-list').innerHTML = `
     <div class="chips" id="plantas-especie">
@@ -1252,6 +1271,8 @@ function renderPlants() {
           <strong>${SPECIES[p.species]?.label || p.species}${p.variety ? ' · ' + escapeHtml(p.variety) : ''}</strong>
           <small>${state.sectors.find(s => s.id === p.sectorId)?.name || 'Sin sector'}${p.plantedAt ? ' · ' + ageLabel(p.plantedAt) : ''}</small>
         </span>
+        ${carencia.carenciasPara({ plantId: p.id }, esperas, state.plants).length
+          ? '<span class="pastilla pastilla--ambar" title="Fumigada: todavía no se cosecha">🧴</span>' : ''}
         ${estadoPastilla(p.status)}
       </button>`).join('')}</div>
     ${visibles.length ? '' : '<p class="hint">Ninguna planta coincide con la búsqueda.</p>'}
@@ -1311,7 +1332,9 @@ function renderTasks() {
             ? 'Hecha ' + fmtDate(t.doneAt)
             : c
               ? `<b class="cuando cuando--${c.tono}">${c.txt}</b> <span class="muted">· ${fmtDate(t.dueAt)}</span>`
-              : 'Sin fecha'}${t.quantity ? ` · ${t.quantity} ${escapeHtml(t.unit || '')}` : ''}</small>
+              : 'Sin fecha'}${t.quantity ? ` · ${t.quantity} ${escapeHtml(t.unit || '')}` : ''}${t.costo ? ` · $${t.costo}` : ''}</small>
+          ${t.producto || t.carenciaDias ? `<small class="muted">🧴 ${escapeHtml(t.producto || 'Producto sin anotar')}${
+            t.carenciaDias ? ` · ${t.carenciaDias} días sin cosechar${t.doneAt ? ': se cosecha desde el ' + fechaCorta(carencia.sumarDias(t.doneAt, t.carenciaDias)) : ' desde que se aplique'}` : ''}</small>` : ''}
           ${t.notes ? `<small class="muted">${escapeHtml(t.notes)}</small>` : ''}
         </button>
       </div>`;
@@ -1391,20 +1414,28 @@ function openTaskForm(t = {}) {
         <select name="target">${opcionesObjetivo(current)}</select>
       </label>
       <label>¿Para cuándo? <input type="date" name="dueAt" value="${attr(t.dueAt ?? (nueva ? today() : ''))}" /></label>
+      ${camposFumigacion(t)}
       <label>Detalle <textarea name="notes" rows="2" placeholder="Ej.: dos sacos de abono por planta">${escapeHtml(t.notes || '')}</textarea></label>
       <details class="mas-campos" ${t.doneAt || t.quantity ? 'open' : ''}>
-        <summary>Más datos (cantidad, si ya está hecha)</summary>
+        <summary>Más datos (cantidad, costo, si ya está hecha)</summary>
         <label>Hecha el <input type="date" name="doneAt" value="${attr(t.doneAt)}" /></label>
         <div class="field-grid-2">
           <label>Cantidad <input type="number" step="0.01" name="quantity" value="${attr(t.quantity)}" /></label>
           <label>Unidad <input name="unit" value="${attr(t.unit)}" placeholder="kg, L, sacos" /></label>
         </div>
+        <label>¿Cuánto costó? (opcional)
+          <span class="con-unidad"><input type="number" name="costo" min="0" step="0.01" inputmode="decimal" value="${attr(t.costo)}" /><i>$</i></span></label>
+        <p class="hint">El costo cuenta como gasto en Huerto → Cuentas cuando la tarea está hecha.</p>
       </details>
       <button class="btn btn--rojo btn-block" type="submit">Guardar</button>
       ${t.id ? '<button class="btn btn-danger btn-block" type="button" data-act="del">Borrar la tarea</button>' : ''}
     </form>
   `, body => {
-    body.querySelector('#f').onsubmit = async ev => {
+    const form = body.querySelector('#f');
+    const syncTipo = () => { body.querySelector('[data-fumigacion]').hidden = form.type.value !== 'fumigación'; };
+    form.type.addEventListener('change', syncTipo);
+    syncTipo();
+    form.onsubmit = async ev => {
       ev.preventDefault();
       const f = new FormData(ev.target);
       const [targetType, targetId] = f.get('target').split(':');
@@ -1416,7 +1447,9 @@ function openTaskForm(t = {}) {
         doneAt: f.get('doneAt') || undefined,
         quantity: f.get('quantity') ? Number(f.get('quantity')) : undefined,
         unit: f.get('unit') || undefined,
-        notes: f.get('notes') || undefined
+        notes: f.get('notes') || undefined,
+        costo: f.get('costo') ? Number(f.get('costo')) : undefined,
+        ...leerFumigacion(f)
       });
       closeSheet();
       toast('Tarea guardada');
@@ -1426,6 +1459,72 @@ function openTaskForm(t = {}) {
       await db.remove('tasks', t.id);
       await reload(); renderAll(); closeSheet();
     });
+  });
+}
+
+/* ── Fumigaciones: con qué y cuánto esperar para cosechar ─────────────────
+   Los días de espera salen de la etiqueta del producto. La app no los
+   adivina: un número inventado aquí sería peor que ninguno. */
+
+function camposFumigacion(t) {
+  return `<div data-fumigacion hidden>
+      <label>¿Con qué producto? <input name="producto" value="${attr(t.producto)}" placeholder="Ej.: Mancozeb, caldo bordelés" /></label>
+      <label>¿Cuántos días hay que esperar para cosechar?
+        <span class="con-unidad"><input type="number" name="carenciaDias" min="0" step="1" inputmode="numeric" value="${attr(t.carenciaDias)}" /><i>días</i></span></label>
+      <p class="hint">Está en la etiqueta, como «período de carencia» o «intervalo de seguridad». Si es un producto orgánico sin espera, pon 0.</p>
+    </div>`;
+}
+
+function leerFumigacion(f, tipo = f.get('type')) {
+  if (tipo !== 'fumigación') return { producto: undefined, carenciaDias: undefined };
+  return {
+    producto: (f.get('producto') || '').trim() || undefined,
+    carenciaDias: f.get('carenciaDias') !== '' && f.get('carenciaDias') != null ? Math.max(0, Math.round(Number(f.get('carenciaDias')))) : undefined
+  };
+}
+
+/** «Fumigué»: la tarea ya hecha, con su espera, desde Hoy. */
+function openFumigacion() {
+  openSheet('Fumigué', `
+    <form id="f">
+      <label>¿Dónde? <select name="target">${opcionesObjetivo('parcel:' + state.parcel.id)}</select></label>
+      <label>¿Con qué producto? <input name="producto" required placeholder="Ej.: Mancozeb, caldo bordelés" /></label>
+      <label>¿Cuántos días hay que esperar para cosechar?
+        <span class="con-unidad con-unidad--grande"><input type="number" name="carenciaDias" min="0" step="1" inputmode="numeric" required /><i>días</i></span></label>
+      <p class="hint">Está en la etiqueta, como «período de carencia» o «intervalo de seguridad». Si no tiene espera, pon 0.</p>
+      <p class="equivale" data-desde>&nbsp;</p>
+      <label>¿Cuándo? <input type="date" name="doneAt" value="${today()}" max="${today()}" required /></label>
+      <details class="mas-campos">
+        <summary>Más datos (dosis, costo)</summary>
+        <label>Dosis (opcional) <input name="notes" placeholder="Ej.: 2,5 g por litro, bomba de 20 L" /></label>
+        <label>¿Cuánto costó? (opcional)
+          <span class="con-unidad"><input type="number" name="costo" min="0" step="0.01" inputmode="decimal" /><i>$</i></span></label>
+      </details>
+      <button class="btn btn--rojo btn-block" type="submit">Guardar</button>
+    </form>`, body => {
+    const form = body.querySelector('#f');
+    const desde = () => {
+      const n = Number(form.carenciaDias.value);
+      const out = body.querySelector('[data-desde]');
+      out.innerHTML = form.carenciaDias.value !== '' && n > 0 && form.doneAt.value
+        ? `Se podrá cosechar desde el <b>${fechaCorta(carencia.sumarDias(form.doneAt.value, n))}</b>` : '&nbsp;';
+    };
+    form.addEventListener('input', desde);
+    form.onsubmit = async ev => {
+      ev.preventDefault();
+      const f = new FormData(form);
+      const [targetType, targetId] = f.get('target').split(':');
+      const doneAt = f.get('doneAt');
+      await persist('tasks', {
+        type: 'fumigación', targetType, targetId, dueAt: doneAt, doneAt,
+        notes: (f.get('notes') || '').trim() || undefined,
+        costo: f.get('costo') ? Number(f.get('costo')) : undefined,
+        ...leerFumigacion(f, 'fumigación')
+      });
+      closeSheet();
+      const n = Number(f.get('carenciaDias'));
+      toast(n > 0 ? `Anotado. Se cosecha desde el ${fechaCorta(carencia.sumarDias(doneAt, n))}.` : 'Fumigación anotada');
+    };
   });
 }
 
@@ -1575,6 +1674,17 @@ function buildPlan() {
 
     escribir(`ATRASADAS (${atrasadas.length})`, atrasadas);
     escribir(`PRÓXIMAS (${resto.length})`, resto);
+  }
+
+  // Va antes que el agua: quien está en la finca puede ponerse a cosechar
+  // hoy mismo, y esto es lo único del plan que puede hacer daño a alguien.
+  const esperas = libreta.esperasDeHoy();
+  if (esperas.length) {
+    lineas.push(`NO COSECHAR TODAVÍA (${esperas.length})`);
+    for (const c of esperas) {
+      lineas.push(`• ${libreta.lugarDeTarea(c.task)}: fumigado${c.task.producto ? ' con ' + c.task.producto : ''} el ${fmtDate(c.task.doneAt)}. Se cosecha desde el ${fmtDate(c.desde)}.`);
+    }
+    lineas.push('');
   }
 
   const w = water.summary({ ...state, clima: state.clima, sensores: resumenSensores() });
