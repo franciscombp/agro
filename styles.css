@@ -81,6 +81,12 @@
 /* ── 2. Base ─────────────────────────────────────────────────────────── */
 [hidden] { display: none !important; }
 html { -webkit-text-size-adjust: 100%; }
+/* Sin zoom por doble toque: al tocar rápido el mismo botón, el teléfono
+   acercaba la página y no había cómo volver. El pellizco sigue funcionando
+   (accesibilidad), por eso no va user-scalable=no en el viewport.
+   :where(*) no pesa nada: el mapa y el 3D, que ponen touch-action:none,
+   se quedan con lo suyo. */
+:where(*) { touch-action: manipulation; }
 /* Fondo liso: con degradado, las cabeceras fijas (que llevan el color de
    fondo para tapar lo que pasa por debajo) se notaban como un rectángulo. */
 body {
