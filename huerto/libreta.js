@@ -11,7 +11,7 @@ import { state, avisarCambio } from '../estado.js';
 import { carenciasActivas, carenciasPara } from '../carencia.js';
 import { resumen, ultimoAnio, totalVenta } from './cuentas.js';
 import { getItem, prodNombre, prodEmoji, prodUnidad, opcionesProducto, contar } from './huerto.js';
-import { $, toast, openSheet, closeSheet, escapeHtml, attr, num, nf, fechaCorta, today } from '../ui.js';
+import { $, toast, openSheet, closeSheet, escapeHtml, attr, nf, dinero as centavos, fechaCorta, today } from '../ui.js';
 
 /* ── Dónde se fumigó, en palabras ──────────────────────────────────────── */
 
@@ -193,7 +193,7 @@ export function abrirVenta({ prod, sectorId } = {}) {
     let unidad;
     const total = () => {
       const t = leerCantidad(f) * (Number(f.precio.value) || 0);
-      body.querySelector('[data-total]').innerHTML = t > 0 ? `= <b>$${num(t)}</b> en total` : '&nbsp;';
+      body.querySelector('[data-total]').innerHTML = t > 0 ? `= <b>$${centavos(t)}</b> en total` : '&nbsp;';
     };
     // El sector sigue al producto: de dónde salió la última cosecha de eso.
     const sectorDe = p => [...state.cosechas].filter(c => c.prod === p)
@@ -219,7 +219,7 @@ export function abrirVenta({ prod, sectorId } = {}) {
       });
       await db.put('precios', { prod: p, precio: venta.precio, lugar: comprador, fecha: venta.fecha, ventaId: venta.id });
       closeSheet();
-      toast(`Venta anotada: $${num(totalVenta(venta))}`);
+      toast(`Venta anotada: $${centavos(totalVenta(venta))}`);
       avisarCambio();
     };
   });
@@ -279,7 +279,7 @@ export function resumenCuentasHoy() {
 }
 
 function dinero(n) {
-  return (n < 0 ? '−$' : '$') + num(Math.abs(n));
+  return (n < 0 ? '−$' : '$') + centavos(Math.abs(n));
 }
 
 function nombreSector(id) {
@@ -292,7 +292,7 @@ function movimientos() {
   for (const c of state.cosechas) out.push({ store: 'cosechas', r: c, fecha: c.fecha, emoji: '🧺',
     txt: `${prodNombre(c.prod)}: ${contar(c.cantidad, c.unidad, nf(c.cantidad, c.cantidad % 1 ? 1 : 0))}`, sub: nombreSector(c.sectorId), monto: null });
   for (const v of state.ventas) out.push({ store: 'ventas', r: v, fecha: v.fecha, emoji: '💵',
-    txt: `Vendí ${prodNombre(v.prod).toLowerCase()}: ${contar(v.cantidad, v.unidad, nf(v.cantidad, v.cantidad % 1 ? 1 : 0))} a $${num(v.precio)}`,
+    txt: `Vendí ${prodNombre(v.prod).toLowerCase()}: ${contar(v.cantidad, v.unidad, nf(v.cantidad, v.cantidad % 1 ? 1 : 0))} a $${centavos(v.precio)}`,
     sub: v.comprador || nombreSector(v.sectorId), monto: totalVenta(v) });
   for (const g of state.gastos) {
     const [, emoji, txt] = concepto(g.concepto);
@@ -389,7 +389,7 @@ function filaMovimiento(m) {
     <span class="tile tile--s">${m.emoji}</span>
     <span class="fila-main"><strong>${escapeHtml(m.txt)}</strong>
       <small>${fechaCorta(m.fecha)} · ${escapeHtml(m.sub)}</small></span>
-    ${m.monto != null ? `<span class="monto ${m.monto < 0 ? 'neg' : 'pos'}">${m.monto < 0 ? '−' : '+'}$${num(Math.abs(m.monto))}</span>` : ''}
+    ${m.monto != null ? `<span class="monto ${m.monto < 0 ? 'neg' : 'pos'}">${m.monto < 0 ? '−' : '+'}$${centavos(Math.abs(m.monto))}</span>` : ''}
     ${m.store ? `<button class="btn btn--icono btn--fantasma" data-borrar-mov="${m.store}:${attr(m.r.id)}" aria-label="Borrar">
       <svg class="icono icono--s" aria-hidden="true"><use href="#i-papelera"/></svg></button>` : ''}
   </div>`;

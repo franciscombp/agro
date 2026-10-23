@@ -49,6 +49,14 @@ export function num(n) {
   const r = n >= 100 ? Math.round(n) : Math.round(n * 100) / 100;
   return r.toLocaleString('es-EC');
 }
+/** Dinero: con centavos bajo 100 dólares ($0,50 y no $0,5; $3,00 y no $3), sin ellos de ahí para arriba. */
+export function dinero(n) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return '—';
+  return Math.abs(x) >= 100
+    ? Math.round(x).toLocaleString('es-EC')
+    : x.toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
 export function cap(s) { return String(s).charAt(0).toUpperCase() + String(s).slice(1); }
 export function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c =>

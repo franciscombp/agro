@@ -2,7 +2,7 @@
 // Debe funcionar sin señal en el campo: shell precacheado, librerías y tiles en caché.
 "use strict";
 
-const VERSION = "v21";
+const VERSION = "v22";
 const SHELL = "mihuerto-shell-" + VERSION;
 // El nombre viejo se queda: así no se pierden los tiles ya bajados en el campo.
 const TILES = "mulalillo-tiles";

@@ -64,3 +64,12 @@ test('fecha local: a las 22:00 en Ecuador sigue siendo el mismo día', () => {
     if (antes === undefined) delete process.env.TZ; else process.env.TZ = antes;
   }
 });
+
+test('dinero: siempre con centavos bajo 100, sin ellos desde 100', async () => {
+  const { dinero } = await import('../ui.js');
+  assert.equal(dinero(4.3), '4,30');
+  assert.equal(dinero(3), '3,00');
+  assert.equal(dinero(0.523), '0,52');
+  assert.equal(dinero(1250.4), '1.250');
+  assert.equal(dinero('x'), '—');
+});
