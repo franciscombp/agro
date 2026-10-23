@@ -40,7 +40,7 @@ const WATER_LABELS = {
   'medición_nivel': 'Medí el nivel del reservorio'
 };
 const STATUSES = ['sano', 'atención', 'enfermo', 'muerto'];
-const BUILD = 'v22';
+const BUILD = 'v23';
 
 let farmMap = null;
 let terrain = null;       // vista 3D, se carga bajo demanda
