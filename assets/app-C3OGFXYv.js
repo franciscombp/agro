@@ -22,7 +22,11 @@ import {
 } from './ui.js';
 import { enDias } from './fechas.js';
 import * as huerto from './huerto/huerto.js';
-import { renderHoy, tareasDeHoy, notificacionesDisponibles, NOTIF_DIA } from './vistas/hoy.js';
+import * as libreta from './huerto/libreta.js';
+import * as carencia from './carencia.js';
+import * as abono from './abono.js';
+import * as sync from './sync.js';
+import { renderHoy, tareasDeHoy, notificacionesDisponibles, NOTIF_DIA, riesgoDeHongos } from './vistas/hoy.js';
 
 const INFRA_TYPES = ['reservorio', 'casa', 'establo', 'cuyera', 'bomba', 'filtro', 'válvula'];
 const TASK_TYPES = ['riego', 'poda', 'fertilización', 'fumigación', 'cosecha', 'siembra', 'otro'];
@@ -36,7 +40,7 @@ const WATER_LABELS = {
   'medición_nivel': 'Medí el nivel del reservorio'
 };
 const STATUSES = ['sano', 'atención', 'enfermo', 'muerto'];
-const BUILD = 'v18';
+const BUILD = 'v22';
 
 let farmMap = null;
 let terrain = null;       // vista 3D, se carga bajo demanda
@@ -60,20 +64,24 @@ async function boot() {
   alCambiar(async () => { await reload(); renderAll(); });
   wireChrome();
   renderAll();
+  // Un enlace de invitación (#unir=…) conecta este teléfono a la finca compartida.
+  await aceptarInvitacion();
   // Se entra a la sección que se pida en la dirección (#agua, #huerto…):
   // así un enlace compartido por WhatsApp abre donde tiene que abrir.
-  const pedida = { '#finca': 'view-finca', '#tareas': 'view-tasks', '#agua': 'view-water', '#huerto': 'view-huerto' }[location.hash];
-  if (pedida) showView(pedida);
+  const pedida = { '#finca': 'view-finca', '#tareas': 'view-tasks', '#agua': 'view-water', '#huerto': 'view-huerto',
+    '#cuentas': ['view-huerto', 'cuentas'] }[location.hash];
+  if (pedida) showView(...[pedida].flat());
   registerServiceWorker();
   watchConnectivity();
   refrescarClima().then(() => huerto.cargarHidrico()).then(() => { renderHoyAhora(); if (vistaActual === 'view-huerto') renderHuertoAhora(); });
   sincronizarSensores();
+  sincronizarFinca();
   // Mientras la app está abierta y a la vista, cada 15 minutos. Un sensor
   // LoRa manda cada 20–60: preguntar más seguido sólo gasta batería del
   // teléfono y datos móviles.
-  setInterval(() => { if (document.visibilityState === 'visible') sincronizarSensores(); }, 15 * 60000);
+  setInterval(() => { if (document.visibilityState === 'visible') { sincronizarSensores(); sincronizarFinca(); } }, 15 * 60000);
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') sincronizarSensores();
+    if (document.visibilityState === 'visible') { sincronizarSensores(); sincronizarFinca(); }
   });
 }
 
@@ -106,6 +114,60 @@ async function sincronizarSensores({ avisar = false } = {}) {
     return r;
   })();
   try { return await sincronizando; } finally { sincronizando = null; }
+}
+
+/* ── La finca compartida entre teléfonos ────────────────────────────────
+   Sube la cola local y baja lo que cambiaron los demás (sync.js). Corre al
+   abrir, al volver a la app, cada 15 minutos, al recuperar la señal y unos
+   segundos después de anotar algo. En silencio, salvo que se pida. */
+
+function cfgFinca() {
+  return state.config.finca || {};
+}
+
+let sincronizandoFinca = null;
+async function sincronizarFinca({ avisar = false } = {}) {
+  const cfg = cfgFinca();
+  if (!cfg.url || !cfg.token) { if (avisar) toast('Falta conectar este teléfono a la finca compartida'); return null; }
+  if (sincronizandoFinca) return sincronizandoFinca;
+  sincronizandoFinca = (async () => {
+    const r = await sync.sincronizar(cfg);
+    // Lo que el receptor rechazó (una planta con demasiadas fotos) se queda
+    // dicho en Ajustes aunque la sincronización haya sido en silencio.
+    const problema = !r.ok ? r.motivo
+      : r.rechazados.length ? `${r.rechazados.length} cambios no subieron (${r.rechazados[0].motivo})` : null;
+    state.config = await db.saveConfig({ finca: { ...cfgFinca(), ultimoError: problema } });
+    if (r.ok && r.bajados) { await reload(); renderAll(); }
+    else updateOutboxChip();
+    if (avisar) {
+      toast(!r.ok ? `No se sincronizó: ${r.motivo}`
+        : r.rechazados.length ? `${r.rechazados.length} cambios no se pudieron subir (${r.rechazados[0].motivo})`
+        : r.subidos || r.bajados ? `Listo: ${r.subidos} subidos, ${r.bajados} bajados` : 'Todo al día', 4000);
+    }
+    return r;
+  })();
+  try { return await sincronizandoFinca; } finally { sincronizandoFinca = null; }
+}
+
+/* Unos segundos después del último cambio, no en cada uno: anotar una
+   cosecha son tres o cuatro guardados seguidos. */
+let syncProgramado = null;
+function programarSyncFinca() {
+  if (!cfgFinca().url || !cfgFinca().token || !navigator.onLine) return;
+  clearTimeout(syncProgramado);
+  syncProgramado = setTimeout(() => sincronizarFinca(), 4000);
+}
+
+async function aceptarInvitacion() {
+  const inv = sync.leerInvitacion(location.hash);
+  if (!inv) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  const host = new URL(inv.url).host;
+  if (!confirm(`¿Conectar este teléfono a la finca compartida (${host})?\n\nLo que anotes aquí lo verán los demás teléfonos, y lo de ellos aparecerá aquí.`)) return;
+  state.config = await db.saveConfig({ finca: { url: inv.url, token: inv.token } });
+  await sync.olvidarCursor();
+  const r = await sincronizarFinca();
+  toast(r?.ok ? 'Conectado a la finca compartida' : `Conectado, pero no se sincronizó: ${r?.motivo}`, 4000);
 }
 
 /**
@@ -269,7 +331,13 @@ async function reload() {
   if (parcels[0]) state.parcel = parcels[0];
   state.clima = await clima.leerCache();
   state.lecturas = await db.all('lecturas');
-  [state.siembras, state.precios] = await Promise.all([db.all('siembras'), db.all('precios')]);
+  const [siembras, precios, cosechas, ventas, gastos] = await Promise.all(
+    ['siembras', 'precios', 'cosechas', 'ventas', 'gastos'].map(n => db.all(n)));
+  // Una siembra cosechada no se borra: deja de estar en la tierra, pero lo
+  // que se esperaba de ella sigue contando frente a lo que se cosechó.
+  state.siembras = siembras.filter(s => !s.cosechadaEl);
+  state.siembrasHechas = siembras.filter(s => s.cosechadaEl);
+  Object.assign(state, { precios, cosechas, ventas, gastos });
 }
 
 /** Recalcula todo lo derivado y repinta las vistas activas. */
@@ -409,7 +477,7 @@ function mostrarPanelFinca(p) {
 function mostrarPanelHuerto(p) {
   panelHuerto = p;
   $$('#huerto-seg button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.pane === p)));
-  for (const n of ['sembrar', 'siembras', 'mercado']) $('#huerto-' + n).hidden = n !== p;
+  for (const n of ['sembrar', 'siembras', 'mercado', 'cuentas']) $('#huerto-' + n).hidden = n !== p;
   renderHuertoAhora();
 }
 
@@ -438,7 +506,9 @@ function renderHoyAhora() {
       tarea: () => openTaskForm({}),
       siembra: () => huerto.abrirNuevaSiembra(),
       problema: () => openProblema(),
-      precio: () => huerto.abrirNuevoPrecio(),
+      fumigue: () => openFumigacion(),
+      cosecha: () => libreta.abrirCosecha(),
+      venta: () => libreta.abrirVenta(),
       ajustes: () => openSettings(),
       hecha: async (id, el) => {
         const t = state.tasks.find(x => x.id === id);
@@ -453,6 +523,7 @@ function renderHoyAhora() {
 function renderHuertoAhora() {
   if (panelHuerto === 'sembrar') huerto.renderSembrar();
   else if (panelHuerto === 'siembras') huerto.renderSiembras();
+  else if (panelHuerto === 'cuentas') libreta.renderCuentas();
   else huerto.renderMercado();
 }
 
@@ -630,6 +701,7 @@ function openPlant(id) {
   const p = state.plants.find(x => x.id === id);
   if (!p) return;
   const sector = state.sectors.find(s => s.id === p.sectorId);
+  const espera = libreta.esperaEn({ plantId: p.id });
   const tasks = state.tasks
     .filter(t => (t.targetType === 'plant' && t.targetId === p.id) ||
                  (t.targetType === 'sector' && p.sectorId && t.targetId === p.sectorId))
@@ -639,7 +711,9 @@ function openPlant(id) {
     <div class="ficha-pastillas">
       ${estadoPastilla(p.status)}
       <span class="pastilla pastilla--off">${sector ? escapeHtml(sector.name) : 'Sin sector'}</span>
+      ${espera ? `<span class="pastilla pastilla--ambar">🧴 Cosechar desde el ${fechaCorta(espera.desde)}</span>` : ''}
     </div>
+    ${espera ? `<p class="aviso aviso--atencion">${libreta.fraseEspera(espera)}</p>` : ''}
     <dl class="hechos">
       <dt>Sembrada</dt><dd>${p.plantedAt ? `${fmtDate(p.plantedAt)}<small>hace ${ageLabel(p.plantedAt)}</small>` : '—'}</dd>
       <dt>Agua hoy</dt><dd>${nf(water.litrosPlantaDia(p, diaDeHoy()), 1)} litros${
@@ -929,8 +1003,12 @@ function openSector(id) {
   const dailyAdultoL = plants.reduce((sum, p) => sum + (SPECIES[p.species]?.lppd ?? 0), 0);
   const tasks = state.tasks.filter(t => t.targetType === 'sector' && t.targetId === s.id).sort(byDateDesc);
   const elevs = s.polygon.map(p => interpolateElevation(p, measuredPoints()));
+  const espera = libreta.esperaEn({ sectorId: s.id });
+  const abonoEtapa = abono.ABONO_ETAPA[s.etapa];
 
   openSheet(s.name, `
+    ${espera ? `<p class="aviso aviso--atencion"><span>🧴</span><span><b>${espera.parcial ? 'Parte del sector' : 'El sector'} todavía no se cosecha.</b>
+      ${libreta.fraseEspera(espera)}</span></p>` : ''}
     <dl class="hechos">
       <dt>Tamaño</dt><dd>${fmtArea(area)}</dd>
       <dt>Plantas</dt><dd>${plants.length}</dd>
@@ -941,6 +1019,10 @@ function openSector(id) {
         : '<span class="muted">sin declarar</span>'}</dd>
     </dl>
     ${s.etapa ? `<p class="hint">${water.ETAPAS[s.etapa].dice}</p>` : ''}
+    ${abonoEtapa ? `<div class="abono-etapa"><strong>🧪 Abono en esta etapa: ${abonoEtapa.que.toLowerCase()}</strong>
+      <small>${abonoEtapa.detalle}</small>
+      ${abono.yaHayAbono(state.tasks, s.id, s.etapa) ? '<small class="muted">✓ Ya hay una tarea pendiente para esto.</small>'
+        : '<button class="btn btn--sm" data-act="abono">Crear la tarea de abonar</button>'}</div>` : ''}
     ${etapaVieja(s) ? `<p class="aviso aviso--atencion">La etapa se declaró hace ${etapaVieja(s)} días.
       Si el bloque ya pasó a otra, el riego calculado se está quedando corto o largo.</p>` : ''}
     <details class="mas-campos">
@@ -970,6 +1052,11 @@ function openSector(id) {
     body.querySelector('[data-act="plant"]').onclick = () => openPlantingForm(s);
     body.querySelector('[data-act="water"]').onclick = () => openHydraulics(s);
     body.querySelector('[data-act="task"]').onclick = () => openTaskForm({ targetType: 'sector', targetId: s.id });
+    body.querySelector('[data-act="abono"]')?.addEventListener('click', async () => {
+      await crearAbono(s);
+      toast('Tarea de abonar creada para dentro de 3 días');
+      openSector(s.id);
+    });
     body.querySelector('[data-act="shape"]').onclick = () => {
       if (!farmMap) return toast('El mapa no está disponible.');
       closeSheet();
@@ -986,6 +1073,15 @@ function openSector(id) {
       await reload(); renderAll(); closeSheet(); toast('Sector eliminado');
     };
   });
+}
+
+/** La tarea de abonar la etapa del sector, para dentro de unos días. */
+async function crearAbono(sector) {
+  const especies = state.plants.filter(p => p.sectorId === sector.id && p.status !== 'muerto').map(p => p.species);
+  const t = abono.tareaAbono(sector, especies);
+  if (!t || abono.yaHayAbono(state.tasks, sector.id, sector.etapa)) return false;
+  await persist('tasks', { ...t, dueAt: enDias(3) });
+  return true;
 }
 
 /** Días desde que se declaró la etapa, si ya lleva demasiados. */
@@ -1013,12 +1109,26 @@ function openSectorForm(s) {
       <p class="hint">Cambia cuánta agua pide el sector. Nadie puede deducirla de la fecha
       de siembra —en la sierra no hay una estación que la fije—, así que se declara aquí y
       la app avisa cuando lleva mucho sin tocarse.</p>
+      <label class="row confirma" data-abono hidden><input type="checkbox" class="chk" name="crearAbono" checked />
+        <span></span></label>
       <button class="btn btn--rojo btn-block" type="submit">Guardar</button>
     </form>
   `, body => {
-    body.querySelector('#f').onsubmit = async ev => {
+    // Una etapa nueva trae su abono: se ofrece la tarea, ya marcada.
+    const form = body.querySelector('#f');
+    const syncAbono = () => {
+      const e = form.etapa.value;
+      const a = abono.ABONO_ETAPA[e];
+      const ofrecer = !!(s.id && a && e !== s.etapa && !abono.yaHayAbono(state.tasks, s.id, e));
+      body.querySelector('[data-abono]').hidden = !ofrecer;
+      if (ofrecer) body.querySelector('[data-abono] span').textContent = `Crear la tarea de abonar: ${a.que.toLowerCase()}`;
+    };
+    form.etapa.addEventListener('change', syncAbono);
+    syncAbono();
+    form.onsubmit = async ev => {
       ev.preventDefault();
       const f = new FormData(ev.target);
+      const conAbono = !body.querySelector('[data-abono]').hidden && f.get('crearAbono');
       await persist('sectors', {
         ...s,
         parcelId: state.parcel.id,
@@ -1030,8 +1140,9 @@ function openSectorForm(s) {
         etapaDesde: f.get('etapa') && f.get('etapa') !== s.etapa ? today() : s.etapaDesde,
         areaM2: round(areaM2(s.polygon), 1)
       });
+      if (conAbono) await crearAbono(state.sectors.find(x => x.id === s.id));
       closeSheet();
-      toast(isNew ? 'Sector creado' : 'Sector actualizado');
+      toast(isNew ? 'Sector creado' : conAbono ? 'Sector actualizado, con la tarea de abonar' : 'Sector actualizado');
     };
   });
 }
@@ -1258,6 +1369,7 @@ function renderPlants() {
   for (const p of state.plants) counts.set(p.species, (counts.get(p.species) || 0) + 1);
   if (filtroEspecie !== 'todas' && !counts.has(filtroEspecie)) filtroEspecie = 'todas';
   const visibles = rows.filter(p => filtroEspecie === 'todas' || p.species === filtroEspecie);
+  const esperas = libreta.esperasDeHoy();
 
   $('#plants-list').innerHTML = `
     <div class="chips" id="plantas-especie">
@@ -1272,6 +1384,8 @@ function renderPlants() {
           <strong>${SPECIES[p.species]?.label || p.species}${p.variety ? ' · ' + escapeHtml(p.variety) : ''}</strong>
           <small>${state.sectors.find(s => s.id === p.sectorId)?.name || 'Sin sector'}${p.plantedAt ? ' · ' + ageLabel(p.plantedAt) : ''}</small>
         </span>
+        ${carencia.carenciasPara({ plantId: p.id }, esperas, state.plants).length
+          ? '<span class="pastilla pastilla--ambar" title="Fumigada: todavía no se cosecha">🧴</span>' : ''}
         ${estadoPastilla(p.status)}
       </button>`).join('')}</div>
     ${visibles.length ? '' : '<p class="hint">Ninguna planta coincide con la búsqueda.</p>'}
@@ -1343,7 +1457,9 @@ function renderTasks() {
             ? 'Hecha ' + fmtDate(t.doneAt)
             : c
               ? `<b class="cuando cuando--${c.tono}">${c.txt}</b> <span class="muted">· ${fmtDate(t.dueAt)}</span>`
-              : 'Sin fecha'}${t.quantity ? ` · ${t.quantity} ${escapeHtml(t.unit || '')}` : ''}</small>
+              : 'Sin fecha'}${t.quantity ? ` · ${t.quantity} ${escapeHtml(t.unit || '')}` : ''}${t.costo ? ` · $${t.costo}` : ''}</small>
+          ${t.producto || t.carenciaDias ? `<small class="muted">🧴 ${escapeHtml(t.producto || 'Producto sin anotar')}${
+            t.carenciaDias ? ` · ${t.carenciaDias} días sin cosechar${t.doneAt ? ': se cosecha desde el ' + fechaCorta(carencia.sumarDias(t.doneAt, t.carenciaDias)) : ' desde que se aplique'}` : ''}</small>` : ''}
           ${t.notes ? `<small class="muted">${escapeHtml(t.notes)}</small>` : ''}
         </button>
       </div>`;
@@ -1429,20 +1545,28 @@ function openTaskForm(t = {}) {
         <select name="target">${opcionesObjetivo(current)}</select>
       </label>
       <label>¿Para cuándo? <input type="date" name="dueAt" value="${attr(t.dueAt ?? (nueva ? today() : ''))}" /></label>
+      ${camposFumigacion(t)}
       <label>Detalle <textarea name="notes" rows="2" placeholder="Ej.: dos sacos de abono por planta">${escapeHtml(t.notes || '')}</textarea></label>
       <details class="mas-campos" ${t.doneAt || t.quantity ? 'open' : ''}>
-        <summary>Más datos (cantidad, si ya está hecha)</summary>
+        <summary>Más datos (cantidad, costo, si ya está hecha)</summary>
         <label>Hecha el <input type="date" name="doneAt" value="${attr(t.doneAt)}" /></label>
         <div class="field-grid-2">
           <label>Cantidad <input type="number" step="0.01" name="quantity" value="${attr(t.quantity)}" /></label>
           <label>Unidad <input name="unit" value="${attr(t.unit)}" placeholder="kg, L, sacos" /></label>
         </div>
+        <label>¿Cuánto costó? (opcional)
+          <span class="con-unidad"><input type="number" name="costo" min="0" step="0.01" inputmode="decimal" value="${attr(t.costo)}" /><i>$</i></span></label>
+        <p class="hint">El costo cuenta como gasto en Huerto → Cuentas cuando la tarea está hecha.</p>
       </details>
       <button class="btn btn--rojo btn-block" type="submit">Guardar</button>
       ${t.id ? '<button class="btn btn-danger btn-block" type="button" data-act="del">Borrar la tarea</button>' : ''}
     </form>
   `, body => {
-    body.querySelector('#f').onsubmit = async ev => {
+    const form = body.querySelector('#f');
+    const syncTipo = () => { body.querySelector('[data-fumigacion]').hidden = form.type.value !== 'fumigación'; };
+    form.type.addEventListener('change', syncTipo);
+    syncTipo();
+    form.onsubmit = async ev => {
       ev.preventDefault();
       const f = new FormData(ev.target);
       const [targetType, targetId] = f.get('target').split(':');
@@ -1454,7 +1578,9 @@ function openTaskForm(t = {}) {
         doneAt: f.get('doneAt') || undefined,
         quantity: f.get('quantity') ? Number(f.get('quantity')) : undefined,
         unit: f.get('unit') || undefined,
-        notes: f.get('notes') || undefined
+        notes: f.get('notes') || undefined,
+        costo: f.get('costo') ? Number(f.get('costo')) : undefined,
+        ...leerFumigacion(f)
       });
       closeSheet();
       toast('Tarea guardada');
@@ -1464,6 +1590,72 @@ function openTaskForm(t = {}) {
       await db.remove('tasks', t.id);
       await reload(); renderAll(); closeSheet();
     });
+  });
+}
+
+/* ── Fumigaciones: con qué y cuánto esperar para cosechar ─────────────────
+   Los días de espera salen de la etiqueta del producto. La app no los
+   adivina: un número inventado aquí sería peor que ninguno. */
+
+function camposFumigacion(t) {
+  return `<div data-fumigacion hidden>
+      <label>¿Con qué producto? <input name="producto" value="${attr(t.producto)}" placeholder="Ej.: Mancozeb, caldo bordelés" /></label>
+      <label>¿Cuántos días hay que esperar para cosechar?
+        <span class="con-unidad"><input type="number" name="carenciaDias" min="0" step="1" inputmode="numeric" value="${attr(t.carenciaDias)}" /><i>días</i></span></label>
+      <p class="hint">Está en la etiqueta, como «período de carencia» o «intervalo de seguridad». Si es un producto orgánico sin espera, pon 0.</p>
+    </div>`;
+}
+
+function leerFumigacion(f, tipo = f.get('type')) {
+  if (tipo !== 'fumigación') return { producto: undefined, carenciaDias: undefined };
+  return {
+    producto: (f.get('producto') || '').trim() || undefined,
+    carenciaDias: f.get('carenciaDias') !== '' && f.get('carenciaDias') != null ? Math.max(0, Math.round(Number(f.get('carenciaDias')))) : undefined
+  };
+}
+
+/** «Fumigué»: la tarea ya hecha, con su espera, desde Hoy. */
+function openFumigacion() {
+  openSheet('Fumigué', `
+    <form id="f">
+      <label>¿Dónde? <select name="target">${opcionesObjetivo('parcel:' + state.parcel.id)}</select></label>
+      <label>¿Con qué producto? <input name="producto" required placeholder="Ej.: Mancozeb, caldo bordelés" /></label>
+      <label>¿Cuántos días hay que esperar para cosechar?
+        <span class="con-unidad con-unidad--grande"><input type="number" name="carenciaDias" min="0" step="1" inputmode="numeric" required /><i>días</i></span></label>
+      <p class="hint">Está en la etiqueta, como «período de carencia» o «intervalo de seguridad». Si no tiene espera, pon 0.</p>
+      <p class="equivale" data-desde>&nbsp;</p>
+      <label>¿Cuándo? <input type="date" name="doneAt" value="${today()}" max="${today()}" required /></label>
+      <details class="mas-campos">
+        <summary>Más datos (dosis, costo)</summary>
+        <label>Dosis (opcional) <input name="notes" placeholder="Ej.: 2,5 g por litro, bomba de 20 L" /></label>
+        <label>¿Cuánto costó? (opcional)
+          <span class="con-unidad"><input type="number" name="costo" min="0" step="0.01" inputmode="decimal" /><i>$</i></span></label>
+      </details>
+      <button class="btn btn--rojo btn-block" type="submit">Guardar</button>
+    </form>`, body => {
+    const form = body.querySelector('#f');
+    const desde = () => {
+      const n = Number(form.carenciaDias.value);
+      const out = body.querySelector('[data-desde]');
+      out.innerHTML = form.carenciaDias.value !== '' && n > 0 && form.doneAt.value
+        ? `Se podrá cosechar desde el <b>${fechaCorta(carencia.sumarDias(form.doneAt.value, n))}</b>` : '&nbsp;';
+    };
+    form.addEventListener('input', desde);
+    form.onsubmit = async ev => {
+      ev.preventDefault();
+      const f = new FormData(form);
+      const [targetType, targetId] = f.get('target').split(':');
+      const doneAt = f.get('doneAt');
+      await persist('tasks', {
+        type: 'fumigación', targetType, targetId, dueAt: doneAt, doneAt,
+        notes: (f.get('notes') || '').trim() || undefined,
+        costo: f.get('costo') ? Number(f.get('costo')) : undefined,
+        ...leerFumigacion(f, 'fumigación')
+      });
+      closeSheet();
+      const n = Number(f.get('carenciaDias'));
+      toast(n > 0 ? `Anotado. Se cosecha desde el ${fechaCorta(carencia.sumarDias(doneAt, n))}.` : 'Fumigación anotada');
+    };
   });
 }
 
@@ -1677,6 +1869,17 @@ function buildPlan() {
     escribir(`PRÓXIMAS (${resto.length})`, resto);
   }
 
+  // Va antes que el agua: quien está en la finca puede ponerse a cosechar
+  // hoy mismo, y esto es lo único del plan que puede hacer daño a alguien.
+  const esperas = libreta.esperasDeHoy();
+  if (esperas.length) {
+    lineas.push(`NO COSECHAR TODAVÍA (${esperas.length})`);
+    for (const c of esperas) {
+      lineas.push(`• ${libreta.lugarDeTarea(c.task)}: fumigado${c.task.producto ? ' con ' + c.task.producto : ''} el ${fmtDate(c.task.doneAt)}. Se cosecha desde el ${fmtDate(c.desde)}.`);
+    }
+    lineas.push('');
+  }
+
   const w = water.summary({ ...state, clima: state.clima, sensores: resumenSensores() });
   lineas.push('AGUA');
   lineas.push(`• Reservorio estimado: ${nf(w.volume.volumeM3)} m³ de ${nf(state.config.reservorioVolumenM3 || 0, 0)} m³`);
@@ -1690,6 +1893,11 @@ function buildPlan() {
     lineas.push(`• Clima: hoy evapora ${nf(w.clima.et0Hoy, 1)} mm` +
       (w.clima.lluviaHoy > 0.5 ? ` y llueve ${nf(w.clima.lluviaHoy, 1)} mm` : ', sin lluvia') +
       `. Pronóstico de 7 días: ${nf(w.clima.lluviaFutura, 0)} mm de lluvia.`);
+    const hongos = riesgoDeHongos(w.clima);
+    if (hongos) {
+      lineas.push(`• HONGOS: días húmedos y templados. Revisar ${hongos.enfermedades.map(e =>
+        `${e.cultivos.map(c => huerto.getItem(c)?.nombre.toLowerCase() || c).join(' y ')} (${e.nombre})`).join(', ')}.`);
+    }
   }
   if (w.turns[0]) {
     lineas.push(`• Próximo turno de la junta: ${fmtDate(w.turns[0].date)} (en ${w.turns[0].inDays} días)`);
@@ -2064,6 +2272,79 @@ function pintarAjusteNotificaciones(cont) {
   });
 }
 
+/* Conectar este teléfono a la finca compartida, o invitar a otro. */
+async function pintarAjusteFinca(cont) {
+  const cfg = cfgFinca();
+  const conectada = !!(cfg.url && cfg.token);
+  const est = await sync.estado();
+  const pendientes = await db.outboxCount();
+  if (!cont.isConnected) return;
+  cont.innerHTML = conectada ? `
+      <p class="hint">${cfg.ultimoError ? `⚠︎ La última vez no se pudo: ${escapeHtml(cfg.ultimoError)}.`
+        : est.ultima ? `✓ Al día ${haceTexto((Date.now() - new Date(est.ultima)) / 3600000)}.` : 'Todavía sin sincronizar.'}
+        ${pendientes ? ` ${pendientes} cambios esperan para subir.` : ''}</p>
+      <div class="sheet-actions">
+        <button class="btn btn--rojo" type="button" data-fin="ahora">Sincronizar ahora</button>
+        <button class="btn" type="button" data-fin="invitar">Invitar a otro teléfono</button>
+      </div>
+      <details class="mas-campos"><summary>Opciones</summary>
+        <p class="hint">Receptor: ${escapeHtml(new URL(cfg.url).host)}</p>
+        <div class="sheet-actions">
+          <button class="btn" type="button" data-fin="todo">Volver a bajar todo</button>
+          <button class="btn btn-danger" type="button" data-fin="salir">Desconectar este teléfono</button>
+        </div>
+      </details>`
+    : `<p class="hint">Para que lo que anota una persona lo vean las demás. Hace falta el receptor
+        (el mismo de los sensores, ver SENSORES.md) con la base de la finca. Lo más fácil: pide a
+        quien ya está conectado que te mande la invitación por WhatsApp y ábrela en este teléfono.</p>
+      <form id="f-finca">
+        <label>Dirección del receptor <input name="url" type="url" required value="${attr(cfg.url || state.config.sensores?.url || '')}" placeholder="https://mulalillo-receptor….workers.dev" /></label>
+        <label>Clave de la finca <input name="token" required autocomplete="off" value="${attr(cfg.token)}" /></label>
+        <button class="btn btn--rojo btn-block" type="submit">Conectar y sincronizar</button>
+      </form>`;
+
+  cont.querySelector('#f-finca')?.addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const f = new FormData(ev.target);
+    state.config = await db.saveConfig({ finca: { url: f.get('url').trim(), token: f.get('token').trim() } });
+    await sync.olvidarCursor();
+    const r = await sincronizarFinca({ avisar: true });
+    // El primer teléfono que se conecta pone los ajustes de la finca. Los que
+    // llegan después toman los que ya hay, y no los pisan con los suyos.
+    if (r?.ok && !r.ajustes) { await db.encolarAjustes(state.config); await sincronizarFinca(); }
+    pintarAjusteFinca(cont);
+  });
+  cont.querySelector('[data-fin="ahora"]')?.addEventListener('click', async () => {
+    await sincronizarFinca({ avisar: true });
+    pintarAjusteFinca(cont);
+  });
+  cont.querySelector('[data-fin="invitar"]')?.addEventListener('click', async () => {
+    const enlace = sync.enlaceInvitacion(cfg, location.origin + location.pathname);
+    const texto = `Para anotar en la Finca Mulalillo desde tu teléfono, abre este enlace:\n${enlace}`;
+    if (!confirm('Quien tenga la invitación puede ver y cambiar los datos de la finca. Mándala sólo a gente de confianza.\n\n¿Seguir?')) return;
+    try {
+      if (navigator.share) { await navigator.share({ title: 'Finca Mulalillo', text: texto }); return; }
+      await navigator.clipboard.writeText(texto);
+      toast('Invitación copiada: pégala en WhatsApp', 3500);
+    } catch (err) {
+      if (err?.name === 'AbortError') return;
+      openSheet('Invitación', `<p class="hint">Copia este texto y mándalo por WhatsApp.</p>
+        <textarea id="inv-text" rows="6" readonly></textarea>`, b => { b.querySelector('#inv-text').value = texto; });
+    }
+  });
+  cont.querySelector('[data-fin="todo"]')?.addEventListener('click', async () => {
+    await sync.olvidarCursor();
+    await sincronizarFinca({ avisar: true });
+    pintarAjusteFinca(cont);
+  });
+  cont.querySelector('[data-fin="salir"]')?.addEventListener('click', async () => {
+    if (!confirm('Este teléfono deja de compartir. Lo anotado aquí se queda aquí. ¿Seguir?')) return;
+    state.config = await db.saveConfig({ finca: {} });
+    renderAll();
+    pintarAjusteFinca(cont);
+  });
+}
+
 function openSettings() {
   const c = state.config;
   openSheet('Ajustes', `
@@ -2095,17 +2376,15 @@ function openSettings() {
         <h4>Sensores</h4>
         <p class="hint">${(state.config.sensores?.url) ? 'Conectados a un receptor.' : 'Sin conectar.'}
           <button class="btn btn--fantasma btn--sm" type="button" data-act="sensores">Abrir sensores</button></p>
-        <h4>Sincronización</h4>
-        <label>Endpoint de sincronización <input name="syncEndpoint" value="${attr(c.syncEndpoint)}" placeholder="https://…/sync" /></label>
-        <p class="hint">Sin endpoint, los cambios quedan en la cola local y se pueden trasladar con el respaldo JSON.</p>
       </details>
       <button class="btn btn--rojo btn-block" type="submit">Guardar ajustes</button>
     </form>
+    <h4>Compartir la finca entre teléfonos</h4>
+    <div id="ajuste-finca"></div>
     <h4>Respaldo y arreglos</h4>
     <div class="sheet-actions">
       <button class="btn" data-act="export">Exportar respaldo</button>
       <button class="btn" data-act="import">Importar respaldo</button>
-      <button class="btn" data-act="sync">Sincronizar ahora</button>
       <button class="btn" data-act="tiles">Descargar mapa del terreno</button>
       <button class="btn" data-act="reinstall">Reinstalar la app</button>
       <button class="btn" data-act="diag">Diagnóstico</button>
@@ -2127,9 +2406,8 @@ function openSettings() {
         alertaAutonomiaDias: num('alertaAutonomiaDias'),
         reservaSueloMm: num('reservaSueloMm'),
         proximoTurno: f.get('proximoTurno') || null,
-        cicloTurnoDias: num('cicloTurnoDias'),
-        syncEndpoint: f.get('syncEndpoint') || ''
-      });
+        cicloTurnoDias: num('cicloTurnoDias')
+      }, { compartir: true });
       renderAll();
       toast('Ajustes guardados');
     };
@@ -2158,15 +2436,7 @@ function openSettings() {
       } catch (err) { toast('No se pudo importar: ' + err.message); }
     };
 
-    body.querySelector('[data-act="sync"]').onclick = async () => {
-      try {
-        const res = await db.flushOutbox(state.config.syncEndpoint);
-        updateOutboxChip();
-        toast(res.reason === 'sin-backend'
-          ? `${res.pending} cambios en cola (sin endpoint configurado)`
-          : `${res.sent} cambios sincronizados`);
-      } catch (err) { toast('Sincronización fallida: ' + err.message); }
-    };
+    pintarAjusteFinca(body.querySelector('#ajuste-finca'));
 
     body.querySelector('[data-act="tiles"]').onclick = () => prefetchTiles();
     body.querySelector('[data-act="sensores"]').onclick = () => openSensores();
@@ -2199,17 +2469,23 @@ function openSettings() {
   });
 }
 
+/* Después de cada repintado: si hay algo en la cola y la finca es compartida,
+   se programa la subida. (El chip con la cuenta ya no está en la pantalla;
+   si vuelve, se pinta aquí.) */
 async function updateOutboxChip() {
+  const n = await db.outboxCount();
+  // Sin finca compartida, la cola no va a ningún lado: contarla sólo asusta.
+  const compartida = !!(cfgFinca().url && cfgFinca().token);
+  if (n && compartida) programarSyncFinca();
   const chip = $('#chip-outbox');
   if (!chip) return;
-  const n = await db.outboxCount();
-  chip.hidden = n === 0;
-  chip.textContent = `${n} sin sincronizar`;
+  chip.hidden = n === 0 || !compartida;
+  chip.textContent = `${n} sin subir`;
 }
 
 function watchConnectivity() {
   const paint = () => { $('#chip-offline').hidden = navigator.onLine; };
-  addEventListener('online', () => { paint(); toast('Conexión recuperada'); });
+  addEventListener('online', () => { paint(); toast('Conexión recuperada'); sincronizarFinca(); });
   addEventListener('offline', paint);
   paint();
 }

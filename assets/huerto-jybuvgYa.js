@@ -23,6 +23,7 @@ import {
 import { faseLunar, CONSEJO_LUNA, valorarDia, tiempo } from './luna.js';
 import { $, toast, openSheet, closeSheet, escapeHtml, attr, num, dinero, formatDias, fechaCorta, today } from '../ui.js';
 import { enDias } from '../fechas.js';
+import { abrirCosecha } from './libreta.js';
 
 /* ── Ubicación: la de la finca ─────────────────────────────────────────── */
 
@@ -38,7 +39,7 @@ function cfgHuerto() {
 }
 
 async function guardarCfgHuerto(patch) {
-  state.config = await db.saveConfig({ huerto: { ...cfgHuerto(), ...patch } });
+  state.config = await db.saveConfig({ huerto: { ...cfgHuerto(), ...patch } }, { compartir: true });
 }
 
 export function aptoZona(c) {
@@ -54,6 +55,11 @@ const SINGULAR = {
   litros: 'litro', huevos: 'huevo', 'kg de miel': 'kg'
 };
 function unidadPrecio(rendUnidad) { return SINGULAR[rendUnidad] || rendUnidad; }
+const PLURAL = Object.fromEntries(Object.entries(SINGULAR).filter(([, s]) => s !== 'kg').map(([p, s]) => [s, p]));
+/** «1 atado», «3 atados»: la unidad de precio, contada. */
+export function contar(n, unidad, txt = String(n)) {
+  return `${txt} ${n === 1 ? unidad : PLURAL[unidad] || unidad}`;
+}
 
 function proximaSiembra(c) {
   const mes = new Date().getMonth() + 1;
@@ -599,10 +605,11 @@ export function renderSiembras() {
   cont.querySelectorAll('[data-ver]').forEach(b => b.onclick = () => abrirCultivo(b.dataset.ver));
   cont.querySelectorAll('[data-quitar]').forEach(b => b.onclick = async () => {
     const s = state.siembras.find(x => x.id === b.dataset.quitar);
-    const listo = b.dataset.listo === '1';
-    if (!listo && !confirm(`¿Quitar ${getItem(s.cropId)?.nombre.toLowerCase() || 'esta siembra'} del seguimiento?`)) return;
+    // Cosechar no es borrar: se anota cuánto salió y la siembra pasa a las cuentas.
+    if (b.dataset.listo === '1') return abrirCosecha({ prod: s.cropId, sectorId: s.sectorId, siembraId: s.id });
+    if (!confirm(`¿Quitar ${getItem(s.cropId)?.nombre.toLowerCase() || 'esta siembra'} del seguimiento?`)) return;
     await db.remove('siembras', s.id);
-    toast(listo ? '¡Buena cosecha!' : 'Quitado');
+    toast('Quitado');
     avisarCambio();
   });
 }
@@ -696,12 +703,12 @@ export function abrirNuevaSiembra(cropId) {
 
 /* ── Panel: mercado ────────────────────────────────────────────────────── */
 
-function prodNombre(prod) {
+export function prodNombre(prod) {
   if (prod.startsWith('otro:')) { const n = prod.slice(5); return n.charAt(0).toUpperCase() + n.slice(1); }
   return getItem(prod)?.nombre || prod;
 }
-function prodEmoji(prod) { return getItem(prod)?.emoji || '🏷️'; }
-function prodUnidad(prod) { const c = getItem(prod); return c ? unidadPrecio(c.rendUnidad) : null; }
+export function prodEmoji(prod) { return getItem(prod)?.emoji || '🏷️'; }
+export function prodUnidad(prod) { const c = getItem(prod); return c ? unidadPrecio(c.rendUnidad) : null; }
 
 function preciosOrdenados() {
   return [...state.precios].sort((a, b) => (b.fecha || '').localeCompare(a.fecha || '') || (b.updatedAt || '').localeCompare(a.updatedAt || ''));
@@ -843,18 +850,35 @@ async function pintarIntl(cont, nota) {
     : 'Sin conexión: valores de referencia guardados. Se actualizan solos cuando haya internet.';
 }
 
+/**
+ * Las opciones de «¿qué producto?», lo más probable primero: lo que hay en el
+ * sector, lo que se siembra y lo que hay en la finca, lo ya anotado y, al
+ * final, lo de la zona. Lo comparten el precio, la cosecha y la venta, para
+ * que un producto se llame igual en los tres y las cuentas lo junten.
+ */
+export function opcionesProducto(actual, { sectorId } = {}) {
+  const usados = new Set();
+  const tomar = ids => [...new Set(ids)].filter(id => id && !usados.has(id) && (id.startsWith('otro:') || getItem(id)))
+    .map(id => (usados.add(id), id));
+  const enSector = sectorId ? tomar([
+    ...state.plants.filter(p => p.sectorId === sectorId && p.status !== 'muerto').map(p => p.species),
+    ...state.siembras.filter(s => s.sectorId === sectorId).map(s => s.cropId)
+  ]) : [];
+  const finca = tomar([...state.siembras.map(s => s.cropId), ...state.plants.filter(p => p.status !== 'muerto').map(p => p.species)]);
+  const anotados = tomar([...state.cosechas, ...state.ventas, ...state.precios].map(r => r.prod));
+  const zona = tomar(CULTIVOS.filter(aptoZona).map(c => c.id));
+  if (actual && !usados.has(actual)) anotados.unshift(...tomar([actual]));
+  const grupo = (ids, label) => ids.length ? `<optgroup label="${label}">${ids.map(id =>
+    `<option value="${attr(id)}" ${id === actual ? 'selected' : ''}>${prodEmoji(id)} ${escapeHtml(prodNombre(id))}</option>`).join('')}</optgroup>` : '';
+  return grupo(enSector, 'En este sector') + grupo(finca, 'En la finca') + grupo(anotados, 'Ya anotados') +
+    grupo(zona, 'De esta zona') + '<option value="__otro">✏️ Otro producto…</option>';
+}
+
 export function abrirNuevoPrecio() {
-  const sigo = [...new Set(state.siembras.map(s => s.cropId))];
-  const anotados = [...new Set(state.precios.map(p => p.prod))].filter(p => !p.startsWith('otro:') && !sigo.includes(p) && getItem(p));
-  const zona = CULTIVOS.filter(aptoZona).map(c => c.id).filter(id => !sigo.includes(id) && !anotados.includes(id));
-  const grupo = (ids, label) => ids.length ? `<optgroup label="${label}">${ids.map(id => {
-    const c = getItem(id); return c ? `<option value="${id}">${c.emoji} ${c.nombre}</option>` : '';
-  }).join('')}</optgroup>` : '';
   openSheet('Anotar un precio', `
     <form id="f-precio">
       <label>¿De qué producto?
-        <select name="prod">${grupo(sigo, 'Lo que siembro')}${grupo(anotados, 'Ya anotados')}${grupo(zona, 'De esta zona')}
-          <option value="__otro">✏️ Otro producto…</option></select></label>
+        <select name="prod">${opcionesProducto()}</select></label>
       <label id="otro-wrap" hidden>¿Cuál? <input name="otro" placeholder="Ej.: queso fresco" /></label>
       <label><span id="precio-label">Precio ($)</span>
         <span class="con-unidad con-unidad--grande"><input type="number" name="precio" step="0.01" min="0.01" inputmode="decimal" placeholder="0,50" required /><i>$</i></span></label>
@@ -865,7 +889,7 @@ export function abrirNuevoPrecio() {
     const sync = () => {
       const v = f.prod.value;
       body.querySelector('#otro-wrap').hidden = v !== '__otro';
-      const u = v && v !== '__otro' ? prodUnidad(v) : null;
+      const u = v && v !== '__otro' && !v.startsWith('otro:') ? prodUnidad(v) : null;
       body.querySelector('#precio-label').textContent = u ? `Precio por ${u} ($)` : 'Precio que viste ($)';
     };
     f.prod.addEventListener('change', sync);

@@ -1,4 +1,4 @@
-// Persistencia local en IndexedDB + cola de sincronización.
+// Persistencia local en IndexedDB + cola de sincronización (la sube sync.js).
 // No usamos localStorage: los datos deben sobrevivir y poder exportarse/sincronizarse.
 "use strict";
 
@@ -7,10 +7,12 @@ const DB_NAME = 'mulalillo';
 // sin tocar los que ya existen:
 //   v2 añade `lecturas`, lo que mandan los sensores;
 //   v3 añade `siembras` y `precios`, que vivían en el localStorage de Mi Huerto
-//      y ahora son datos de la finca como los demás.
-const DB_VERSION = 3;
+//      y ahora son datos de la finca como los demás;
+//   v4 añade `cosechas`, `ventas` y `gastos`: las cuentas de verdad, frente a
+//      lo que estima la calculadora.
+const DB_VERSION = 4;
 const STORES = ['parcels', 'sectors', 'plants', 'infra', 'tasks', 'water', 'elevations', 'outbox', 'meta', 'lecturas',
-  'siembras', 'precios'];
+  'siembras', 'precios', 'cosechas', 'ventas', 'gastos'];
 
 let dbPromise = null;
 
@@ -92,6 +94,16 @@ export async function saveLocal(store, records) {
   return stamped;
 }
 
+/**
+ * Lo que llega de otro teléfono, tal cual: sin cola y sin tocar `updatedAt`.
+ * La hora es la del cambio original, y es la que decide quién gana si el
+ * mismo registro se vuelve a cambiar en otro lado.
+ */
+export async function guardarRemoto(store, records) {
+  if (!records.length) return;
+  await tx(store, 'readwrite', s => { for (const r of records) s.put(r); });
+}
+
 /** Borra en lote, también sin cola. */
 export async function removeLocal(store, ids) {
   if (!ids.length) return;
@@ -111,24 +123,6 @@ async function enqueue(op, store, record) {
 
 export function outboxCount() {
   return all('outbox').then(rows => rows.length);
-}
-
-/**
- * Vacía la cola. Sin backend configurado, marca los cambios como conciliados
- * localmente; con backend, aquí va el POST por lote.
- */
-export async function flushOutbox(endpoint) {
-  const rows = await all('outbox');
-  if (!rows.length) return { sent: 0 };
-  if (!endpoint) return { sent: 0, pending: rows.length, reason: 'sin-backend' };
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(rows)
-  });
-  if (!res.ok) throw new Error('sync ' + res.status);
-  await clearStore('outbox');
-  return { sent: rows.length };
 }
 
 export function uid() {
@@ -311,8 +305,7 @@ export async function seedIfEmpty() {
     alertaAutonomiaDias: 7,
     proximoTurno: isoInDays(9),     // ciclo de 15 días de la junta de agua
     cicloTurnoDias: 15,
-    exageracion3D: 3,
-    syncEndpoint: ''
+    exageracion3D: 3
   });
   return true;
 }
@@ -335,11 +328,36 @@ export async function config() {
   return (await get('meta', 'config')) || {};
 }
 
-export async function saveConfig(patch) {
+export async function saveConfig(patch, { compartir = false } = {}) {
   const current = await config();
   const next = { ...current, ...patch, id: 'config' };
   await putRaw('meta', next);
+  if (compartir) await encolarAjustes(next);
   return next;
+}
+
+/*
+ * Los ajustes que son de la finca y no del teléfono: el turno de la junta, el
+ * reservorio, el suelo y el huerto (la fase de El Niño, si hay riego). Si un
+ * teléfono corre el turno y otro no, cada uno calcula el agua distinta. Lo del
+ * aparato —claves, la conexión, la exageración del 3D— se queda en cada uno.
+ */
+export const AJUSTES_COMPARTIDOS = ['proximoTurno', 'cicloTurnoDias', 'reservorioVolumenM3', 'reservorioAlturaUtilM',
+  'alertaAutonomiaDias', 'demandaDiariaM3', 'reservaSueloMm', 'huerto'];
+
+export function ajustesDeFinca(cfg) {
+  return Object.fromEntries(AJUSTES_COMPARTIDOS.filter(k => k in cfg).map(k => [k, cfg[k]]));
+}
+
+/** Encola los ajustes de la finca como un registro más (`ajustes/finca`). */
+export async function encolarAjustes(cfg) {
+  const rec = { id: 'finca', ...ajustesDeFinca(cfg), updatedAt: new Date().toISOString() };
+  await enqueue('put', 'ajustes', rec);
+}
+
+/** Los ajustes que bajan de otro teléfono: a la configuración, sin volver a la cola. */
+export async function aplicarAjustesRemotos(rec) {
+  return saveConfig(ajustesDeFinca(rec || {}));
 }
 
 function isoDaysAgo(n) {
