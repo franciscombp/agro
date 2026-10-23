@@ -7,8 +7,8 @@
 //   1. ¿Hay algo urgente?            → avisos, sólo si los hay
 //   2. ¿Cómo está el día y el agua?  → el tiempo y una frase sobre el agua
 //   3. ¿Qué tengo que hacer?         → las tareas de hoy y atrasadas
-//   4. Anotar lo que pasó            → seis botones grandes, con palabras
-//   5. El huerto                     → luna, siembras y mercado
+//   4. Anotar lo que pasó            → ocho botones grandes, con palabras
+//   5. El huerto                     → luna, siembras, mercado y cuentas
 //
 // Cada bloque es una tarjeta que lleva a su sección. Nada de cifras técnicas
 // aquí: los milímetros, los Kc y los bares están en sus pantallas, para quien
@@ -18,6 +18,9 @@
 import { state } from '../estado.js';
 import { faseLunar, CONSEJO_LUNA, tiempo } from '../huerto/luna.js';
 import { resumenHuerto } from '../huerto/huerto.js';
+import { esperasDeHoy, lugarDeTarea, resumenCuentasHoy } from '../huerto/libreta.js';
+import { riesgoHongos } from '../hongos.js';
+import { getItem } from '../huerto/huerto.js';
 import { $, escapeHtml, nf, num, dinero, fechaLarga, fechaCorta, formatDias, haceTexto, today } from '../ui.js';
 import { enDias } from '../fechas.js';
 import { MESES } from '../huerto/catalogo.js';
@@ -71,16 +74,19 @@ export function renderHoy({ agua, sensores, tareas, acciones, irA, altitud }) {
     <div class="acciones-rapidas">
       <button data-accion="regue"><span class="tile tile--agua">💧</span>Regué</button>
       <button data-accion="medi"><span class="tile tile--agua">📏</span>Medí el reservorio</button>
-      <button data-accion="tarea"><span class="tile t-hortaliza">✅</span>Una tarea</button>
       <button data-accion="siembra"><span class="tile t-hortaliza">🌱</span>Sembré algo</button>
+      <button data-accion="fumigue"><span class="tile t-hierba">🧴</span>Fumigué</button>
+      <button data-accion="cosecha"><span class="tile t-hortaliza">🧺</span>Coseché</button>
+      <button data-accion="venta"><span class="tile t-grano">💵</span>Vendí</button>
       <button data-accion="problema"><span class="tile t-fruta">🩺</span>Planta con problema</button>
-      <button data-accion="precio"><span class="tile t-grano">💰</span>Un precio de feria</button>
+      <button data-accion="tarea"><span class="tile t-hortaliza">✅</span>Una tarea</button>
     </div>
 
     <h3>Huerto</h3>
     ${tiraLuna()}
     ${tiraSiembras(huerto)}
     ${tiraMercado(huerto)}
+    ${tiraCuentas()}
     </div>
     </div>
   `;
@@ -138,11 +144,25 @@ function juntarAvisos({ agua, sensores, tareas, huerto }) {
     out.push({ tono: 'atencion', emoji: '💧', ir: 'view-water', titulo: `Queda agua para menos de ${agua.alertDays} días.` });
   }
 
+  // Lo único de esta lista que puede hacerle daño a alguien: va arriba.
+  for (const c of esperasDeHoy()) {
+    out.unshift({ tono: 'mal', emoji: '🧴',
+      titulo: `${escapeHtml(lugarDeTarea(c.task))}: no cosechar todavía.`,
+      texto: `Se fumigó${c.task.producto ? ' con ' + escapeHtml(c.task.producto) : ''} el ${fechaCorta(c.task.doneAt)}. Se puede cosechar desde el ${fechaCorta(c.desde)}.` });
+  }
+
   const pron = agua.clima?.pronostico || [];
   const helada = pron.slice(0, 4).find(d => d.tmin != null && d.tmin <= 2);
   if (helada) {
     out.push({ tono: 'frio', emoji: '❄️', titulo: `Puede helar ${helada.date === today() ? 'esta noche' : 'el ' + fechaCorta(helada.date)}.`,
       texto: 'Cubre lo tierno al atardecer y riega antes: la tierra húmeda guarda calor.' });
+  }
+  const hongos = riesgoDeHongos(agua.clima);
+  if (hongos) {
+    const que = hongos.enfermedades.map(e =>
+      `${e.cultivos.map(c => getItem(c)?.nombre.toLowerCase() || c).join(' y ')} (${e.nombre}): ${e.que}`).join('; ');
+    out.push({ tono: 'atencion', emoji: '🍄', titulo: 'Días húmedos y templados: el hongo lo tiene fácil.',
+      texto: `Revisa ${que}. Si fumigas, anota los días de espera.` });
   }
   const aguacero = pron.slice(0, 3).find(d => d.lluvia >= 25);
   if (aguacero) {
@@ -164,6 +184,14 @@ function juntarAvisos({ agua, sensores, tareas, huerto }) {
       titulo: huerto.listas.length === 1 ? `${huerto.listas[0].c.nombre}: lista para cosechar.` : `${huerto.listas.length} siembras listas para cosechar.` });
   }
   return out;
+}
+
+/** Lo sembrado y plantado en la finca, como ids del catálogo, contra el tiempo. */
+export function riesgoDeHongos(c) {
+  if (!c?.conocido) return null;
+  const cultivos = [...state.plants.filter(p => p.status !== 'muerto').map(p => p.species),
+    ...state.siembras.map(s => s.cropId)];
+  return riesgoHongos([...(c.pasados || []), ...(c.pronostico || [])], today(), cultivos);
 }
 
 /* ── El tiempo ─────────────────────────────────────────────────────────── */
@@ -262,6 +290,19 @@ function tiraMercado(h) {
   return `<button class="tira tira--ambar" data-ir="view-huerto" data-pane="mercado">
     <span class="tira__emoji">💰</span>
     <span class="tira__txt"><strong>${escapeHtml(titulo)}</strong><small>${texto}</small></span>
+    <span class="chev">›</span></button>`;
+}
+
+/* Las cuentas sólo aparecen cuando hay algo anotado: una tira de ceros no
+   dice nada y ocupa el sitio de lo que sí. */
+function tiraCuentas() {
+  const r = resumenCuentasHoy();
+  if (!r) return '';
+  const plata = n => (n < 0 ? '−$' : '$') + dinero(Math.abs(n));
+  return `<button class="tira" data-ir="view-huerto" data-pane="cuentas">
+    <span class="tira__emoji">📒</span>
+    <span class="tira__txt"><strong>${r.queda < 0 ? 'Perdí' : 'Me quedan'} ${plata(Math.abs(r.queda))} en 12 meses</strong>
+      <small>Vendí ${plata(r.vendido)} · gasté ${plata(r.gastado)}</small></span>
     <span class="chev">›</span></button>`;
 }
 

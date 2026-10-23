@@ -240,6 +240,37 @@ A partir de ahí:
   el modelo pase días calculando con un nivel viejo creyendo que es fresco.
 - Por debajo de 3,3 V (o del 20 % si el aparato informa en porcentaje), **batería baja**.
 
+## 8. Compartir la finca entre teléfonos (opcional)
+
+El mismo receptor guarda también lo que se anota en la app —sectores, plantas, tareas,
+riegos, siembras, cosechas, ventas, gastos— para que lo que anota una persona lo vean
+las demás. Funciona aunque no haya ningún sensor.
+
+1. Crea la base: `npx wrangler d1 create mulalillo-finca`. En `receptor/wrangler.toml`
+   quita los `#` del bloque `[[d1_databases]]` y pega el `database_id` que te dio.
+2. Pon la clave: `npx wrangler secret put TOKEN_FINCA`. Es **otra** que las de los
+   sensores, porque ésta lee **y escribe**.
+3. `npx wrangler deploy`. La tabla se crea sola la primera vez.
+4. En el primer teléfono: *Ajustes → Compartir la finca entre teléfonos*, la dirección
+   del receptor y la clave. Lo que ya tenía anotado sube entero.
+5. *Invitar a otro teléfono* manda por WhatsApp un enlace con la dirección y la clave.
+   Quien lo abre queda conectado y baja todo.
+
+Cómo se porta:
+
+- Se sincroniza al abrir la app, al volver a ella, cada 15 minutos, al recuperar la
+  señal y unos segundos después de anotar algo. Sin señal, lo anotado espera en el
+  teléfono y sube después.
+- También viajan los ajustes de la finca: el turno de la junta, el reservorio, el suelo y
+  lo del huerto. El primer teléfono que se conecta pone los suyos; los que llegan después
+  los toman. Las claves y la conexión de cada teléfono no viajan.
+- Si dos personas cambian **lo mismo**, gana el cambio más nuevo, registro por registro.
+  Una tarea marcada en un teléfono no pisa una planta editada en otro.
+- **Si se pierde un teléfono**, cambia la clave (`wrangler secret put TOKEN_FINCA`) y
+  vuelve a invitar a los demás: con la clave vieja ya no entra nadie.
+- Probar sin cuenta: `node receptor/local.mjs` levanta también la base, en memoria, con
+  la clave `finca-local`.
+
 ## Qué no está hecho todavía
 
 - **«No llegas al turno» por Telegram.** Necesitaría que el teléfono mande su cálculo

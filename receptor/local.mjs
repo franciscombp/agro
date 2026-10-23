@@ -8,6 +8,7 @@
 "use strict";
 
 import http from 'node:http';
+import { DatabaseSync } from 'node:sqlite';
 import worker from './worker.js';
 
 /* KV de mentira con la misma interfaz que usa el worker: get, put con
@@ -33,11 +34,34 @@ export function kvEnMemoria() {
   };
 }
 
+/* D1 de mentira sobre el SQLite de Node: el mismo SQL que corre en
+   Cloudflare, con la parte de la interfaz de D1 que usa finca.js. */
+export function d1EnMemoria() {
+  const db = new DatabaseSync(':memory:');
+  const sentencia = (sql, args = []) => ({
+    bind: (...a) => sentencia(sql, a),
+    async run() { const r = db.prepare(sql).run(...args); return { meta: { changes: r.changes } }; },
+    async all() { return { results: db.prepare(sql).all(...args) }; },
+    _correr() { return db.prepare(sql).run(...args); }
+  });
+  return {
+    prepare: sql => sentencia(sql),
+    // Como D1: el lote es una transacción, entra entero o no entra.
+    async batch(lista) {
+      db.exec('BEGIN');
+      try { const r = lista.map(s => s._correr()); db.exec('COMMIT'); return r; }
+      catch (e) { db.exec('ROLLBACK'); throw e; }
+    }
+  };
+}
+
 export function servidor({ puerto = 8787, env } = {}) {
   const entorno = env || {
     LECTURAS: kvEnMemoria(),
+    FINCA: d1EnMemoria(),
     TOKEN_ESCRITURA: process.env.TOKEN_ESCRITURA || 'escritura-local',
-    TOKEN_LECTURA: process.env.TOKEN_LECTURA || 'lectura-local'
+    TOKEN_LECTURA: process.env.TOKEN_LECTURA || 'lectura-local',
+    TOKEN_FINCA: process.env.TOKEN_FINCA || 'finca-local'
   };
 
   const srv = http.createServer(async (req, res) => {
@@ -62,5 +86,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log('Receptor local en http://localhost:8787');
   console.log(`  token de escritura: ${entorno.TOKEN_ESCRITURA}`);
   console.log(`  token de lectura:   ${entorno.TOKEN_LECTURA}`);
+  console.log(`  clave de la finca:  ${entorno.TOKEN_FINCA}`);
   console.log('Prueba: node receptor/simular.mjs');
 }

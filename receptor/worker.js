@@ -13,11 +13,20 @@
 //   POST /alertas/probar manda un mensaje de prueba a Telegram
 //   POST /alertas/revisar corre la revisión de alertas ahora (la misma que el
 //                        cron cada 30 minutos)
+//   POST /finca/cambios  lo que un teléfono cambió en la finca
+//   GET  /finca/cambios?desde=123
+//                        lo que cambió después, para los demás teléfonos
+//                        (detalle en finca.js)
 //
 // Dos tokens, no uno: el de escritura va en TTN y en Home Assistant, que son
 // servidores; el de lectura va en el teléfono, que se pierde, se presta y se
 // roba. Si alguien saca el de lectura de un teléfono, puede VER el nivel del
 // reservorio, pero no inventar lecturas que hagan creer que hay agua.
+//
+// Los datos de la finca llevan un tercero, TOKEN_FINCA, que lee y escribe:
+// quien anota en la finca tiene que poder escribir. Se le da a la familia y a
+// quien trabaja ahí; si se pierde un teléfono, se cambia y se vuelve a
+// compartir.
 //
 // Almacenamiento: Cloudflare KV, una clave por lectura, ordenada por fecha.
 // Cada lectura va también en los metadatos de su clave, así listar un día
@@ -26,6 +35,7 @@
 
 import { normaliza } from '../normaliza.js';
 import { revisar, enviarTelegram } from './alertas.js';
+import { recibir, entregar } from './finca.js';
 
 const DIAS_RETENCION = 120;
 const MAX_DIAS_CONSULTA = 45;
@@ -62,6 +72,12 @@ export default {
       if (url.pathname === '/estado' && request.method === 'GET') {
         if (!autorizado(request, env.TOKEN_LECTURA)) return cors(error(401, 'token de lectura inválido'));
         return cors(json(await estado(env)));
+      }
+      if (url.pathname === '/finca/cambios' && (request.method === 'POST' || request.method === 'GET')) {
+        if (!autorizado(request, env.TOKEN_FINCA)) return cors(error(401, 'clave de la finca inválida'));
+        if (!env.FINCA) return cors(error(503, 'falta la base de la finca (D1) en el receptor'));
+        const r = request.method === 'POST' ? await recibir(request, env) : await entregar(url, env);
+        return cors(json(r.cuerpo, r.status));
       }
       return error(404, 'ruta desconocida');
     } catch (e) {
@@ -150,12 +166,12 @@ function error(status, mensaje) {
 }
 
 /* La app se sirve desde GitHub Pages y pide a otro dominio, así que el
-   navegador exige estas cabeceras. Sólo se abre la lectura: la ingesta la
-   llaman servidores, que no pasan por CORS. */
+   navegador exige estas cabeceras. Se abre la lectura y los datos de la finca;
+   la ingesta la llaman servidores, que no pasan por CORS. */
 function cors(res) {
   const h = new Headers(res.headers);
   h.set('access-control-allow-origin', '*');
   h.set('access-control-allow-headers', 'authorization, content-type');
-  h.set('access-control-allow-methods', 'GET, OPTIONS');
+  h.set('access-control-allow-methods', 'GET, POST, OPTIONS');
   return new Response(res.body, { status: res.status, headers: h });
 }

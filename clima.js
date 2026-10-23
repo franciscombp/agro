@@ -99,7 +99,10 @@ export function normaliza(json) {
     lluvia: val(d.precipitation_sum, i) ?? 0,
     tmax: val(d.temperature_2m_max, i),
     tmin: val(d.temperature_2m_min, i),
-    code: val(d.weather_code, i)
+    code: val(d.weather_code, i),
+    // Para el riesgo de hongos (hongos.js): humedad media y horas con lluvia.
+    hr: val(d.relative_humidity_2m_mean, i),
+    horasLluvia: val(d.precipitation_hours, i)
   })).filter(x => x.et0 != null);
 
   const c = json?.current;
@@ -117,17 +120,22 @@ export function normaliza(json) {
  */
 export async function refrescar([lat, lng], { forzar = false } = {}) {
   const guardado = await leerCache();
-  // Una caché de antes de juntar las llamadas no trae los 90 días: se renueva.
-  const completa = guardado && guardado.dias.length > PASADO + FUTURO + 5;
+  // Una caché de antes de juntar las llamadas no trae los 90 días, y una de
+  // antes del aviso de hongos no trae la humedad: las dos se renuevan.
+  const completa = guardado && guardado.dias.length > PASADO + FUTURO + 5 && guardado.dias.some(d => 'hr' in d);
   if (!forzar && completa && horasDesde(guardado.bajado) < FRESCO_H) return guardado;
 
   try {
-    const url = 'https://api.open-meteo.com/v1/forecast' +
+    const url = extra => 'https://api.open-meteo.com/v1/forecast' +
       `?latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}&timezone=auto` +
       `&past_days=${PEDIR_PASADO}&forecast_days=${PEDIR_FUTURO}` +
-      '&daily=et0_fao_evapotranspiration,precipitation_sum,temperature_2m_max,temperature_2m_min,weather_code' +
+      '&daily=et0_fao_evapotranspiration,precipitation_sum,temperature_2m_max,temperature_2m_min,weather_code' + extra +
       '&current=temperature_2m,relative_humidity_2m,weather_code';
-    const json = await fetch(url).then(r => r.ok ? r.json() : Promise.reject(r.status));
+    // La humedad es para el aviso de hongos, que es un extra: si la API la
+    // rechaza (400), se pide lo de siempre y el agua sigue calculándose.
+    let r = await fetch(url(',relative_humidity_2m_mean,precipitation_hours'));
+    if (r.status === 400) r = await fetch(url(''));
+    const json = await (r.ok ? r.json() : Promise.reject(r.status));
     const serie = normaliza(json);
     if (!serie) return guardado;
     await db.saveMeta({ id: CACHE_ID, ...serie });

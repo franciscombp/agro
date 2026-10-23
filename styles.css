@@ -607,6 +607,42 @@ input[type="number"]::-webkit-inner-spin-button, input[type="number"]::-webkit-o
 .sheet-actions .btn-danger { grid-column: 1 / -1; margin-top: 8px; }
 .modal__cuerpo > .btn-danger, .modal__cuerpo form > .btn-danger { margin-top: 4px; }
 .acciones-rapidas--hoja { margin-top: 4px; }
+.acciones-rapidas--3 { grid-template-columns: repeat(3, 1fr); margin-bottom: 8px; }
+.acciones-rapidas--3 button { flex-direction: column; text-align: center; gap: 6px; padding: 10px 6px; }
+.elige--3 { grid-template-columns: repeat(2, 1fr); }
+.elige--3 span { min-height: 48px; }
+/* Los campos de fumigación aparecen dentro del formulario de tarea: mismo ritmo. */
+[data-fumigacion]:not([hidden]) { display: flex; flex-direction: column; gap: 14px; }
+.aviso--peligro { border-left-color: var(--app-danger); background: var(--app-danger-soft); margin: 0; }
+[data-espera]:not([hidden]) { display: flex; flex-direction: column; gap: 10px; }
+.confirma { gap: 10px !important; }
+.abono-etapa { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin: 0 0 16px;
+  padding: 12px 14px; border-radius: var(--r-control); background: var(--app-surface-2); }
+.abono-etapa small { font-size: var(--fs-sec); color: var(--app-ink-2); line-height: 1.4; }
+
+/* ── 6b. Cuentas ─────────────────────────────────────────────────────── */
+.cuentas-total { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
+.cuentas-total > div {
+  background: var(--app-surface); border: 1px solid var(--app-line); border-radius: var(--r-tarjeta);
+  box-shadow: var(--app-sombra-1); padding: 12px 10px; display: flex; flex-direction: column; gap: 2px; min-width: 0;
+}
+.cuentas-total small { color: var(--app-ink-3); font-size: var(--fs-micro); font-weight: 600; }
+.cuentas-total strong { font-size: var(--fs-sub); font-weight: 800; letter-spacing: -.02em; overflow-wrap: anywhere; }
+.cuentas-total .pos { background: var(--app-ok-soft); }
+.cuentas-total .neg { background: var(--app-danger-soft); }
+.cuentas-sectores { display: flex; flex-direction: column; gap: 10px; margin-bottom: 8px; }
+.tarjeta-cuenta {
+  background: var(--app-surface); border: 1px solid var(--app-line); border-radius: var(--r-tarjeta);
+  box-shadow: var(--app-sombra-1); padding: 14px 15px; display: flex; flex-direction: column; gap: 6px;
+}
+.tarjeta-cuenta__cab { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.tarjeta-cuenta .precio.neg, .monto.neg { color: var(--app-danger); }
+.cuenta-prod { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: baseline; padding-top: 6px; font-size: var(--fs-texto); }
+.cuenta-prod small { color: var(--app-ink-3); font-size: var(--fs-nota); text-align: right; }
+.cuenta-prod .barra { grid-column: 1 / -1; }
+.card--filas > .fila-mov { grid-template-columns: auto 1fr auto auto; cursor: default; }
+.monto { font-weight: 800; white-space: nowrap; font-size: var(--fs-texto); }
+.monto.pos { color: var(--app-ok, inherit); }
 
 /* ── 7. La finca ─────────────────────────────────────────────────────── */
 

@@ -10,8 +10,10 @@ import { BOUNDARY } from './db.js';
 export const state = {
   parcel: { id: 'parcel-mulalillo', name: 'Finca Mulalillo', boundary: BOUNDARY },
   sectors: [], plants: [], infra: [], tasks: [], water: [], elevations: [], config: {},
-  siembras: [],          // lo sembrado en el huerto, con fecha y cantidad
+  siembras: [],          // lo sembrado en el huerto que sigue en la tierra
+  siembrasHechas: [],    // lo ya cosechado: sale de la lista, pero cuenta en las cuentas
   precios: [],           // la libreta de precios de feria
+  cosechas: [], ventas: [], gastos: [],   // las cuentas de verdad
   clima: null,           // serie de clima de la finca; null = todavía sin bajar
   hidrico: null,         // lluvia de 90 días frente a lo normal
   lecturas: []           // lo que han mandado los sensores

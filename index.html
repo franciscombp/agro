@@ -43,6 +43,12 @@
   <link rel="modulepreload" href="./huerto/nino.js" />
   <link rel="modulepreload" href="./huerto/luna.js" />
   <link rel="modulepreload" href="./vistas/hoy.js" />
+  <link rel="modulepreload" href="./carencia.js" />
+  <link rel="modulepreload" href="./hongos.js" />
+  <link rel="modulepreload" href="./abono.js" />
+  <link rel="modulepreload" href="./sync.js" />
+  <link rel="modulepreload" href="./huerto/cuentas.js" />
+  <link rel="modulepreload" href="./huerto/libreta.js" />
 
   <script>
     // MapLibre (800 kB) ya no se carga aquí: bloqueaba la primera pantalla
@@ -206,13 +212,15 @@
       <h1>Huerto</h1>
     </div>
     <div class="seg seg--ancho" id="huerto-seg" role="tablist" aria-label="Huerto">
-      <button role="tab" aria-selected="true" data-pane="sembrar">Qué sembrar</button>
-      <button role="tab" aria-selected="false" data-pane="siembras">Mis siembras</button>
+      <button role="tab" aria-selected="true" data-pane="sembrar">Sembrar</button>
+      <button role="tab" aria-selected="false" data-pane="siembras">Siembras</button>
       <button role="tab" aria-selected="false" data-pane="mercado">Mercado</button>
+      <button role="tab" aria-selected="false" data-pane="cuentas">Cuentas</button>
     </div>
     <section class="pane" id="huerto-sembrar"></section>
     <section class="pane" id="huerto-siembras" hidden></section>
     <section class="pane" id="huerto-mercado" hidden></section>
+    <section class="pane" id="huerto-cuentas" hidden></section>
   </div>
 </main>
 
